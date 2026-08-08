@@ -1,0 +1,38 @@
+# Optional infrastructure. The platform runs fine without any of this
+# (SQLite + in-process cache), but Postgres gives you a durable journal
+# and Redis gives you a shared candle cache across workers.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: meridian-postgres
+    environment:
+      POSTGRES_USER: meridian
+      POSTGRES_PASSWORD: meridian
+      POSTGRES_DB: meridian
+    ports:
+      - "5432:5432"
+    volumes:
+      - meridian-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meridian"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: meridian-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - meridian-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  meridian-pgdata:
+  meridian-redisdata:

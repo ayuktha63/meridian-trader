@@ -1,0 +1,43 @@
+# ── core api ──────────────────────────────────────────────────
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27
+pydantic>=2.6,<3.0
+pydantic-settings>=2.2
+python-dotenv>=1.0
+orjson>=3.9
+httpx>=0.26
+websockets>=12.0
+
+# ── analytics ─────────────────────────────────────────────────
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+
+# ── ai ────────────────────────────────────────────────────────
+anthropic>=0.40
+
+# ── brokers (optional — only needed for live Indian market data / execution) ──
+kiteconnect>=5.0 ; python_version >= "3.9"
+smartapi-python>=1.4.8
+pyotp>=2.9
+logzero>=1.7
+websocket-client>=1.7
+
+# ── storage (both optional at runtime) ────────────────────────
+SQLAlchemy>=2.0
+aiosqlite>=0.19
+greenlet>=3.0
+asyncpg>=0.29 ; python_version >= "3.9"
+redis>=5.0
+
+# ── tests ─────────────────────────────────────────────────────
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# ── optional accelerators ─────────────────────────────────────
+# The indicator/pattern engine is implemented natively in NumPy so the
+# platform never hard-depends on a C toolchain. If these are installed
+# they are detected and used for cross-validation.
+#   pip install pandas-ta
+#   pip install TA-Lib          # requires the ta-lib C library
+#   pip install opencv-python   # optional geometric pattern matching

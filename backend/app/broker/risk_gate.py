@@ -1,0 +1,263 @@
+"""PreTradeRiskGate — the last thing standing between a recommendation and a
+real order.
+
+Every check runs in a fixed order and the first failure wins; nothing here
+ever tries to be clever about salvaging a marginal trade. The order matters
+because each check is progressively more expensive (mode flag, then a
+network call to the broker for funds) — fail cheap first.
+
+This gate decides ALLOW or REJECT. It never places an order itself — that
+stays in `AngelOneExecutionService`, so a bug in "should we trade" can never
+also be a bug in "how do we submit it".
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Optional
+
+from ..instruments import Instrument
+from ..runtime_settings import RuntimeSettings
+from ..schemas.execution import RiskGateResult
+from .angelone.auth import angel_auth
+from .angelone.instruments import AngelInstrumentMatch, InstrumentUnsupported, angel_instruments
+from .trading_mode import trading_mode
+
+log = logging.getLogger("meridian.risk_gate")
+
+#: See instruments.py — the CDS tick-size conversion is not verified against
+#: a real value, so no instrument on this exchange may be live-executed
+#: until that's confirmed. This is deliberately a hard-coded safety block,
+#: not a computed check, precisely because it must not be silently "fixed"
+#: by a future refactor that forgets why it's here.
+UNTRUSTED_TICK_EXCHANGES = {"CDS"}
+
+
+@dataclass
+class Recommendation:
+    """The server-derived facts about a trade candidate — never frontend input."""
+    id: str
+    symbol: str
+    side: str                      # BUY | SELL
+    entry: Optional[float]
+    stop_loss: Optional[float]
+    take_profit: Optional[float]
+    risk_amount: Optional[float]
+    suggested_lots: Optional[float]
+    confidence: float
+
+
+@dataclass
+class GateContext:
+    recommendation: Recommendation
+    confirmed: bool
+    already_executed: bool
+    instrument: Optional[Instrument] = None
+    match: Optional[AngelInstrumentMatch] = None
+    settings: Optional[RuntimeSettings] = None
+    available_funds: Optional[float] = None
+    quantity: Optional[float] = None
+    warnings: list = field(default_factory=list)
+
+
+class PreTradeRiskGate:
+    """Runs checks 1-10 of the live-trading spec's pre-trade gate.
+
+    Check 11 (daily loss limit / open risk / trades-per-day / open positions)
+    is deliberately NOT implemented here. Meridian's existing guardrails
+    (`analysis/guardrails.py`) compute those against the PAPER account's
+    trade history — there is no equivalent live trade history yet, and
+    faking one against the wrong ledger would be worse than not checking at
+    all. This is a real, acknowledged gap for the next phase (once
+    reconciliation gives this gate a real live trade history to check
+    against), not an oversight.
+    """
+
+    #: Checks 1-5: local state only, zero network calls. Run first, always.
+    _CHEAP_CHECKS = (
+        "_check_trading_mode", "_check_confirmation", "_check_angel_connection",
+        "_check_kill_switch", "_check_duplicate", "_check_recommendation_shape",
+    )
+    #: Checks 6-10: need instrument resolution / broker funds already fetched
+    #: into the context by the caller.
+    _NETWORK_DEPENDENT_CHECKS = (
+        "_check_instrument_capability", "_check_untrusted_tick_conversion",
+        "_check_quantity", "_check_funds", "_check_risk_amount",
+    )
+
+    async def evaluate_cheap(self, ctx: GateContext) -> RiskGateResult:
+        return await self._run(ctx, self._CHEAP_CHECKS)
+
+    async def evaluate(self, ctx: GateContext) -> RiskGateResult:
+        return await self._run(ctx, self._CHEAP_CHECKS + self._NETWORK_DEPENDENT_CHECKS)
+
+    async def _run(self, ctx: GateContext, check_names: tuple) -> RiskGateResult:
+        for name in check_names:
+            check = getattr(self, name)
+            result = await check(ctx) if _is_async(check) else check(ctx)
+            if not result.allowed:
+                log.info("risk gate rejected %s at %s: %s",
+                         ctx.recommendation.id, result.check, result.reason)
+                return result
+        return RiskGateResult(allowed=True, check="all", reason="Passed every pre-trade check.")
+
+    # ── check 1 ───────────────────────────────────────────────
+    def _check_trading_mode(self, ctx: GateContext) -> RiskGateResult:
+        if not trading_mode.is_live:
+            return RiskGateResult(allowed=False, check="trading_mode",
+                                  reason="Live trading mode is not enabled.")
+        return RiskGateResult(allowed=True)
+
+    # ── check 2 ───────────────────────────────────────────────
+    def _check_confirmation(self, ctx: GateContext) -> RiskGateResult:
+        if not ctx.confirmed:
+            return RiskGateResult(
+                allowed=False, check="confirmation",
+                reason="Live trading has not been explicitly confirmed.")
+        return RiskGateResult(allowed=True)
+
+    # ── check 3 ───────────────────────────────────────────────
+    def _check_angel_connection(self, ctx: GateContext) -> RiskGateResult:
+        if not angel_auth.connected:
+            return RiskGateResult(allowed=False, check="angel_connection",
+                                  reason="Angel One is not connected.")
+        return RiskGateResult(allowed=True)
+
+    # ── check 4 ───────────────────────────────────────────────
+    def _check_kill_switch(self, ctx: GateContext) -> RiskGateResult:
+        if trading_mode.kill_switch_active:
+            return RiskGateResult(
+                allowed=False, check="kill_switch",
+                reason="Live trading is disabled by the kill switch.")
+        return RiskGateResult(allowed=True)
+
+    # ── duplicate-order guard (recommendation-level) ─────────
+    def _check_duplicate(self, ctx: GateContext) -> RiskGateResult:
+        if ctx.already_executed:
+            return RiskGateResult(
+                allowed=False, check="duplicate",
+                reason="This recommendation already has an execution record. "
+                      "A recommendation can only ever be executed once.")
+        return RiskGateResult(allowed=True)
+
+    # ── check 5 ───────────────────────────────────────────────
+    def _check_recommendation_shape(self, ctx: GateContext) -> RiskGateResult:
+        rec = ctx.recommendation
+        if not rec.symbol:
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing symbol.")
+        if rec.side not in ("BUY", "SELL"):
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing or invalid side.")
+        if rec.entry is None or rec.entry <= 0:
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing or invalid entry price.")
+        if rec.stop_loss is None or rec.stop_loss <= 0:
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing or invalid stop price.")
+        if rec.side == "BUY" and rec.stop_loss >= rec.entry:
+            return RiskGateResult(
+                allowed=False, check="recommendation",
+                reason="Stop is not below entry on a BUY — refusing to size "
+                      "risk against an invalid stop.")
+        if rec.side == "SELL" and rec.stop_loss <= rec.entry:
+            return RiskGateResult(
+                allowed=False, check="recommendation",
+                reason="Stop is not above entry on a SELL — refusing to size "
+                      "risk against an invalid stop.")
+        if rec.risk_amount is None or rec.risk_amount <= 0:
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing or invalid risk amount.")
+        if rec.suggested_lots is None or rec.suggested_lots <= 0:
+            return RiskGateResult(allowed=False, check="recommendation",
+                                  reason="Missing or invalid position size.")
+        return RiskGateResult(allowed=True)
+
+    # ── check 6 ───────────────────────────────────────────────
+    async def _check_instrument_capability(self, ctx: GateContext) -> RiskGateResult:
+        try:
+            match = await angel_instruments.resolve(ctx.recommendation.symbol)
+        except InstrumentUnsupported as exc:
+            return RiskGateResult(allowed=False, check="instrument_capability",
+                                  reason=str(exc))
+        ctx.match = match
+        return RiskGateResult(allowed=True)
+
+    # ── check 7 ───────────────────────────────────────────────
+    def _check_untrusted_tick_conversion(self, ctx: GateContext) -> RiskGateResult:
+        if ctx.match and ctx.match.exchange in UNTRUSTED_TICK_EXCHANGES:
+            return RiskGateResult(
+                allowed=False, check="untrusted_tick_conversion",
+                reason="{} tick-size conversion from Angel One's scrip master "
+                      "is not verified against a known-correct value — live "
+                      "execution is refused on this exchange until that's "
+                      "confirmed. See AngelOneInstrumentService.resolve() "
+                      "for the specific gap.".format(ctx.match.exchange))
+        return RiskGateResult(allowed=True)
+
+    # ── check 8 ───────────────────────────────────────────────
+    def _check_quantity(self, ctx: GateContext) -> RiskGateResult:
+        match = ctx.match
+        rec = ctx.recommendation
+        if match is None:
+            return RiskGateResult(allowed=False, check="quantity",
+                                  reason="Instrument was not resolved.")
+        lot_size = match.lot_size
+        # Meridian's suggested_lots is a Meridian "lot" (contract_size units),
+        # not necessarily Angel One's tradable lot — round DOWN to the
+        # nearest whole broker lot. Rounding up would silently increase risk
+        # beyond what the recommendation sized for, which §8 forbids outright.
+        raw_units = rec.suggested_lots * lot_size
+        broker_lots = int(raw_units // lot_size)
+        quantity = broker_lots * lot_size
+        if quantity <= 0:
+            return RiskGateResult(
+                allowed=False, check="quantity",
+                reason="Sized position rounds down to zero at this "
+                      "instrument's lot size ({}) — the risk budget cannot "
+                      "buy even one lot.".format(lot_size))
+        ctx.quantity = quantity
+        return RiskGateResult(allowed=True)
+
+    # ── check 9 ───────────────────────────────────────────────
+    def _check_funds(self, ctx: GateContext) -> RiskGateResult:
+        if ctx.available_funds is None:
+            return RiskGateResult(allowed=False, check="funds",
+                                  reason="Could not read available funds "
+                                        "from Angel One.")
+        if ctx.match is None or ctx.quantity is None:
+            return RiskGateResult(allowed=False, check="funds",
+                                  reason="Instrument or quantity not resolved.")
+        required = ctx.recommendation.entry * ctx.quantity
+        if required > ctx.available_funds:
+            return RiskGateResult(
+                allowed=False, check="funds",
+                reason="Order notional ({:.2f}) exceeds available funds "
+                      "({:.2f}).".format(required, ctx.available_funds))
+        return RiskGateResult(allowed=True)
+
+    # ── check 10 ──────────────────────────────────────────────
+    def _check_risk_amount(self, ctx: GateContext) -> RiskGateResult:
+        rec = ctx.recommendation
+        if ctx.quantity is None:
+            return RiskGateResult(allowed=False, check="risk_amount",
+                                  reason="Quantity not resolved.")
+        actual_risk = abs(rec.entry - rec.stop_loss) * ctx.quantity
+        # Broker-lot rounding can only ever reduce quantity (check 8), so the
+        # actual risk can come in under the recommendation's budget but must
+        # never come in over it.
+        if actual_risk > rec.risk_amount * 1.0001:  # float tolerance only
+            return RiskGateResult(
+                allowed=False, check="risk_amount",
+                reason="Broker-valid quantity implies {:.2f} risk, which "
+                      "exceeds the recommendation's budget of {:.2f}."
+                      .format(actual_risk, rec.risk_amount))
+        return RiskGateResult(allowed=True)
+
+
+def _is_async(fn) -> bool:
+    import inspect
+    return inspect.iscoroutinefunction(fn)
+
+
+risk_gate = PreTradeRiskGate()

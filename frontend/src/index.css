@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Dark: the default. A trading desk is looked at for hours, so the
+     surfaces are deep and low-glare and the accents carry the signal. ── */
+  :root,
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --c-void: 5 7 12;
+    --c-abyss: 8 11 18;
+    --c-panel: 12 17 25;
+    --c-raised: 17 23 34;
+    --c-line: 255 255 255;
+    --a-hairline: 0.06;
+    --a-edge: 0.10;
+    --c-ink: 233 237 245;
+    --c-muted: 139 148 168;
+    --c-faint: 90 99 119;
+    --c-bull: 47 211 160;
+    --c-bear: 255 77 106;
+    --c-accent: 76 141 255;
+    --c-warn: 245 196 83;
+    --c-violet: 155 140 255;
+    --c-tint: 255 255 255;
+
+    --shadow-panel:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 12px 40px -18px rgba(0, 0, 0, 0.9);
+    --shadow-raised:
+      inset 0 1px 0 rgba(255, 255, 255, 0.05),
+      0 16px 50px -22px rgba(0, 0, 0, 0.95);
+
+    --page-bg:
+      radial-gradient(1200px 700px at 12% -8%, rgba(76, 141, 255, 0.09), transparent 60%),
+      radial-gradient(1000px 600px at 92% 4%, rgba(155, 140, 255, 0.07), transparent 55%),
+      #05070c;
+
+    /* Chart internals. lightweight-charts draws to canvas and cannot read
+       Tailwind classes, so it is handed these explicitly. */
+    --chart-bg: transparent;
+    --chart-grid: rgba(255, 255, 255, 0.035);
+    --chart-text: #5a6377;
+    --chart-border: rgba(255, 255, 255, 0.06);
+    --chart-crosshair: rgba(139, 148, 168, 0.55);
+    --chart-volume-up: rgba(47, 211, 160, 0.34);
+    --chart-volume-down: rgba(255, 77, 106, 0.30);
+    --overlay-label-bg: rgba(8, 11, 18, 0.82);
+  }
+
+  /* ── Light: for a bright room or a projector. Same information, same
+     hierarchy; the greens and reds are darkened because the dark-mode pair
+     fails contrast on white, and the tint flips from white to near-black so
+     every subtle wash still reads. ── */
+  :root[data-theme='light'] {
+    color-scheme: light;
+
+    --c-void: 241 245 250;
+    --c-abyss: 255 255 255;
+    --c-panel: 255 255 255;
+    --c-raised: 248 250 252;
+    --c-line: 15 23 42;
+    --a-hairline: 0.11;
+    --a-edge: 0.18;
+    --c-ink: 15 23 42;
+    --c-muted: 71 85 105;
+    --c-faint: 113 128 150;
+    --c-bull: 4 145 106;
+    --c-bear: 219 39 71;
+    --c-accent: 37 99 235;
+    --c-warn: 180 83 9;
+    --c-violet: 109 83 224;
+    --c-tint: 15 23 42;
+
+    --shadow-panel:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 1px 2px rgba(15, 23, 42, 0.05),
+      0 8px 28px -16px rgba(15, 23, 42, 0.22);
+    --shadow-raised:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 10px 34px -14px rgba(15, 23, 42, 0.28);
+
+    --page-bg:
+      radial-gradient(1200px 700px at 12% -8%, rgba(37, 99, 235, 0.07), transparent 60%),
+      radial-gradient(1000px 600px at 92% 4%, rgba(109, 83, 224, 0.05), transparent 55%),
+      #f1f5fa;
+
+    --chart-bg: transparent;
+    --chart-grid: rgba(15, 23, 42, 0.06);
+    --chart-text: #64748b;
+    --chart-border: rgba(15, 23, 42, 0.11);
+    --chart-crosshair: rgba(71, 85, 105, 0.55);
+    --chart-volume-up: rgba(4, 145, 106, 0.32);
+    --chart-volume-down: rgba(219, 39, 71, 0.28);
+    --overlay-label-bg: rgba(255, 255, 255, 0.9);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    /* A faint two-point wash keeps large flat panels from looking dead. */
+    background: var(--page-bg);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    /* Theme swaps should feel deliberate, not jarring. */
+    transition: background-color 180ms ease;
+  }
+
+  /* Prices and metrics must never reflow as digits change. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-tint) / 0.16);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-tint) / 0.3);
+    background-clip: content-box;
+  }
+
+  *:focus-visible {
+    outline: 2px solid rgb(var(--c-accent) / 0.7);
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: rgb(var(--c-accent) / 0.32);
+  }
+}
+
+@layer components {
+  /* The core surface: translucent, blurred, hairline-bordered. */
+  .glass {
+    @apply bg-panel/70 backdrop-blur-xl border border-hairline;
+    box-shadow: var(--shadow-panel);
+  }
+
+  .glass-raised {
+    @apply bg-raised/80 backdrop-blur-xl border border-edge;
+    box-shadow: var(--shadow-raised);
+  }
+
+  .panel-title {
+    @apply text-2xs font-semibold uppercase tracking-[0.14em] text-faint;
+  }
+
+  /* The tint washes below are written as plain declarations rather than
+     `@apply bg-tint/[0.04]`. Tailwind will not resolve an arbitrary-alpha
+     variant of a CSS-variable colour inside `@apply` — it errors with "class
+     does not exist" even though the same class works fine in JSX, where the
+     JIT scanner generates it. */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-2xs
+           font-medium border border-hairline text-muted transition-colors;
+    background-color: rgb(var(--c-tint) / 0.04);
+  }
+
+  .chip-active {
+    @apply border-accent/50 bg-accent/15 text-ink;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-1.5
+           text-xs font-medium border border-hairline
+           text-muted transition-all duration-150
+           hover:text-ink hover:border-edge
+           active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+    background-color: rgb(var(--c-tint) / 0.04);
+  }
+
+  .btn:hover:not(:disabled) {
+    background-color: rgb(var(--c-tint) / 0.09);
+  }
+
+  .btn-primary {
+    @apply border-accent/50 bg-accent/15 text-ink;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: rgb(var(--c-accent) / 0.25);
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-hairline px-2.5 py-1.5
+           text-2xs text-ink placeholder:text-faint/70 outline-none transition-colors
+           focus:border-accent/50;
+    background-color: rgb(var(--c-tint) / 0.05);
+  }
+
+  .input:focus {
+    background-color: rgb(var(--c-tint) / 0.09);
+  }
+
+  .divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent to-transparent;
+    --tw-gradient-via: rgb(var(--c-tint) / 0.1);
+    background-image: linear-gradient(
+      to right, transparent, rgb(var(--c-tint) / 0.1), transparent);
+  }
+
+  .scroll-y {
+    @apply overflow-y-auto overscroll-contain;
+  }
+
+  /* Loading placeholder that reads as "working", not "broken". */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgb(var(--c-tint) / 0.03) 25%,
+      rgb(var(--c-tint) / 0.09) 50%,
+      rgb(var(--c-tint) / 0.03) 75%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
+  }
+}
+
+/* Tab strips scroll horizontally; the bar itself would be visual noise. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
