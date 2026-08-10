@@ -65,6 +65,8 @@ def evaluate(position: Position, df: pd.DataFrame, price: float,
 
     move = (price - entry) if long else (entry - price)
     signal.unrealised_pips = round(instrument.to_pips(move), 1)
+    signal.unrealised_pnl = round(
+        signal.unrealised_pips * instrument.pip_value_per_lot * position.lots, 2)
     signal.r_multiple = round(move / risk, 2)
     signal.distance_to_stop_pips = round(instrument.to_pips(abs(price - stop)), 1)
     if target is not None:

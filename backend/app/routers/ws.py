@@ -63,6 +63,11 @@ class Connection:
         self.position_checked = 0.0
         self.last_alert_key: Optional[str] = None
         self.last_alert_at = 0.0
+        # ── every open position, not just the chart on screen — a stop
+        # being hit has to warn you regardless of what you're looking at.
+        self.all_positions: Dict[str, Any] = {}
+        self.all_positions_checked = 0.0
+        self.cross_alert_state: Dict[str, tuple] = {}   # position_id -> (alert, monotonic_at)
         # ── auto-trader state ──
         self.paper_trade = None
         self.paper_status = ""
@@ -113,6 +118,56 @@ async def _refresh_position(conn: Connection) -> None:
             conn.position = await position_repo.open_for(session, conn.symbol)
     except Exception as exc:  # noqa: BLE001
         log.debug("position refresh failed: %s", exc)
+
+
+async def _refresh_all_positions(conn: Connection) -> None:
+    """Every open position, across every symbol — feeds the cross-chart exit
+    warning so a stop hit on RELIANCE still interrupts you while you're
+    looking at NIFTY. Same slow cadence as `_refresh_position`."""
+    now = time.monotonic()
+    if now - conn.all_positions_checked < POSITION_REFRESH_SECONDS:
+        return
+    conn.all_positions_checked = now
+    try:
+        async with session_scope() as session:
+            positions = await position_repo.list_positions(session, status="open")
+            conn.all_positions = {p.symbol: p for p in positions}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("all-positions refresh failed: %s", exc)
+
+
+async def _check_cross_symbol_alert(conn: Connection, symbol: str, price: float) -> None:
+    """Stop/target evaluation for a position on a symbol the trader is *not*
+    currently viewing. The symbol they ARE viewing is already covered by
+    `_emit_live_tick`, which also drives that chart's live P&L display —
+    this only ever fires the alert, never the position_tick UI update, so a
+    background position doesn't spam ticks for a chart that isn't showing it.
+    """
+    position = conn.all_positions.get(symbol)
+    if position is None or (conn.position and conn.position.symbol == symbol):
+        return
+    try:
+        instrument = get_instrument(symbol)
+    except KeyError:
+        return
+
+    frame = store.frame(symbol, position.timeframe, 60)
+    atr = None
+    if frame is not None and len(frame) >= 20:
+        atr = float((frame["high"] - frame["low"]).tail(20).mean())
+    quote = feed.quote(symbol)
+
+    tick = live_tier.evaluate_tick(
+        position, price, instrument, atr, quote.spread_pips if quote else None)
+    if tick is None or not tick.alert:
+        return
+
+    now = time.monotonic()
+    prev_alert, prev_at = conn.cross_alert_state.get(tick.position_id, (None, 0.0))
+    if tick.alert == prev_alert and now - prev_at < ALERT_REPEAT_SECONDS:
+        return
+    conn.cross_alert_state[tick.position_id] = (tick.alert, now)
+    await conn.send({"type": "exit_alert", "data": tick.model_dump()})
 
 
 async def _persist_protection(conn: Connection, tick) -> None:
@@ -415,10 +470,17 @@ async def _pump_market_events(conn: Connection) -> None:
             symbol = event.get("symbol")
 
             if etype == "quote":
+                price = (event.get("data") or {}).get("last")
+                # Cross-symbol stop/target monitoring runs regardless of
+                # what's on screen — every connection already receives every
+                # symbol's ticks on this shared queue, this just stops
+                # discarding the ones for positions open elsewhere.
+                await _refresh_all_positions(conn)
+                if price:
+                    await _check_cross_symbol_alert(conn, symbol, float(price))
                 if conn.watches(symbol):
                     await conn.send(event)
                     await _refresh_position(conn)
-                    price = (event.get("data") or {}).get("last")
                     if price:
                         await _emit_live_tick(conn, symbol, float(price))
                         await _auto_trade_tick(conn, symbol, float(price))

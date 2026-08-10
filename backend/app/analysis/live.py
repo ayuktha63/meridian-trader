@@ -50,12 +50,14 @@ def evaluate_tick(position: Position, price: float, instrument: Instrument,
         return None
 
     move = (price - entry) if long else (entry - price)
+    unrealised_pips = instrument.to_pips(move)
     tick = LiveTick(
         position_id=position.id,
         symbol=position.symbol,
         price=round(price, instrument.digits),
         r_multiple=round(move / risk, 3),
-        unrealised_pips=round(instrument.to_pips(move), 1),
+        unrealised_pips=round(unrealised_pips, 1),
+        unrealised_pnl=round(unrealised_pips * instrument.pip_value_per_lot * position.lots, 2),
         distance_to_stop_pips=round(instrument.to_pips(abs(price - stop)), 1),
     )
     if target is not None:

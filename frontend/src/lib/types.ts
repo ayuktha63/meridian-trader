@@ -624,6 +624,7 @@ export interface LiveTick {
   price: number
   r_multiple: number
   unrealised_pips: number
+  unrealised_pnl: number
   distance_to_stop_pips: number
   distance_to_target_pips: number
   alert?: string | null
@@ -647,6 +648,7 @@ export interface ManagementSignal {
   cautions: string[]
   current_price: number
   unrealised_pips: number
+  unrealised_pnl: number
   r_multiple: number
   max_favourable_r: number
   bars_held: number

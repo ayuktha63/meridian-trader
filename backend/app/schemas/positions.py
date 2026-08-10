@@ -83,6 +83,11 @@ class LiveTick(BaseModel):
     price: float
     r_multiple: float = 0.0
     unrealised_pips: float = 0.0
+    #: Unrealised P&L in the instrument's quote currency — `unrealised_pips`
+    #: times pip value times position size. Refreshed every tick, same as
+    #: everything else on this fast tier, so the money figure on screen is
+    #: never more than ~1s stale while a position is open.
+    unrealised_pnl: float = 0.0
     distance_to_stop_pips: float = 0.0
     distance_to_target_pips: float = 0.0
     alert: Optional[str] = None      # stop_hit | target_hit | approaching_stop | approaching_target | protect
@@ -113,6 +118,7 @@ class ManagementSignal(BaseModel):
     # Where the trade stands
     current_price: float = 0.0
     unrealised_pips: float = 0.0
+    unrealised_pnl: float = 0.0
     r_multiple: float = 0.0
     max_favourable_r: float = 0.0
     bars_held: int = 0

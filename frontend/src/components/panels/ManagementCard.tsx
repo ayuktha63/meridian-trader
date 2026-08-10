@@ -41,9 +41,13 @@ export default function ManagementCard({
   const live = liveTick?.position_id === position.id ? liveTick : null
   const r = live?.r_multiple ?? signal.r_multiple
   const pips = live?.unrealised_pips ?? signal.unrealised_pips
+  const pnl = live?.unrealised_pnl ?? signal.unrealised_pnl
   const toStop = live?.distance_to_stop_pips ?? signal.distance_to_stop_pips
   const toTarget = live?.distance_to_target_pips ?? signal.distance_to_target_pips
   const profitable = r >= 0
+  const money = (value: number) =>
+    `${instrument?.quote_currency === 'INR' ? '₹' : '$'}${Math.abs(value)
+      .toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
   const tightenStop = async () => {
     if (!signal.suggested_stop) return
@@ -89,9 +93,14 @@ export default function ManagementCard({
             </Badge>
           )}
           <span className="flex-1" />
-          <span className={`text-lg font-bold tnum ${profitable ? 'text-bull' : 'text-bear'}`}
-                title="Updates every tick, not only on re-analysis">
-            {fmtSigned(r, 2)}R
+          <span className="flex flex-col items-end leading-tight">
+            <span className={`text-lg font-bold tnum ${profitable ? 'text-bull' : 'text-bear'}`}
+                  title="Live profit/loss on this position — updates every tick, not only on re-analysis">
+              {profitable ? '+' : '−'}{money(pnl)}
+            </span>
+            <span className={`text-2xs font-semibold tnum ${profitable ? 'text-bull/80' : 'text-bear/80'}`}>
+              {fmtSigned(r, 2)}R
+            </span>
           </span>
         </div>
         <p className="text-2xs text-ink/80 mt-0.5">{signal.headline}</p>
