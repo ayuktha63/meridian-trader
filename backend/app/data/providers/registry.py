@@ -58,6 +58,20 @@ def build_providers() -> Dict[str, MarketDataProvider]:
         except Exception as exc:  # noqa: BLE001
             log.warning("zerodha provider unavailable: %s", exc)
 
+    # Angel One, same reasoning as Zerodha: a trader who has it connected
+    # (originally for live execution) gets real Indian-market data from it
+    # too, with no separate subscription. Checked live (`angel_auth.connected`)
+    # rather than "configured", since credentials alone don't mean a session
+    # exists yet.
+    from ...broker.angelone.auth import angel_auth
+    if angel_auth.connected:
+        try:
+            from .angelone import AngelOneMarketDataProvider
+
+            providers["angelone"] = AngelOneMarketDataProvider()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("angelone provider unavailable: %s", exc)
+
     return providers
 
 
@@ -71,6 +85,10 @@ def resolve_provider(
     zerodha = providers.get("zerodha")
     if zerodha is not None and zerodha.supports(symbol):
         return zerodha
+
+    angelone = providers.get("angelone")
+    if angelone is not None and angelone.supports(symbol):
+        return angelone
 
     if cfg.hybrid_crypto_live or mode in ("binance", "coindcx"):
         # CoinDCX first: it is the venue the trader actually holds an account

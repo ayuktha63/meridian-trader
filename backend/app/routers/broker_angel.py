@@ -1,13 +1,13 @@
 """Angel One connection, account state, and the PAPER/LIVE mode switch.
 
-This router only ever reports broker state or flips the mode flag — it does
-not place orders. Order execution is a separate, larger piece (pre-trade risk
-gate, instrument resolution, broker-side monitoring) that isn't wired in yet;
-see TRADING.md / the live-trading spec for the remaining phases. Exposing
-connect/status/mode now, honestly, is more useful than a fake "Execute Live"
-button that doesn't actually check anything.
+Order execution (pre-trade risk gate, instrument resolution, submission) is
+wired in — see `routers/execution.py` and `broker/risk_gate.py`. This router
+only ever reports broker state or flips the mode flag; it never places an
+order itself, on purpose, so a bug here can never place a trade.
 """
 from __future__ import annotations
+
+import asyncio
 
 from fastapi import APIRouter, HTTPException
 
@@ -15,6 +15,7 @@ from ..broker.angelone import angel_auth, angel_broker, angel_instruments
 from ..broker.angelone.auth import AngelOneAuthError
 from ..broker.angelone.client import AngelOneOrderError
 from ..broker.trading_mode import LIVE, PAPER, trading_mode
+from ..data.feed import feed
 from ..schemas.broker import (
     AngelAccount, AngelStatus, InstrumentCapability, TradingModeRequest,
     TradingModeStatus,
@@ -38,12 +39,17 @@ async def angel_connect() -> AngelStatus:
         status = await angel_broker.connect()
     except AngelOneAuthError as exc:
         raise HTTPException(502, str(exc)) from exc
+    # Angel One becomes available as a market-data source the instant it's
+    # connected — reload the feed so NSE/MCX/CDS symbols switch from
+    # synthetic to real prices without needing a backend restart.
+    asyncio.create_task(feed.reload("angel one connected"))
     return AngelStatus(**status)
 
 
 @router.post("/api/broker/angel/disconnect", response_model=AngelStatus)
 async def angel_disconnect() -> AngelStatus:
     await angel_broker.disconnect()
+    asyncio.create_task(feed.reload("angel one disconnected"))
     return AngelStatus(**angel_auth.status())
 
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from .. import runtime_settings
 from ..ai import claude_client
+from ..broker.angelone import angel_auth
 from ..data.feed import feed
 from ..instruments import INSTRUMENTS, SYMBOLS
 
@@ -257,6 +258,17 @@ def _provider_status() -> List[Dict[str, Any]]:
             "covers": "USDINR/EURINR/GBPINR/JPYINR futures, NIFTY, BANKNIFTY, "
                       "MCX GOLD/SILVER/CRUDEOIL — the instruments you can actually "
                       "trade from India.",
+        },
+        {
+            "id": "angelone",
+            "label": "Angel One SmartAPI",
+            "live": True,
+            "ready": angel_auth.connected,
+            "active": "angelone" in active,
+            "needs": ["Angel One connection — Settings → Trading mode → Connect Angel One"],
+            "covers": "The same NSE/BSE/NFO/CDS/MCX instruments Zerodha covers, from "
+                      "the broker already connected for live execution — no separate "
+                      "subscription. Polled every few seconds rather than tick-by-tick.",
         },
         {
             "id": "twelvedata",
