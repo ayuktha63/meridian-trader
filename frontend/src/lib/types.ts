@@ -921,6 +921,7 @@ export interface ScreenerRow {
   timeframe: string
   decision: Decision
   confidence: number
+  quote_currency: string
   entry: number | null
   stop_loss: number | null
   take_profit: number | null

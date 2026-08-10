@@ -222,6 +222,7 @@ async def screener(
         return ScreenerRow(
             symbol=symbol, display=instrument.display, timeframe=timeframe,
             decision=result.verdict.decision, confidence=result.confidence.final_confidence,
+            quote_currency=instrument.quote_currency,
             entry=result.plan.entry, stop_loss=result.plan.stop_loss,
             take_profit=result.plan.take_profit, risk_reward=result.plan.risk_reward,
             summary=result.verdict.summary, broker=broker, broker_symbol=broker_symbol,

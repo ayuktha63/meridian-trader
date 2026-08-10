@@ -282,6 +282,7 @@ class ScreenerRow(BaseModel):
     timeframe: str
     decision: Decision
     confidence: float
+    quote_currency: str = "USD"
     entry: Optional[float] = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None

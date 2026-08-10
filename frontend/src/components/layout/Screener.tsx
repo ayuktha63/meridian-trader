@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { fmtPrice } from '../../lib/format'
+import { fmtPriceCcy } from '../../lib/format'
 import type { ScreenerRow } from '../../lib/types'
 import { useStore } from '../../store/useStore'
 import { Spinner } from '../ui'
@@ -165,7 +165,7 @@ function RowGroup({ title, rows, onSelect, tone }: {
               {row.risk_reward != null ? `${row.risk_reward.toFixed(2)}R:R` : ''}
             </span>
             <span className="shrink-0 text-2xs tnum">
-              {row.entry != null ? fmtPrice(row.entry) : '—'}
+              {fmtPriceCcy(row.entry, 5, row.quote_currency)}
             </span>
             {row.broker && (
               <span className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5

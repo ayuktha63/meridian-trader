@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
 import { api } from '../../lib/api'
-import { decisionTone, fmtNumber, fmtPips, fmtPrice, timeAgo } from '../../lib/format'
+import { decisionTone, fmtNumber, fmtPips, fmtPriceCcy, timeAgo } from '../../lib/format'
 import { useActiveInstrument, useStore } from '../../store/useStore'
 import { Badge, ConfidenceRing, Spinner, Stat } from '../ui'
 import ExecuteLiveButton from './ExecuteLiveButton'
@@ -129,16 +129,16 @@ export default function TradePanel() {
       {/* Levels */}
       {isActionable ? (
         <div className="grid grid-cols-3 divide-x divide-hairline border-b border-hairline">
-          <LevelCell label="Entry" value={fmtPrice(plan.entry, digits)} tone="text-accent" />
+          <LevelCell label="Entry" value={fmtPriceCcy(plan.entry, digits, instrument?.quote_currency)} tone="text-accent" />
           <LevelCell
             label="Stop"
-            value={fmtPrice(plan.stop_loss, digits)}
+            value={fmtPriceCcy(plan.stop_loss, digits, instrument?.quote_currency)}
             tone="text-bear"
             sub={fmtPips(plan.risk_pips)}
           />
           <LevelCell
             label="Target"
-            value={fmtPrice(plan.take_profit, digits)}
+            value={fmtPriceCcy(plan.take_profit, digits, instrument?.quote_currency)}
             tone="text-bull"
             sub={fmtPips(plan.reward_pips)}
           />

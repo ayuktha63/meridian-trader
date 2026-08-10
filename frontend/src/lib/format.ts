@@ -5,6 +5,24 @@ export function fmtPrice(value: number | null | undefined, digits = 5): string {
   return value.toFixed(digits)
 }
 
+/** ₹ for INR-quoted instruments, $ for USD/USDT — the only two on this
+ * platform. A bare number with no currency mark is how a trader ends up
+ * misreading a rupee price as dollars or vice versa; this is deliberately
+ * called out everywhere a price is the main thing on screen. */
+export function currencySymbol(quoteCurrency?: string | null): string {
+  return quoteCurrency === 'INR' ? '₹' : '$'
+}
+
+/** Price with its currency symbol prefixed — use this instead of bare
+ * `fmtPrice` anywhere the number is a primary, standalone price (chart
+ * header, entry/stop/target, screener rows). Tables where every row is
+ * already the same instrument's own precision column can keep `fmtPrice`. */
+export function fmtPriceCcy(value: number | null | undefined, digits = 5,
+                            quoteCurrency?: string | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—'
+  return `${currencySymbol(quoteCurrency)}${fmtPrice(value, digits)}`
+}
+
 export function fmtNumber(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—'
   return value.toLocaleString(undefined, {

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fmtPct, fmtPrice } from '../../lib/format'
+import { fmtPct, fmtPriceCcy } from '../../lib/format'
 import { useActiveInstrument, useStore } from '../../store/useStore'
 import { Spinner, Toggle } from '../ui'
 import AutoStatus from './AutoStatus'
@@ -168,7 +168,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
                     {itemQuote && (
                       <span className="text-right shrink-0">
                         <span className="block text-2xs tnum text-ink">
-                          {fmtPrice(itemQuote.last, item.digits)}
+                          {fmtPriceCcy(itemQuote.last, item.digits, item.quote_currency)}
                         </span>
                         <span className={`block text-[10px] tnum ${up ? 'text-bull' : 'text-bear'}`}>
                           {fmtPct(itemQuote.change_pct)}
@@ -193,7 +193,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
             animate={{ opacity: 1 }}
             className={`text-lg font-semibold tnum ${positive ? 'text-bull' : 'text-bear'}`}
           >
-            {fmtPrice(live?.last, digits)}
+            {fmtPriceCcy(live?.last, digits, instrument?.quote_currency)}
           </motion.span>
         </AnimatePresence>
         <span className={`text-2xs tnum ${positive ? 'text-bull' : 'text-bear'}`}>
