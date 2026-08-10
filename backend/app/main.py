@@ -27,6 +27,7 @@ from .routers import (
     analysis, backtest, broker_angel, drawings, execution, journal, market,
     paper, positions, settings as settings_router, ws,
 )
+from .security import AccessTokenMiddleware
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -79,6 +80,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Runs inside CORS (added first here = inner layer) so it still sits ahead
+# of every router and a single line of trading logic; CORS itself has to be
+# outermost so its headers land on this middleware's 401s too — otherwise a
+# rejected request shows the browser a CORS error instead of the real one.
+# No-op locally: only activates once APP_ACCESS_TOKEN is set (security.py).
+app.add_middleware(AccessTokenMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

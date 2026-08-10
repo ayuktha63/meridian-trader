@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     angel_password: Optional[str] = None
     angel_totp_secret: Optional[str] = None
 
+    # ── app access (only matters once this is reachable off localhost) ──
+    # Unset by default — a bare `make dev` on your own machine needs no
+    # login. The moment this app is reachable from anywhere but localhost
+    # (a deployed backend, a tunnel, a shared network), every endpoint
+    # including live order execution is wide open to anyone with the URL
+    # unless this is set. Set it before you deploy, not after.
+    app_access_token: Optional[str] = None
+
     @field_validator("trading_mode", mode="before")
     @classmethod
     def _upper_trading_mode(cls, v):

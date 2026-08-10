@@ -66,7 +66,7 @@ class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str = "1h"
     bars: int = 1500
-    strategy: str = "confluence"       # confluence | structure | trend_pullback
+    strategy: str = "confluence"       # confluence | structure | trend_pullback | mean_reversion | breakout
     min_confidence: float = 55.0
     risk_reward: float = 2.0
     atr_stop_mult: float = 1.5

@@ -59,12 +59,20 @@ def _series(df: pd.DataFrame) -> Dict[str, np.ndarray]:
     bb = ind.bollinger(close)
     obv = ind.obv(df)
     volume = df["volume"]
+    atr = ind.atr(df, 14)
+    range_high = df["high"].rolling(20, min_periods=10).max()
+    range_low = df["low"].rolling(20, min_periods=10).min()
 
     return {
         "ema20": ind.ema(close, 20).to_numpy(),
         "ema50": ind.ema(close, 50).to_numpy(),
         "ema200": ind.ema(close, 200).to_numpy(),
-        "atr": ind.atr(df, 14).to_numpy(),
+        "atr": atr.to_numpy(),
+        # Compression proxy for the breakout strategy: today's ATR against its
+        # own recent average. Below ~0.8x means volatility has contracted —
+        # the same idea as `snap.bb_squeeze` in the live engine, cheaper to
+        # compute vectorised than a true Bollinger-bandwidth percentile.
+        "atr_ratio": (atr / atr.rolling(50, min_periods=20).mean()).to_numpy(),
         "rsi": ind.rsi(close, 14).to_numpy(),
         "macd_hist": macd["hist"].to_numpy(),
         "macd_line": macd["line"].to_numpy(),
@@ -73,9 +81,12 @@ def _series(df: pd.DataFrame) -> Dict[str, np.ndarray]:
         "minus_di": adx["minus_di"].to_numpy(),
         "st_dir": st["direction"].to_numpy(),
         "bb_pctb": bb["pctb"].to_numpy(),
+        "bb_mid": bb["mid"].to_numpy(),
         "obv_slope": obv.diff(20).to_numpy(),
         "mfi": ind.mfi(df, 14).to_numpy(),
         "rvol": (volume / volume.rolling(20, min_periods=5).mean()).to_numpy(),
+        "range_high": range_high.to_numpy(),
+        "range_low": range_low.to_numpy(),
     }
 
 
@@ -129,6 +140,60 @@ def _structure_timeline(df: pd.DataFrame, atr_mean: float):
             event_bias[j] += sign * weight * (1.0 - offset / 20.0)
 
     return np.clip(bias, -1, 1), np.clip(event_bias, -1, 1)
+
+
+def _mean_reversion_setup(i: int, s: Dict[str, np.ndarray], close: np.ndarray,
+                          struct_bias: np.ndarray, event_bias: np.ndarray):
+    """Vectorised approximation of `analysis/strategies.mean_reversion`: fade
+    a stretched move back toward the mean, only while the market is ranging.
+    Not a byte-for-byte port (that version reads a per-bar structure
+    snapshot this fast loop doesn't build) but the same three gates: ranging,
+    stretched, no fresh break against the fade."""
+    adx, rsi, pctb = s["adx"][i], s["rsi"][i], s["bb_pctb"][i]
+    if np.isnan(adx) or np.isnan(rsi):
+        return None
+    ranging = adx < 22 and abs(struct_bias[i]) < 0.3
+    stretched = rsi <= 32 or rsi >= 68 or (not np.isnan(pctb) and (pctb <= 0.05 or pctb >= 0.95))
+    if not (ranging and stretched):
+        return None
+
+    long = rsi < 50
+    if abs(event_bias[i]) > 0.5 and (event_bias[i] > 0) != long:
+        return None  # a fresh BOS against the fade means the range broke
+
+    atr = s["atr"][i]
+    entry = float(close[i])
+    stop = entry - atr * 1.2 if long else entry + atr * 1.2
+    mid = s["bb_mid"][i]
+    target = (float(mid) if not np.isnan(mid) and abs(mid - entry) > atr * 0.8
+             else (entry + atr * 1.6 if long else entry - atr * 1.6))
+    return ("BUY" if long else "SELL", entry, stop, target)
+
+
+def _breakout_setup(i: int, s: Dict[str, np.ndarray], close: np.ndarray):
+    """Vectorised approximation of `analysis/strategies.breakout`: a decisive
+    move out of compression, at the range edge, confirmed by volume."""
+    atr_ratio, rvol = s["atr_ratio"][i], s["rvol"][i]
+    high, low = s["range_high"][i], s["range_low"][i]
+    if np.isnan(atr_ratio) or np.isnan(rvol) or np.isnan(high) or np.isnan(low):
+        return None
+    compressed = atr_ratio < 0.8
+    if not compressed or rvol < 1.2:
+        return None
+
+    price = float(close[i])
+    atr = s["atr"][i]
+    dist_high, dist_low = abs(price - high), abs(price - low)
+    if min(dist_high, dist_low) > atr * 1.2:
+        return None  # not actually at the edge
+
+    long = dist_high <= dist_low
+    width = max(high - low, atr * 2)
+    stop = (low + atr * 0.3) if long else (high - atr * 0.3)
+    if abs(price - stop) > atr * 3:
+        stop = price - atr * 1.5 if long else price + atr * 1.5
+    target = price + width * 0.9 if long else price - width * 0.9
+    return ("BUY" if long else "SELL", price, stop, target)
 
 
 def _signal(i: int, s: Dict[str, np.ndarray], close: np.ndarray,
@@ -286,24 +351,50 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
             continue
 
         signal = _signal(i, s, close, struct_bias, event_bias, _candle_bias(ctx, i))
-        if signal["confidence"] < request.min_confidence:
-            continue
 
-        if request.strategy == "structure" and abs(struct_bias[i]) < 0.3:
-            continue
-        if request.strategy == "trend_pullback":
-            rsi = s["rsi"][i]
-            aligned_long = signal["directional"] > 0 and rsi < 48
-            aligned_short = signal["directional"] < 0 and rsi > 52
-            if not (aligned_long or aligned_short):
+        # Mean reversion and breakout have their own direction/entry/stop/
+        # target rule — the confluence score below is not used to size or
+        # aim these, only as a baseline "is anything obviously wrong" floor.
+        if request.strategy == "mean_reversion":
+            setup = _mean_reversion_setup(i, s, close, struct_bias, event_bias)
+            if setup is None:
                 continue
+            direction, entry, stop, target = setup
+        elif request.strategy == "breakout":
+            setup = _breakout_setup(i, s, close)
+            if setup is None:
+                continue
+            direction, entry, stop, target = setup
+        else:
+            if signal["confidence"] < request.min_confidence:
+                continue
+            if request.strategy == "structure" and abs(struct_bias[i]) < 0.3:
+                continue
+            if request.strategy == "trend_pullback":
+                rsi = s["rsi"][i]
+                aligned_long = signal["directional"] > 0 and rsi < 48
+                aligned_short = signal["directional"] < 0 and rsi > 52
+                if not (aligned_long or aligned_short):
+                    continue
 
-        direction = "BUY" if signal["directional"] > 0 else "SELL"
-        entry = float(close[i])
-        stop_distance = float(atr * request.atr_stop_mult)
-        stop = entry - stop_distance if direction == "BUY" else entry + stop_distance
-        target = (entry + stop_distance * request.risk_reward if direction == "BUY"
-                  else entry - stop_distance * request.risk_reward)
+            direction = "BUY" if signal["directional"] > 0 else "SELL"
+            entry = float(close[i])
+            stop_distance = float(atr * request.atr_stop_mult)
+            stop = entry - stop_distance if direction == "BUY" else entry + stop_distance
+            target = (entry + stop_distance * request.risk_reward if direction == "BUY"
+                      else entry - stop_distance * request.risk_reward)
+
+        if request.strategy == "mean_reversion":
+            reason = "ADX {:.0f} (ranging) · RSI {:.0f} · %B {:.2f} — fading back toward the mean".format(
+                s["adx"][i], s["rsi"][i], s["bb_pctb"][i])
+        elif request.strategy == "breakout":
+            reason = "ATR ratio {:.2f} (compressed) · RVOL {:.1f}x — break from the range edge".format(
+                s["atr_ratio"][i], s["rvol"][i])
+        else:
+            reason = ("trend {:+.2f} · momentum {:+.2f} · structure {:+.2f} · "
+                      "volume {:+.2f} · pattern {:+.2f} ({:.0f}% agreement)".format(
+                          signal["trend"], signal["momentum"], signal["structure"],
+                          signal["volume"], signal["pattern"], signal["agreement"] * 100))
 
         open_trade = BacktestTrade(
             index=i, time=int(times[i]), direction=direction,
@@ -311,10 +402,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
             stop_loss=round(stop, instrument.digits),
             take_profit=round(target, instrument.digits),
             confidence=round(signal["confidence"], 1),
-            reason="trend {:+.2f} · momentum {:+.2f} · structure {:+.2f} · "
-                   "volume {:+.2f} · pattern {:+.2f} ({:.0f}% agreement)".format(
-                       signal["trend"], signal["momentum"], signal["structure"],
-                       signal["volume"], signal["pattern"], signal["agreement"] * 100),
+            reason=reason,
         )
         open_index = i
         trades.append(open_trade)
