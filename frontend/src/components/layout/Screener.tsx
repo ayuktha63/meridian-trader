@@ -170,9 +170,14 @@ function RowGroup({ title, rows, onSelect, tone }: {
             {row.broker && (
               <span className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5
                                bg-tint/[0.06] border border-hairline"
-                    title={`Trade this on ${row.broker} — search for exactly this name`}>
+                    title={row.exchange
+                      ? `Trade this on ${row.broker}, ${row.exchange} — several stocks are also `
+                        + `listed on other exchanges, this is the one to pick`
+                      : `Trade this on ${row.broker} — search for exactly this name`}>
                 <span className="text-2xs font-mono font-semibold">{row.broker_symbol}</span>
-                <span className="text-[9px] text-faint">{row.broker}</span>
+                <span className="text-[9px] text-faint">
+                  {row.broker}{row.exchange ? ` · ${row.exchange}` : ''}
+                </span>
               </span>
             )}
           </button>

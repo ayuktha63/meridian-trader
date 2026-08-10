@@ -169,19 +169,27 @@ async def watchlist(
     return out
 
 
-async def _broker_tag(symbol: str) -> tuple[Optional[str], Optional[str]]:
-    """Where this can actually be traded, and the exact name to search for
-    there. Crypto is always CoinDCX (that's the only live crypto source this
-    platform has); everything else is resolved against Angel One's real,
-    current contract — never a guess."""
+async def _broker_tag(symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Where this can actually be traded, the exact name to search for
+    there, and the exchange segment. Crypto is always CoinDCX (that's the
+    only live crypto source this platform has); everything else is resolved
+    against Angel One's real, current contract — never a guess.
+
+    The exchange matters on its own: several NSE F&O stocks are also listed
+    on BSE, and picking the wrong one when you place the order in Angel One
+    means a different (usually thinner) order book than the one this
+    analysis was run against. Meridian's own catalogue only ever resolves
+    equities on NSE — deliberately, for liquidity — so `exchange` here is
+    always the answer to "which one do I pick," not a menu.
+    """
     instrument = get_instrument(symbol)
     if instrument.venue == "crypto":
-        return "CoinDCX", instrument.broker_symbol or instrument.symbol
+        return "CoinDCX", instrument.broker_symbol or instrument.symbol, None
     try:
         match = await angel_instruments.resolve(symbol)
     except InstrumentUnsupported:
-        return None, None
-    return "Angel One", match.trading_symbol
+        return None, None, None
+    return "Angel One", match.trading_symbol, match.exchange
 
 
 @router.get("/screener", response_model=List[ScreenerRow])
@@ -217,8 +225,8 @@ async def screener(
     async def _row(symbol: str) -> ScreenerRow:
         instrument = get_instrument(symbol)
         result = await engine.run(symbol, timeframe, include_ai=False)
-        broker, broker_symbol = ((None, None) if not tradable_only
-                                 else await _broker_tag(symbol))
+        broker, broker_symbol, exchange = ((None, None, None) if not tradable_only
+                                          else await _broker_tag(symbol))
         return ScreenerRow(
             symbol=symbol, display=instrument.display, timeframe=timeframe,
             decision=result.verdict.decision, confidence=result.confidence.final_confidence,
@@ -226,6 +234,7 @@ async def screener(
             entry=result.plan.entry, stop_loss=result.plan.stop_loss,
             take_profit=result.plan.take_profit, risk_reward=result.plan.risk_reward,
             summary=result.verdict.summary, broker=broker, broker_symbol=broker_symbol,
+            exchange=exchange,
         )
 
     results = await asyncio.gather(

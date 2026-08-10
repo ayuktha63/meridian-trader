@@ -294,6 +294,11 @@ class ScreenerRow(BaseModel):
     #: Absent when the instrument isn't tradable on either (e.g. spot FX).
     broker: Optional[str] = None
     broker_symbol: Optional[str] = None
+    #: NSE, CDS, MCX, NFO — which exchange segment the Angel One contract is
+    #: on. Several F&O stocks are dual-listed on BSE too; this is always the
+    #: NSE side deliberately (liquidity), so it answers "which one do I pick"
+    #: rather than presenting a choice. None for CoinDCX rows.
+    exchange: Optional[str] = None
 
 
 class AnalysisResult(BaseModel):

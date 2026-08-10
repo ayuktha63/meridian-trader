@@ -930,4 +930,5 @@ export interface ScreenerRow {
   error?: string | null
   broker?: string | null
   broker_symbol?: string | null
+  exchange?: string | null
 }
