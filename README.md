@@ -6,12 +6,19 @@ continuously fuses that with indicators, market structure, Smart Money Concepts,
 trend, volume and volatility — then asks Claude to reason over the evidence and return a
 **BUY / SELL / WAIT** recommendation with confidence, entry, stop, targets and explicit reasoning.
 
-> **This is not a trading bot. The AI never executes trades.** Every output is analysis and
-> probability, never a guarantee. When evidence conflicts, the analyst is required to say `WAIT`.
+> **By default this is not a trading bot.** Every output is analysis and probability, never a
+> guarantee. When evidence conflicts, the analyst is required to say `WAIT`.
+
+> **Two exceptions, both opt-in and both clearly labelled on screen.** A built-in demo account
+> can auto-trade the platform's own signals on simulated money — useful for finding out whether
+> the confidence score means anything before risking a rupee. And Angel One can be connected for
+> **real** order execution, but it starts in `PAPER`, always returns to `PAPER` after a restart,
+> and a live order only ever goes out after you explicitly confirm the exact trade on screen.
+> Nothing executes silently.
 
 > **Trading with it?** Read **[TRADING.md](TRADING.md)** — what you can legally trade from
-> India, how to connect Zerodha, how a signal becomes an order, what it costs, and the
-> honest path from paper trading to real size.
+> India, how to connect Zerodha or Angel One, how a signal becomes an order (manual or live),
+> what it costs, and the honest path from paper trading to real size.
 
 ---
 
@@ -26,10 +33,13 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 | **Market structure** | Swing highs/lows, HH/HL/LH/LL, BOS, CHoCH, liquidity sweeps, FVGs, order blocks, breaker blocks, mitigation blocks, equal highs/lows, premium/discount, supply/demand |
 | **Patterns** | Triangles, wedges, flags, pennants, channels, H&S + inverse, double top/bottom, cup & handle, rectangles + **56 candlestick patterns** |
 | **MTF** | 1m/5m/15m/1H/4H/D fused into a single alignment score with a conflict report |
+| **Screener** | One click ("Best trades" in the top bar) scans every instrument and returns only the ones with a live BUY or SELL signal, sorted by confidence — instead of opening each chart by hand. Filtered to what's actually tradable on CoinDCX or Angel One (spot FX/metals excluded — analysis-only), and every row is tagged with the real trading name for that app (CoinDCX's own pair name, or Angel One's live-resolved contract — `NIFTY25AUG26FUT`, not a guess). Same rule engine as a normal analysis, minus Claude and pattern detection, so ~30 symbols come back in a few seconds (first scan of a session is slower — Angel One's contract list has to download once, then it's cached) |
 | **Strategies** | Five named plays scored side by side — trend continuation, mean reversion, breakout, order-block retest, momentum — each showing every precondition met and missing |
 | **Scenario paths** | Each engaged strategy draws its thesis forward on the chart, with the invalidation leg alongside it |
 | **Futures & options** | Any call expressed as a listed contract: futures cash risk, or an ITM/ATM/OTM option ladder with premium, delta, theta as %/day, break-even and the stop converted into premium |
 | **Risk management** | A protection ladder that ratchets the stop to breakeven then into profit as a trade runs, plus account-level guardrails — daily loss, losing streak, open risk, trade count |
+| **Demo auto-trading** | A $10,000 simulated account that can act on the platform's own BUY/SELL signals automatically — real spreads and commission modelled, full trade history, no real money ever involved |
+| **Live execution (Angel One)** | Optional, off by default. Submits a real order to your Angel One account only after you explicitly confirm the exact trade shown on screen — see [TRADING.md §2a/§3a](TRADING.md) for the full flow and its current limits |
 | **AI** | Claude receives a structured evidence brief and returns strict JSON: decision, confidence, entry, SL, TP, R:R, probability, bull/bear points, summary |
 | **Overlays** | The AI's levels are drawn back onto the chart — entry, SL, TP, profit/risk zones, order blocks, FVGs, liquidity pools, projected path arrows |
 | **Journal** | Every recommendation persisted with full evidence snapshot, then marked win/loss and scored |
@@ -178,6 +188,13 @@ Open the **gear icon** in the top bar. No env editing, no restarts:
 
 Settings persist to `backend/data/settings.json` (0600, gitignored) and apply immediately.
 
+**Angel One is the one exception, deliberately.** Its credentials (`ANGEL_API_KEY`,
+`ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`, `ANGEL_TOTP_SECRET`) are boot-time environment
+variables only — never accepted through Settings, never returned by any API response, not
+even masked, because they can place a real order. What *is* in the app: the **DEMO / LIVE**
+indicator and Angel One connection status in the top bar, and the confirmation dialog that
+gates every live order. See [TRADING.md §2a](TRADING.md) for setup.
+
 ### Zero-config by design
 
 Nothing external is required to boot, and **17 crypto pairs stream genuinely live from
@@ -189,6 +206,7 @@ analysis that changes with them.
 | Anthropic API key | Claude Opus 5 analyst | Deterministic rule-based analyst (same JSON contract) |
 | CoinDCX / Binance keys | — | Not used. Market data is public; Meridian places no orders |
 | Kite Connect | Live NSE-CDS / NFO / MCX data | Those symbols run simulated |
+| Angel One credentials | LIVE mode can be armed (still requires manual confirmation per trade) | Trading mode stays `PAPER`; demo auto-trading works fully either way |
 | PostgreSQL | Async Postgres via asyncpg | SQLite at `backend/data/meridian.db` |
 | Redis | Shared cache / pub-sub | In-process LRU cache |
 
@@ -270,16 +288,29 @@ backend/app
 ├── ai/                   prompts, narrative brief, Claude client, fallback analyst
 ├── overlays/             analysis → chart overlay primitives
 ├── backtest/             replay engine + performance metrics
+├── broker/               live-execution layer
+│   ├── angelone/         auth (TOTP session), client (SmartAPI wrapper),
+│   │                     instruments (scrip-master resolution), execution
+│   │                     (recommendation → order orchestration)
+│   ├── risk_gate.py      PreTradeRiskGate — mode/confirmation/connection/
+│   │                     kill-switch/instrument/quantity/funds/risk checks
+│   └── trading_mode.py   PAPER/LIVE flag + kill switch, restart-safe
+├── services/              paper (demo auto-trade account), journal, positions
 ├── db/                   SQLAlchemy models + async session
-├── routers/              market, drawings, analysis, journal, backtest, ws
-└── tests/                pytest suite for the analytical core
+├── routers/              market, drawings, analysis, journal, backtest,
+│                         positions, paper, broker_angel, execution, ws
+└── tests/                pytest suite — analytical core, paper trading,
+                          Angel One safety/instrument resolution, execution
 
 frontend/src
 ├── components/chart/     ChartCanvas, DrawingLayer, AIOverlay, Toolbar, Replay
-├── components/panels/    Trade, Analysis, Strategies, Derivatives, MTF,
-│                         Structure, Journal, Backtest, Protection,
-│                         AccountRisk, Management
+├── components/panels/    Trade (+ ExecuteLiveButton), Analysis, Strategies,
+│                         Derivatives, MTF, Structure, Journal, Backtest,
+│                         Protection, AccountRisk, Management
+├── components/layout/    TopBar, AutoTradeBar (demo account), TradingModeControl
+│                         (DEMO/LIVE + Angel One status), Screener (best trades now)
 ├── components/ExitAlert  full-screen stop/target alert on the 1s tier
+├── components/PaperFillToast   screen flash + toast when a demo/live trade opens or closes
 ├── lib/theme.ts          dark/light palette + canvas re-theming
 ├── components/ui/        design-system primitives
 ├── store/                zustand slices (chart, drawings, analysis, journal)
@@ -291,13 +322,19 @@ frontend/src
 ## Testing
 
 ```bash
-make test          # 122 pytest cases across the analytical core
+make test          # 190+ pytest cases across the analytical core and execution
 make lint          # frontend typecheck (tsc --noEmit)
 ```
 
 Covered: indicators, market structure, patterns, drawing analytics, confidence
 fusion, backtest metrics, the five strategies, option pricing and expiry
-arithmetic, the protection ladder, and the account guardrails.
+arithmetic, the protection ladder, the account guardrails, demo auto-trading
+(symbol/timeframe gating, R:R floor), and the Angel One live-execution path
+— PAPER-mode isolation, the pre-trade risk gate's ten checks, instrument
+resolution (including a regression test for a real bug: matching a
+non-tradable index-quote row instead of an actual futures contract),
+broker rejection, ambiguous/timeout handling, and duplicate-order
+protection.
 
 Tests run against a throwaway SQLite file in the system temp directory, never
 `backend/data/meridian.db` — otherwise fabricated test trades would appear in
@@ -308,6 +345,8 @@ your real journal and account limits.
 ## Risk notice
 
 Forex, metals and crypto trading carries substantial risk of loss. This software produces
-probabilistic analysis for research and education. It does not place orders, does not manage
-capital, and makes no claim of accuracy. Every recommendation includes its own invalidation level
-precisely because the analysis can be wrong. Size positions accordingly.
+probabilistic analysis for research and education and makes no claim of accuracy. By default it
+does not place orders or manage capital. The one exception — Angel One live execution — is
+off by default, requires explicit setup and per-trade confirmation, and is documented in full,
+limitations included, in [TRADING.md](TRADING.md). Every recommendation includes its own
+invalidation level precisely because the analysis can be wrong. Size positions accordingly.

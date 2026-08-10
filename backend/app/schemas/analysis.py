@@ -272,6 +272,29 @@ class AnalysisRequest(BaseModel):
     question: Optional[str] = None             # free-form user question for Claude
 
 
+class ScreenerRow(BaseModel):
+    """One line of the screener: everything needed to decide 'worth a look?'
+    without opening the chart. Deliberately not the full AnalysisResult —
+    scanning 30 symbols is only fast because each one skips patterns, MTF
+    and Claude and asks just the rule engine for a verdict."""
+    symbol: str
+    display: str
+    timeframe: str
+    decision: Decision
+    confidence: float
+    entry: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    risk_reward: Optional[float] = None
+    summary: str = ""
+    error: Optional[str] = None
+    #: Which app this can actually be traded on, and the exact name to search
+    #: for there — "CoinDCX" + "BTCUSDT", or "Angel One" + "NIFTY25AUG26FUT".
+    #: Absent when the instrument isn't tradable on either (e.g. spot FX).
+    broker: Optional[str] = None
+    broker_symbol: Optional[str] = None
+
+
 class AnalysisResult(BaseModel):
     id: str
     symbol: str

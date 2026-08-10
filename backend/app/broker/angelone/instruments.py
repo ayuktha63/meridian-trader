@@ -14,6 +14,7 @@ silent substitution.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -77,6 +78,12 @@ class InstrumentUnsupported(RuntimeError):
 class AngelOneInstrumentService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        #: Guards the fetch itself. The screener resolves ~15-100 symbols
+        #: concurrently on a cold cache; without this, every one of them
+        #: sees "not loaded" at the same instant and each kicks off its own
+        #: multi-MB download of the scrip master simultaneously — which is
+        #: exactly what hung the first version of this under real load.
+        self._refresh_lock = asyncio.Lock()
         self._by_key: Dict[tuple, dict] = {}   # (exchange, tradingsymbol) -> row
         #: (exchange, underlying name, instrumenttype) -> every matching
         #: contract, all expiries. Nearest unexpired one is picked at
@@ -96,7 +103,12 @@ class AngelOneInstrumentService:
     async def ensure_loaded(self) -> None:
         if self.loaded and not self.stale:
             return
-        await self.refresh()
+        async with self._refresh_lock:
+            # Re-check after acquiring: the caller that got here first has
+            # already refreshed by the time everyone else wakes up.
+            if self.loaded and not self.stale:
+                return
+            await self.refresh()
 
     async def refresh(self) -> None:
         try:

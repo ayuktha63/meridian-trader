@@ -1,8 +1,8 @@
 import type {
   AngelStatus, AnalysisResult, BacktestResult, Candle, Drawing, DrawingAnalytics,
   DrawingType, ExecutionRecord, InstrumentCapability, JournalEntry, JournalStats,
-  MarketClock, Point, Quote, PaperState, Position, PositionSide, SettingsPayload,
-  SymbolInfo, TimeframeInfo, TradingModeStatus,
+  MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
+  SettingsPayload, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from './types'
 
 /**
@@ -113,6 +113,10 @@ export const api = {
       `/api/analysis/watchlist?timeframe=${timeframe}${symbols?.length ? `&symbols=${symbols.join(',')}` : ''}`),
   aiStatus: () => request<{ enabled: boolean; model: string; effort: string; fallback: string }>(
     '/api/analysis/ai-status'),
+  screener: (timeframe: string, minConfidence = 0, symbols?: string[]) =>
+    request<ScreenerRow[]>(
+      `/api/analysis/screener?timeframe=${timeframe}&min_confidence=${minConfidence}`
+      + (symbols?.length ? `&symbols=${symbols.join(',')}` : '')),
 
   // ── journal ───────────────────────────────────────────────
   journal: (symbol?: string) =>

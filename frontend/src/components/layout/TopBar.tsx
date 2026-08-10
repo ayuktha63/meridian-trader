@@ -5,6 +5,7 @@ import { useActiveInstrument, useStore } from '../../store/useStore'
 import { Spinner, Toggle } from '../ui'
 import AutoStatus from './AutoStatus'
 import AutoTradeBar from './AutoTradeBar'
+import Screener from './Screener'
 import TradingModeControl from './TradingModeControl'
 
 const TIMEFRAME_ORDER = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w']
@@ -264,8 +265,18 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
           Analyse
         </button>
 
-        <AutoTradeBar />
-        <TradingModeControl />
+        <Screener />
+
+        {/* Grouped, not two disconnected floating badges — AutoTradeBar
+            answers "is the demo auto-trader armed", TradingModeControl
+            answers "which mode is the whole app in". Different questions,
+            each keeps its own semantic color, but tight spacing + a divider
+            reads as one status area instead of scattered chrome. */}
+        <div className="flex items-center gap-1.5">
+          <AutoTradeBar />
+          <span className="h-4 w-px bg-hairline" />
+          <TradingModeControl />
+        </div>
 
         <button
           type="button"

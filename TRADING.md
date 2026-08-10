@@ -225,14 +225,37 @@ The whole loop, in the order you do it.
 
 ### Before the session
 
-- Pick the instrument and timeframe you will trade **today**, and stay on it.
-  Flipping charts looking for a signal is how you find one that isn't there.
+- **Use the screener to pick the instrument, not gut feel.** Click **Best trades**
+  in the top bar — it scans every instrument in a few seconds and shows only
+  the ones with a live BUY or SELL right now, sorted by confidence, instead
+  of you opening 30 charts one at a time to find out the same thing. Click a
+  row to jump straight to that chart and timeframe.
+- **It's filtered to what you can actually trade.** By default the screener
+  drops spot FX and metals (EURUSD, XAUUSD, …) — analysis-only for Indian
+  residents, see §1 — and shows only instruments live on CoinDCX or Angel
+  One. Every row is tagged with exactly which one and the real trading name
+  to search for there: CoinDCX's own pair (`BTCUSDT`), or Angel One's
+  currently-resolved contract (`NIFTY25AUG26FUT`, not a guessed name — the
+  same resolution the live-execution path uses, see §2a). No translation
+  step between "the screener says X" and "what do I type into the app."
+- Once you're on a chart, **stay on it for the session**. Flipping charts
+  after that point, looking for a *better* signal than the one you have, is
+  how you find one that isn't there — the screener is for the "which
+  instrument" decision, not for re-litigating it every five minutes.
 - Mark your own levels. Draw the swing highs/lows, the ranges, the zones you
   care about. Meridian scores every drawing for touches, reactions and breaks,
   and feeds that to the analyst as evidence — your read is an input, not
   decoration.
 - Check **Backtest** on this instrument and timeframe. If the confluence engine
   has no edge on it historically, today is unlikely to be the exception.
+
+**What the screener is and isn't.** It's the same deterministic rule engine
+behind every analysis — no Claude, no pattern detection, which is exactly
+what keeps a full scan fast. It is not a stronger signal than what you'd get
+opening that chart directly; it's the same confidence number, just computed
+for everything at once so you know where to look. A high-confidence row here
+still deserves the same four checks in "When a signal appears" below before
+you act on it — the screener narrows the search, it doesn't replace the read.
 
 ### When a signal appears
 

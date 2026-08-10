@@ -910,3 +910,21 @@ export interface ExecutionRecord {
   created_at: number
   updated_at: number
 }
+
+// ── screener (best trades right now) ─────────────────────────
+
+export interface ScreenerRow {
+  symbol: string
+  display: string
+  timeframe: string
+  decision: Decision
+  confidence: number
+  entry: number | null
+  stop_loss: number | null
+  take_profit: number | null
+  risk_reward: number | null
+  summary: string
+  error?: string | null
+  broker?: string | null
+  broker_symbol?: string | null
+}

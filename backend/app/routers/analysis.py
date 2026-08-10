@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ai import claude_client
 from ..analysis import engine
+from ..broker.angelone.instruments import InstrumentUnsupported, angel_instruments
 from ..cache import cache
 from ..config import settings
 from ..db.session import get_session, session_scope
 from ..instruments import DEFAULT_STREAM_SYMBOLS, get_instrument, get_timeframe
-from ..schemas.analysis import AnalysisRequest, AnalysisResult
+from ..schemas.analysis import AnalysisRequest, AnalysisResult, Decision, ScreenerRow
 from ..services import drawings as drawing_repo
 from .. import runtime_settings
 from ..services import positions as position_repo
@@ -166,6 +167,82 @@ async def watchlist(
         else:
             out.append(item)
     return out
+
+
+async def _broker_tag(symbol: str) -> tuple[Optional[str], Optional[str]]:
+    """Where this can actually be traded, and the exact name to search for
+    there. Crypto is always CoinDCX (that's the only live crypto source this
+    platform has); everything else is resolved against Angel One's real,
+    current contract — never a guess."""
+    instrument = get_instrument(symbol)
+    if instrument.venue == "crypto":
+        return "CoinDCX", instrument.broker_symbol or instrument.symbol
+    try:
+        match = await angel_instruments.resolve(symbol)
+    except InstrumentUnsupported:
+        return None, None
+    return "Angel One", match.trading_symbol
+
+
+@router.get("/screener", response_model=List[ScreenerRow])
+async def screener(
+    timeframe: str = Query("1h"),
+    symbols: Optional[str] = None,
+    min_confidence: float = Query(0.0, ge=0, le=100),
+    tradable_only: bool = Query(
+        True, description="Restrict to instruments actually tradable on "
+                          "CoinDCX or Angel One — drops spot FX/metals, "
+                          "which are analysis-only on this platform."),
+) -> List[ScreenerRow]:
+    """'What's actually worth trading right now' — a BUY/SELL/confidence
+    verdict for every instrument in one call, instead of opening each chart
+    one at a time. Uses the same deterministic confluence engine as a normal
+    analysis, minus Claude and pattern detection, so ~30 symbols come back
+    in a few seconds instead of a few minutes. WAIT and error rows are
+    dropped — this list is deliberately only the symbols worth a second
+    look, sorted by confidence, highest first.
+
+    By default (`tradable_only=True`) every row is also tagged with the
+    broker it's actually tradable on and the exact name to search for there
+    — CoinDCX's own pair name, or Angel One's real, currently-resolved
+    contract. A symbol that isn't tradable on either (spot FX/metals — see
+    TRADING.md on why those are analysis-only for Indian residents) is
+    dropped entirely rather than shown with no way to act on it.
+    """
+    wanted = ([s.strip().upper() for s in symbols.split(",")]
+          if symbols else DEFAULT_STREAM_SYMBOLS)
+    if tradable_only and not symbols:
+        wanted = [s for s in wanted if get_instrument(s).venue != "otc"]
+
+    async def _row(symbol: str) -> ScreenerRow:
+        instrument = get_instrument(symbol)
+        result = await engine.run(symbol, timeframe, include_ai=False)
+        broker, broker_symbol = ((None, None) if not tradable_only
+                                 else await _broker_tag(symbol))
+        return ScreenerRow(
+            symbol=symbol, display=instrument.display, timeframe=timeframe,
+            decision=result.verdict.decision, confidence=result.confidence.final_confidence,
+            entry=result.plan.entry, stop_loss=result.plan.stop_loss,
+            take_profit=result.plan.take_profit, risk_reward=result.plan.risk_reward,
+            summary=result.verdict.summary, broker=broker, broker_symbol=broker_symbol,
+        )
+
+    results = await asyncio.gather(
+        *(_row(symbol) for symbol in wanted), return_exceptions=True)
+
+    rows: List[ScreenerRow] = []
+    for symbol, item in zip(wanted, results):
+        if isinstance(item, Exception):
+            log.debug("screener skipped %s: %s", symbol, item)
+            continue
+        if item.decision == Decision.WAIT or item.confidence < min_confidence:
+            continue
+        if tradable_only and not item.broker:
+            continue
+        rows.append(item)
+
+    rows.sort(key=lambda r: r.confidence, reverse=True)
+    return rows
 
 
 @router.get("/ai-status")
