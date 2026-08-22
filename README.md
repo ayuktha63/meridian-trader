@@ -63,7 +63,7 @@ design](#zero-config-by-design).
 ### First time — two commands
 
 ```bash
-cd /Users/aashishs/Documents/trading
+cd trading
 
 # 1. Creates backend/.venv, installs Python deps, runs npm install.
 #    Takes a few minutes. Only ever needed once.
@@ -142,7 +142,7 @@ make desktop     # Electron shell wrapping the same UI
 ### Other commands
 
 ```bash
-make test        # 122 backend tests (pytest)
+make test        # 190+ backend tests (pytest)
 make lint        # frontend typecheck (tsc --noEmit)
 make clean       # remove venv, node_modules, build output
 ```
@@ -206,7 +206,7 @@ analysis that changes with them.
 | Anthropic API key | Claude Opus 5 analyst | Deterministic rule-based analyst (same JSON contract) |
 | CoinDCX / Binance keys | — | Not used. Market data is public; Meridian places no orders |
 | Kite Connect | Live NSE-CDS / NFO / MCX data | Those symbols run simulated |
-| Angel One credentials | LIVE mode can be armed (still requires manual confirmation per trade) | Trading mode stays `PAPER`; demo auto-trading works fully either way |
+| Angel One credentials | LIVE mode can be armed (still requires manual confirmation per trade); also serves live NSE/MCX data if Zerodha isn't connected | Trading mode stays `PAPER`; demo auto-trading works fully either way |
 | PostgreSQL | Async Postgres via asyncpg | SQLite at `backend/data/meridian.db` |
 | Redis | Shared cache / pub-sub | In-process LRU cache |
 
@@ -216,10 +216,10 @@ analysis that changes with them.
 | --- | --- | --- |
 | Crypto (USDT) | BTC, ETH, SOL, XRP, DOGE, BNB, ADA, AVAX, LINK, DOT, LTC, TRX | CoinDCX — keyless |
 | Crypto (INR) | BTCINRC, ETHINRC, SOLINRC, XRPINRC, DOGEINRC | CoinDCX — keyless (wide spreads, see TRADING.md) |
-| NSE F&O stocks | 122 names — RELIANCE, HDFCBANK, INFY, TCS, … | Zerodha Kite Connect |
-| NSE currency futures | USDINR, EURINR, GBPINR, JPYINR | Zerodha Kite Connect |
-| NSE indices | NIFTY, BANKNIFTY | Zerodha Kite Connect |
-| MCX commodities | MCXGOLD, MCXSILVER, MCXCRUDE | Zerodha Kite Connect |
+| NSE F&O stocks | 122 names — RELIANCE, HDFCBANK, INFY, TCS, … | Zerodha Kite Connect (or Angel One) |
+| NSE currency futures | USDINR, EURINR, GBPINR, JPYINR | Zerodha Kite Connect (or Angel One) |
+| NSE indices | NIFTY, BANKNIFTY | Zerodha Kite Connect (or Angel One) |
+| MCX commodities | MCXGOLD, MCXSILVER, MCXCRUDE | Zerodha Kite Connect (or Angel One) |
 | Spot FX & gold | EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, XAUUSD | Twelve Data (analysis only for Indian residents — see TRADING.md) |
 
 ---
@@ -279,8 +279,8 @@ backend/app
 ├── config.py             settings (env-driven, safe defaults)
 ├── instruments.py        instrument reference data (pip size, lots, venues)
 ├── stocks.py             the NSE F&O stock universe
-├── data/                 providers (coindcx, binance, zerodha, twelvedata,
-│                         synthetic), tick→candle feed, candle store
+├── data/                 providers (coindcx, binance, zerodha, angelone,
+│                         twelvedata, synthetic), tick→candle feed, candle store
 ├── analysis/             indicators, structure, patterns, candlesticks,
 │                         volume profile, drawings, mtf, confidence, engine,
 │                         strategies, derivatives, live tier, manage,
@@ -296,21 +296,25 @@ backend/app
 │   │                     kill-switch/instrument/quantity/funds/risk checks
 │   └── trading_mode.py   PAPER/LIVE flag + kill switch, restart-safe
 ├── services/              paper (demo auto-trade account), journal, positions
+├── schemas/              Pydantic request/response models
 ├── db/                   SQLAlchemy models + async session
-├── routers/              market, drawings, analysis, journal, backtest,
-│                         positions, paper, broker_angel, execution, ws
-└── tests/                pytest suite — analytical core, paper trading,
+└── routers/              market, drawings, analysis, journal, backtest,
+                          positions, paper, broker_angel, execution, settings, ws
+
+backend/tests             pytest suite — analytical core, paper trading,
                           Angel One safety/instrument resolution, execution
 
 frontend/src
-├── components/chart/     ChartCanvas, DrawingLayer, AIOverlay, Toolbar, Replay
+├── components/chart/     ChartCanvas, DrawingLayer, Shapes, AIOverlay, Toolbar
 ├── components/panels/    Trade (+ ExecuteLiveButton), Analysis, Strategies,
 │                         Derivatives, MTF, Structure, Journal, Backtest,
-│                         Protection, AccountRisk, Management
-├── components/layout/    TopBar, AutoTradeBar (demo account), TradingModeControl
-│                         (DEMO/LIVE + Angel One status), Screener (best trades now)
+│                         Protection, AccountRisk, Management, Position, Drawings
+├── components/layout/    TopBar, AutoStatus, StatusBar, AutoTradeBar (demo account),
+│                         TradingModeControl (DEMO/LIVE + Angel One status),
+│                         Screener (best trades now)
 ├── components/ExitAlert  full-screen stop/target alert on the 1s tier
 ├── components/PaperFillToast   screen flash + toast when a demo/live trade opens or closes
+├── components/SettingsModal    gear-icon settings (Analyst, Market data, Zerodha, Risk, Automatic protection)
 ├── lib/theme.ts          dark/light palette + canvas re-theming
 ├── components/ui/        design-system primitives
 ├── store/                zustand slices (chart, drawings, analysis, journal)

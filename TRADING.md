@@ -185,8 +185,8 @@ at every step.
    ANGEL_PASSWORD=
    ANGEL_TOTP_SECRET=
    ```
-3. Restart the backend. Settings → Broker shows Angel One's connection status
-   once it can authenticate.
+3. Restart the backend. The DEMO/LIVE control in the top bar (TradingModeControl)
+   shows Angel One's connection status once it can authenticate.
 
 **Why credentials live in `.env` and not Settings, unlike Zerodha's.**
 Zerodha's keys in this app are read-only market data. Angel One's can place
@@ -197,11 +197,11 @@ enforced in code, not just in this paragraph.
 
 **PAPER and LIVE.** The account always starts in PAPER — real broker
 connection, zero orders sent. Switching to LIVE is a deliberate two-part act:
-flip the toggle in Settings → Trading Mode, then confirm the dialog that
-follows. **A backend restart always drops back to PAPER**, on purpose — a
-crash mid-session must never wake back up still armed. There's also a **kill
-switch** (Settings → Trading Mode → Emergency Stop) that blocks new live
-orders immediately without touching anything already open.
+flip the toggle in the DEMO/LIVE control in the top bar, then confirm the
+dialog that follows. **A backend restart always drops back to PAPER**, on
+purpose — a crash mid-session must never wake back up still armed. There's
+also a **kill switch** (the same top-bar control → Emergency Stop) that
+blocks new live orders immediately without touching anything already open.
 
 **Instrument support is checked, not assumed.** Angel One does not support
 crypto at all — BTCUSD, ETHUSD and every other CoinDCX pair simply cannot be
