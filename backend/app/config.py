@@ -17,7 +17,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
-DATA_DIR = BACKEND_DIR / "data"
+#: Everything the app writes — the SQLite file, settings.json, the persisted
+#: kill switch. Overridable so a test run (or a second instance) can never
+#: read or write the state of the one that is actually trading.
+DATA_DIR = Path(os.environ.get("MERIDIAN_DATA_DIR") or (BACKEND_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -52,7 +55,10 @@ class Settings(BaseSettings):
     redis_url: Optional[str] = None
 
     # ── server ────────────────────────────────────────────────
-    api_host: str = "0.0.0.0"
+    # Loopback by default. This API can place real orders, so being reachable
+    # from the network is something you opt into — and `security.py` refuses
+    # to serve a non-loopback host unless APP_ACCESS_TOKEN is set.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     # `NoDecode` is load-bearing. Without it pydantic-settings treats any
     # complex-typed field as JSON and tries to decode the env value *before*
@@ -74,6 +80,21 @@ class Settings(BaseSettings):
     risk_per_trade_pct: float = 1.0
     auto_protect: bool = True
     account_currency: str = "USD"
+    #: Reward-to-risk floor for the auto-trader. 2.0 is the value the
+    #: parameter sweep supported; see `analysis/autotrader.py`.
+    min_risk_reward: float = 2.0
+
+    # ── live order supervision ───────────────────────────────
+    #: The loop that watches every live order and position at the broker and
+    #: keeps a stop resting behind each fill. Only ever turned off by tests,
+    #: which drive single passes by hand.
+    live_reconciler_enabled: bool = True
+    live_reconcile_interval_seconds: float = 3.0
+    #: An entry is a LIMIT at the price the analysis saw. If the market has
+    #: not come back to it in this long, the setup it was sized for is gone
+    #: and the order is cancelled rather than left to fill hours later.
+    #: 0 disables the timeout.
+    live_entry_timeout_seconds: float = 300.0
 
     # ── angel one (live execution) ───────────────────────────
     # Boot-time only, deliberately not in runtime_settings.py: that store
@@ -88,10 +109,10 @@ class Settings(BaseSettings):
 
     # ── app access (only matters once this is reachable off localhost) ──
     # Unset by default — a bare `make dev` on your own machine needs no
-    # login. The moment this app is reachable from anywhere but localhost
-    # (a deployed backend, a tunnel, a shared network), every endpoint
-    # including live order execution is wide open to anyone with the URL
-    # unless this is set. Set it before you deploy, not after.
+    # login, because without a token the API only answers loopback callers.
+    # Set it to serve anyone else: a non-loopback API_HOST will not start
+    # without it, and a request arriving from another machine or through a
+    # proxy is refused until it carries it.
     app_access_token: Optional[str] = None
 
     @field_validator("trading_mode", mode="before")

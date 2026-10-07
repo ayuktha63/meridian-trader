@@ -11,16 +11,48 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Point the app at a throwaway database *before* anything imports the settings,
-# which are cached with lru_cache and read on first access. Without this the API
-# tests write positions and journal entries straight into the file the running
-# app uses — the guardrails then read those fabricated trades as real ones and
-# report a daily P&L that never happened.
-_TEST_DB = Path(tempfile.gettempdir()) / "meridian-test.db"
-_TEST_DB.unlink(missing_ok=True)
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DB)
+# Point the app at a throwaway data directory *before* anything imports the
+# settings, which are cached with lru_cache and read on first access. Without
+# this the API tests write positions and journal entries straight into the file
+# the running app uses — the guardrails then read those fabricated trades as
+# real ones and report a daily P&L that never happened. The same goes for
+# settings.json and the persisted kill switch, which live beside the database.
+# A fresh directory per run, so two runs at once cannot share state either.
+_TEST_DATA = Path(tempfile.mkdtemp(prefix="meridian-test-"))
+os.environ["MERIDIAN_DATA_DIR"] = str(_TEST_DATA)
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DATA / "meridian-test.db")
+# The live-order supervisor is driven one pass at a time by the tests that
+# exercise it; a background loop racing them would make every one flaky.
+os.environ["LIVE_RECONCILER_ENABLED"] = "false"
+
+import starlette.testclient as _testclient  # noqa: E402
 
 from app.instruments import get_instrument  # noqa: E402
+
+# Without an access token the API only answers this machine (security.py), and
+# Starlette's TestClient announces itself as host "testclient" calling
+# "testserver". Default every client to what a local browser looks like, so the
+# suite exercises the same path a real local request takes; the security tests
+# override these to prove a remote caller is turned away.
+_original_testclient_init = _testclient.TestClient.__init__
+_original_websocket_connect = _testclient.TestClient.websocket_connect
+
+
+def _local_testclient_init(self, *args, **kwargs):
+    kwargs.setdefault("client", ("127.0.0.1", 50000))
+    kwargs.setdefault("base_url", "http://localhost")
+    _original_testclient_init(self, *args, **kwargs)
+
+
+def _local_websocket_connect(self, url, *args, **kwargs):
+    # websocket_connect ignores base_url and joins against "ws://testserver".
+    if url.startswith("/"):
+        url = "ws://localhost" + url
+    return _original_websocket_connect(self, url, *args, **kwargs)
+
+
+_testclient.TestClient.__init__ = _local_testclient_init
+_testclient.TestClient.websocket_connect = _local_websocket_connect
 
 BAR = 900  # 15 minutes
 

@@ -27,7 +27,7 @@ from .routers import (
     analysis, backtest, broker_angel, drawings, execution, journal, market,
     paper, positions, settings as settings_router, ws,
 )
-from .security import AccessTokenMiddleware
+from .security import LOCAL_ORIGIN_REGEX, AccessTokenMiddleware, assert_safe_bind
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -45,6 +45,10 @@ STARTED_AT = time.time()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Meridian %s starting", __version__)
+    # Raises, and so aborts startup, if API_HOST is a network address and no
+    # access token is set. `python -m app.serve` has already said so more
+    # politely; this catches every other way of launching the app.
+    assert_safe_bind(settings.api_host, settings.app_access_token)
 
     db_dialect = await init_db()
     cache_backend = await cache.connect()
@@ -84,12 +88,13 @@ app = FastAPI(
 # of every router and a single line of trading logic; CORS itself has to be
 # outermost so its headers land on this middleware's 401s too — otherwise a
 # rejected request shows the browser a CORS error instead of the real one.
-# No-op locally: only activates once APP_ACCESS_TOKEN is set (security.py).
+# With no APP_ACCESS_TOKEN it admits this machine only; with one, anyone who
+# presents it (security.py).
 app.add_middleware(AccessTokenMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_origin_regex=r"^(http://localhost:\d+|http://127\.0\.0\.1:\d+|app://.*|file://.*)$",
+    allow_origin_regex=LOCAL_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

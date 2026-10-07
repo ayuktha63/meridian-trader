@@ -21,8 +21,10 @@ node_modules_stamp:
 	cd frontend && npm install
 	@touch node_modules_stamp
 
+# The API binds 127.0.0.1 unless API_HOST says otherwise, and refuses a network
+# address without APP_ACCESS_TOKEN — it can place real orders. See .env.example.
 backend:
-	cd backend && .venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	cd backend && .venv/bin/python -m app.serve --reload
 
 frontend:
 	cd frontend && npm run dev
@@ -30,13 +32,13 @@ frontend:
 # Runs API + UI together; Ctrl-C stops both.
 dev:
 	@trap 'kill 0' INT TERM; \
-	( cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 ) & \
+	( cd backend && .venv/bin/python -m app.serve ) & \
 	( cd frontend && npm run dev ) & \
 	wait
 
 desktop:
 	@trap 'kill 0' INT TERM; \
-	( cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 ) & \
+	( cd backend && .venv/bin/python -m app.serve ) & \
 	( cd frontend && npm run electron:dev ) & \
 	wait
 
