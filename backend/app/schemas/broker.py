@@ -21,6 +21,9 @@ class AngelStatus(BaseModel):
 class TradingModeStatus(BaseModel):
     mode: str
     kill_switch_active: bool
+    #: Why it tripped — "Activated manually.", or the limit that tripped it.
+    kill_switch_reason: Optional[str] = None
+    kill_switch_activated_at: Optional[float] = None
     live_confirmed_at: Optional[float] = None
 
 

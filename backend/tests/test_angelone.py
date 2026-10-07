@@ -54,12 +54,47 @@ def test_kill_switch_blocks_live_trading_even_when_mode_is_live():
     assert store.can_trade_live() is False
 
 
-def test_returning_to_paper_clears_the_kill_switch():
+def test_changing_mode_does_not_clear_the_kill_switch():
+    """It used to: PAPER and back to LIVE was a two-click way around an
+    emergency stop. Only an explicit clear lifts it."""
     store = TradingModeStore()
     store.set_mode(LIVE, confirmed=True)
-    store.activate_kill_switch()
+    store.activate_kill_switch("Daily loss limit reached.")
     store.set_mode(PAPER)
-    assert store.kill_switch_active is False
+    assert store.kill_switch_active is True
+    store.set_mode(LIVE, confirmed=True)
+    assert store.kill_switch_active is True
+    assert store.can_trade_live() is False
+    assert store.status()["kill_switch_reason"] == "Daily loss limit reached."
+
+    store.deactivate_kill_switch()
+    assert store.can_trade_live() is True
+    assert store.status()["kill_switch_reason"] is None
+
+
+def test_kill_switch_survives_a_restart_but_the_mode_does_not(tmp_path):
+    path = tmp_path / "kill_switch.json"
+    first = TradingModeStore(state_path=path)
+    first.set_mode(LIVE, confirmed=True)
+    first.activate_kill_switch("Stop could not be placed.")
+
+    restarted = TradingModeStore(state_path=path)
+    assert restarted.mode == PAPER, "a restart must never resume LIVE"
+    assert restarted.kill_switch_active is True
+    assert restarted.kill_switch_reason == "Stop could not be placed."
+    assert restarted.status()["kill_switch_activated_at"] is not None
+
+    restarted.deactivate_kill_switch()
+    assert TradingModeStore(state_path=path).kill_switch_active is False
+
+
+def test_unreadable_kill_switch_state_fails_towards_no_trading(tmp_path):
+    path = tmp_path / "kill_switch.json"
+    path.write_text("{ this is not json")
+    store = TradingModeStore(state_path=path)
+    assert store.kill_switch_active is True
+    store.set_mode(LIVE, confirmed=True)
+    assert store.can_trade_live() is False
 
 
 def test_invalid_mode_is_rejected():
@@ -187,3 +222,57 @@ def test_equity_resolves_by_eq_suffix_not_a_derivative_row():
 def _run(coro):
     import asyncio
     return asyncio.run(coro)
+
+
+# ── the SDK must not write credentials to its log ─────────────
+
+def test_sdk_request_logs_never_contain_credentials():
+    """SmartApi logs the whole request — headers and body — whenever one
+    fails. These are its two real message formats, with the values a failed
+    login and a failed order would carry."""
+    import logging
+
+    import logzero
+
+    from app.broker.angelone.auth import _load_sdk
+
+    _load_sdk()   # installs the redaction; no network, no login
+
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append(record.getMessage())
+
+    handler = Capture()
+    logzero.logger.addHandler(handler)
+    try:
+        headers = {
+            "Content-type": "application/json", "X-ClientLocalIP": "127.0.0.1",
+            "X-PrivateKey": "APIKEY-9f3c", "X-UserType": "USER",
+            "Authorization": "Bearer eyJhbGciOiJIUzUxMiJ9.payload.sig-77",
+        }
+        login = {"clientcode": "K123456", "password": "hunter2's \"pin\"", "totp": "481516"}
+        url = "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword"
+        logzero.logger.error(
+            f"Error occurred while making a POST request to {url}. Headers: {headers}, "
+            f"Request: {login}, Response: HTTPSConnectionPool: Read timed out.")
+        data = {"status": False, "message": "Invalid totp", "errorcode": "AB1050",
+                "data": {"jwtToken": "eyJraWQiOiJ0b2tlbg.x.y", "refreshToken": "rt-secret-1",
+                         "feedToken": "ft-secret-2"}}
+        logzero.logger.error(
+            f"Error occurred while making a POST request to {url}. Error: {data['message']}. "
+            f"URL: {url}, Headers: {headers}, Request: {login}, Response: {data}")
+    finally:
+        logzero.logger.removeHandler(handler)
+
+    assert len(captured) == 2
+    for line in captured:
+        for secret in ("hunter2", "pin", "481516", "APIKEY-9f3c", "eyJhbGci", "sig-77",
+                       "K123456", "eyJraWQi", "rt-secret-1", "ft-secret-2"):
+            assert secret not in line, "leaked {!r} in: {}".format(secret, line)
+        # What makes the failure diagnosable survives.
+        assert "loginByPassword" in line
+    assert "Read timed out" in captured[0]
+    assert "Invalid totp" in captured[1]
+    assert "AB1050" in captured[1]

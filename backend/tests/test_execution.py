@@ -35,9 +35,11 @@ def client():
 def _reset_broker_state():
     """Every test starts from a clean slate: PAPER, disconnected, no kill switch."""
     trading_mode.set_mode(PAPER)
+    trading_mode.deactivate_kill_switch()   # no longer implied by PAPER
     angel_auth._session = None  # noqa: SLF001 - test-only reset of the singleton
     yield
     trading_mode.set_mode(PAPER)
+    trading_mode.deactivate_kill_switch()
     angel_auth._session = None  # noqa: SLF001
 
 

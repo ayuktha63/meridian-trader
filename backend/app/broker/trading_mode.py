@@ -4,37 +4,91 @@ Deliberately not in `runtime_settings.py`: that store persists to disk and
 reloads on every restart, and §33 of the live-trading spec requires that a
 restart can never silently resume LIVE — a backend crash mid-session should
 come back in PAPER and force a human to re-arm it, not quietly keep firing
-real orders into whatever state the process was in when it died. So this is
-in-memory only, seeded from the `TRADING_MODE` env var at boot, and switching
-to LIVE always requires an explicit, freshly-made API call with confirmation.
+real orders into whatever state the process was in when it died. So the mode
+is in-memory only, seeded from the `TRADING_MODE` env var at boot, and
+switching to LIVE always requires an explicit, freshly-made API call with
+confirmation.
 
-The kill switch lives here too, for the same reason: it needs to be checked
-by every single order-placing code path with zero chance of being
-accidentally bypassed by a stale cached value.
+The kill switch lives here too, because it needs to be checked by every
+single order-placing code path with zero chance of being accidentally
+bypassed by a stale cached value. It is the opposite kind of state from the
+mode, though, and is kept the opposite way: **the mode forgets, the kill
+switch remembers.** Once tripped it stays tripped — through a switch to PAPER
+and back, and through a restart — until someone explicitly clears it. An
+emergency stop that a mode toggle or a process bounce quietly undoes is not
+one, least of all when what tripped it was a loss limit.
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
-from ..config import get_settings
+from ..config import DATA_DIR, get_settings
+
+log = logging.getLogger("meridian.trading_mode")
 
 PAPER = "PAPER"
 LIVE = "LIVE"
 
+KILL_SWITCH_PATH = DATA_DIR / "kill_switch.json"
+
 
 class TradingModeStore:
-    def __init__(self) -> None:
+    def __init__(self, state_path: Optional[Path] = None) -> None:
+        """`state_path` is where the kill switch is remembered. Without one
+        the store is purely in-memory, which is what a unit test wants and
+        what the process-wide instance below must never be."""
         self._lock = threading.RLock()
+        self._state_path = state_path
         seed = get_settings().trading_mode
         self._mode = LIVE if seed == LIVE else PAPER
-        # LIVE from the environment still is not allowed to arm the kill
-        # switch state automatically — it only sets the *default* mode the
-        # UI shows; §3/§8 still require the confirmation dialog before the
-        # first live order.
-        self._kill_switch = False
         self._live_confirmed_at: Optional[float] = None
+        self._kill_switch = False
+        self._kill_reason: Optional[str] = None
+        self._kill_at: Optional[float] = None
+        self._load_kill_switch()
+
+    # ── kill switch persistence ───────────────────────────────
+
+    def _load_kill_switch(self) -> None:
+        path = self._state_path
+        if path is None or not path.exists():
+            return
+        try:
+            state = json.loads(path.read_text())
+            active = bool(state.get("active"))
+            reason, at = state.get("reason"), state.get("activated_at")
+        except (ValueError, OSError, AttributeError):
+            # A file that exists but cannot be read is not evidence the
+            # switch is off. Fail towards "no live orders".
+            log.exception("kill switch state unreadable — treating it as ACTIVE")
+            active, reason, at = True, "Kill switch state file was unreadable.", time.time()
+        self._kill_switch, self._kill_reason, self._kill_at = active, reason, at
+        if active:
+            log.warning("kill switch is ACTIVE from a previous session: %s",
+                        reason or "no reason recorded")
+
+    def _persist_kill_switch(self) -> None:
+        path = self._state_path
+        if path is None:
+            return
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({
+                "active": self._kill_switch, "reason": self._kill_reason,
+                "activated_at": self._kill_at,
+            }))
+            os.replace(tmp, path)
+        except OSError:
+            # Still in force for this process; only the restart guarantee is lost.
+            log.exception("could not persist kill switch state")
+
+    # ── state ─────────────────────────────────────────────────
 
     @property
     def mode(self) -> str:
@@ -49,6 +103,11 @@ class TradingModeStore:
     def kill_switch_active(self) -> bool:
         with self._lock:
             return self._kill_switch
+
+    @property
+    def kill_switch_reason(self) -> Optional[str]:
+        with self._lock:
+            return self._kill_reason
 
     def can_trade_live(self) -> bool:
         """The single check every live-order code path must call first."""
@@ -66,26 +125,35 @@ class TradingModeStore:
         with self._lock:
             self._mode = mode
             self._live_confirmed_at = time.time() if mode == LIVE else None
-            if mode == PAPER:
-                # Leaving LIVE always clears the kill switch too — nothing
-                # about re-entering PAPER should carry stale emergency state.
-                self._kill_switch = False
+            # The kill switch is deliberately untouched here: see the module
+            # docstring. Toggling the mode is not a way to clear it.
 
-    def activate_kill_switch(self) -> None:
+    def activate_kill_switch(self, reason: Optional[str] = None) -> None:
         with self._lock:
+            if not self._kill_switch:
+                self._kill_at = time.time()
             self._kill_switch = True
+            self._kill_reason = reason or self._kill_reason or "Activated manually."
+            self._persist_kill_switch()
+        log.warning("KILL SWITCH ACTIVE — %s", self._kill_reason)
 
     def deactivate_kill_switch(self) -> None:
         with self._lock:
-            self._kill_switch = False
+            was_active = self._kill_switch
+            self._kill_switch, self._kill_reason, self._kill_at = False, None, None
+            self._persist_kill_switch()
+        if was_active:
+            log.warning("kill switch cleared")
 
     def status(self) -> dict:
         with self._lock:
             return {
                 "mode": self._mode,
                 "kill_switch_active": self._kill_switch,
+                "kill_switch_reason": self._kill_reason,
+                "kill_switch_activated_at": self._kill_at,
                 "live_confirmed_at": self._live_confirmed_at,
             }
 
 
-trading_mode = TradingModeStore()
+trading_mode = TradingModeStore(state_path=KILL_SWITCH_PATH)
