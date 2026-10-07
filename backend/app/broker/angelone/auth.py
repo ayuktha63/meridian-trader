@@ -17,18 +17,63 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import pyotp
-from SmartApi import SmartConnect
 
 from ...config import get_settings
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, see _load_sdk
+    from SmartApi import SmartConnect
 
 log = logging.getLogger("meridian.angelone.auth")
 
 #: SmartAPI sessions are valid for the trading day; re-login well before any
 #: plausible server-side expiry rather than reacting to a 403 mid-order.
 SESSION_MAX_AGE_SECONDS = 6 * 3600
+
+_sdk_lock = threading.Lock()
+_smart_connect_cls = None
+
+
+class _SkippedLookup:
+    """Stands in for the response to the one request `_load_sdk` suppresses."""
+    text = ""
+
+
+def _load_sdk():
+    """`SmartConnect`, imported on first use — never at app import.
+
+    The SDK's class body makes a blocking GET to api.ipify.org with no timeout
+    and then throws the answer away (a `finally` overwrites it with a
+    hard-coded address). Imported at module level, that put a third-party
+    network call on the boot path of a platform that promises to start with no
+    network at all: on a network where that host stalls, `import app.main`
+    took 150 seconds, and so did every test run.
+
+    So the import is deferred to the first real login, and that one discarded
+    lookup is answered locally. Every other `requests.get` passes straight
+    through, so nothing else in the process can observe the swap.
+    """
+    global _smart_connect_cls
+    with _sdk_lock:
+        if _smart_connect_cls is None:
+            import requests
+
+            original_get = requests.get
+
+            def _get(url, *args, **kwargs):
+                if "api.ipify.org" in str(url):
+                    return _SkippedLookup()
+                return original_get(url, *args, **kwargs)
+
+            requests.get = _get
+            try:
+                from SmartApi import SmartConnect
+            finally:
+                requests.get = original_get
+            _smart_connect_cls = SmartConnect
+        return _smart_connect_cls
 
 
 @dataclass
@@ -101,7 +146,7 @@ class AngelOneAuthService:
         with self._lock:
             try:
                 totp = pyotp.TOTP(cfg.angel_totp_secret).now()
-                client = SmartConnect(api_key=cfg.angel_api_key)
+                client = _load_sdk()(api_key=cfg.angel_api_key)
                 data = client.generateSession(
                     cfg.angel_client_code, cfg.angel_password, totp)
             except Exception as exc:  # noqa: BLE001 - normalise every SDK failure

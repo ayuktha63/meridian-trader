@@ -241,8 +241,7 @@ def test_coindcx_never_reports_ticker_volume_as_tick_volume():
 
     provider._ticker = fake_ticker  # noqa: SLF001
     with pytest.raises(asyncio.CancelledError):
-        asyncio.get_event_loop().run_until_complete(
-            provider.stream(["BTCUSD"], handler))
+        asyncio.run(provider.stream(["BTCUSD"], handler))
 
     assert len(seen) == 1
     assert seen[0].volume == 0.0
@@ -279,8 +278,7 @@ def test_coindcx_history_is_oldest_first():
         return FakeResponse()
 
     provider._client.get = fake_get  # noqa: SLF001
-    rows = asyncio.get_event_loop().run_until_complete(
-        provider.history("BTCUSD", "1m", 100))
+    rows = asyncio.run(provider.history("BTCUSD", "1m", 100))
 
     assert [r[0] for r in rows] == [1_700_000_000.0, 1_700_000_060.0, 1_700_000_120.0]
     assert rows[0][4] == 2      # close of the oldest bar

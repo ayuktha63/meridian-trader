@@ -83,7 +83,10 @@ class AngelOneInstrumentService:
         #: sees "not loaded" at the same instant and each kicks off its own
         #: multi-MB download of the scrip master simultaneously — which is
         #: exactly what hung the first version of this under real load.
-        self._refresh_lock = asyncio.Lock()
+        #: Created on first use, inside the loop that will wait on it: before
+        #: Python 3.10 an asyncio.Lock binds to whatever loop is current when
+        #: it is constructed, and this object is built at import time.
+        self._refresh_lock: Optional[asyncio.Lock] = None
         self._by_key: Dict[tuple, dict] = {}   # (exchange, tradingsymbol) -> row
         #: (exchange, underlying name, instrumenttype) -> every matching
         #: contract, all expiries. Nearest unexpired one is picked at
@@ -103,6 +106,8 @@ class AngelOneInstrumentService:
     async def ensure_loaded(self) -> None:
         if self.loaded and not self.stale:
             return
+        if self._refresh_lock is None:
+            self._refresh_lock = asyncio.Lock()
         async with self._refresh_lock:
             # Re-check after acquiring: the caller that got here first has
             # already refreshed by the time everyone else wakes up.
