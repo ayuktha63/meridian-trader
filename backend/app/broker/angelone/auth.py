@@ -14,6 +14,7 @@ the wrong moment to find out.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -72,8 +73,55 @@ def _load_sdk():
                 from SmartApi import SmartConnect
             finally:
                 requests.get = original_get
+            _redact_sdk_logs()
             _smart_connect_cls = SmartConnect
         return _smart_connect_cls
+
+
+#: Request fields the SDK must never be allowed to write down.
+_SECRET_KEYS = (
+    "password", "totp", "authorization", "x-privatekey", "jwttoken",
+    "refreshtoken", "feedtoken", "accesstoken", "access_token", "api_key",
+    "clientcode",
+)
+#: A quoted string as repr() writes it, either quote style, escapes included.
+_QUOTED = r"""(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"""
+#: `'key': 'value'` as it appears in the repr() of a dict.
+_SECRET_FIELD = re.compile(
+    r"""(['"](?:{})['"]\s*:\s*){}""".format(
+        "|".join(re.escape(key) for key in _SECRET_KEYS), _QUOTED),
+    re.IGNORECASE)
+_BEARER = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{8,}")
+
+
+def redact_secrets(text: str) -> str:
+    return _BEARER.sub("Bearer ***", _SECRET_FIELD.sub(r"\1'***'", text))
+
+
+class _SecretRedactor(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg, record.args = redact_secrets(record.getMessage()), ()
+        except Exception:  # noqa: BLE001 - a log line is never worth an exception
+            record.msg, record.args = "[unprintable SmartApi log record]", ()
+        return True
+
+
+def _redact_sdk_logs() -> None:
+    """Stop the SDK writing credentials to disk.
+
+    On any failed request SmartApi logs the full request at ERROR — headers
+    and body — to stderr and to `logs/<date>/app.log`. For a login that body
+    is the account password and the TOTP; for everything after, the headers
+    carry the session token and the API key. A wrong TOTP was enough to put
+    the password in a plain-text file. The filter rewrites those records
+    before any handler sees them; the rest of the line (URL, broker error) is
+    left intact because it is what makes the failure diagnosable.
+    """
+    import logzero
+
+    if not any(isinstance(f, _SecretRedactor) for f in logzero.logger.filters):
+        logzero.logger.addFilter(_SecretRedactor())
 
 
 @dataclass
