@@ -14,6 +14,7 @@ from app.schemas.paper import ExitReason, PaperAccount, PaperStatus, PaperTrade
 from app.schemas.risk import AccountRisk, GuardrailStatus
 from app.services import paper
 from fastapi.testclient import TestClient
+from app.config import settings
 from app.main import app
 
 
@@ -182,6 +183,16 @@ def test_poor_risk_reward_is_rejected():
         make_result(entry=1.1000, stop=1.0900, target=1.1050),
         make_account(), EURUSD, 0.6)
     assert intent.action == "wait" and "R:R" in intent.reason
+
+
+def test_the_default_floor_is_two_to_one(monkeypatch):
+    assert autotrader.min_risk_reward() == 2.0
+    marginal = make_result(entry=1.1000, stop=1.0900, target=1.1160)  # 1.6R
+    assert autotrader.evaluate_entry(
+        marginal, make_account(), EURUSD, 0.6).action == "wait"
+    monkeypatch.setattr(settings, "min_risk_reward", 1.5)
+    assert autotrader.evaluate_entry(
+        marginal, make_account(), EURUSD, 0.6).action == "enter"
 
 
 def test_a_halted_account_blocks_entry():

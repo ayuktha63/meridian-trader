@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from ..config import get_settings
 from ..instruments import Instrument
 from ..schemas.analysis import AnalysisResult, Decision
 from ..schemas.paper import ExitReason, PaperAccount, PaperTrade
@@ -41,17 +42,16 @@ from ..schemas.risk import GuardrailStatus
 
 log = logging.getLogger("meridian.autotrader")
 
-#: Minimum reward-to-risk. Below this the spread and commission eat too much of
-#: the winner for the win rate to carry the strategy.
-#: Backtested across 10 crypto pairs x 2 timeframes x 2 strategies x a grid of
-#: confidence/R:R/stop settings (879 qualifying runs, min 6 trades each). 2.0
-#: was the R:R floor with the best average expectancy across the whole grid —
-#: 1.5 let too many marginal setups through and dragged the average negative.
-#: Lowered to 1.5, then to 1.1 on 2026-08-08 at the trader's explicit request,
-#: purely to watch the open/close mechanism fire — this trades away the
-#: backtested edge for trade frequency. Put it back to 2.0 once that's done;
-#: 1.1 has no backtested support and will very likely lose money over time.
-MIN_RISK_REWARD = 1.1
+#: Minimum reward-to-risk is `MIN_RISK_REWARD` in the environment (default 2.0).
+#: Below it the spread and commission eat too much of the winner for the win
+#: rate to carry the strategy. 2.0 was the floor with the best average
+#: expectancy across a backtest grid of 879 qualifying runs (10 crypto pairs x
+#: 2 timeframes x 2 strategies); 1.5 let marginal setups drag it negative. It
+#: was once hard-coded down to 1.1 just to watch the open/close mechanism
+#: fire, which has no backtested support — hence a setting, not an edit.
+def min_risk_reward() -> float:
+    return get_settings().min_risk_reward
+
 
 #: Reject a setup when the round-trip cost exceeds this share of the distance
 #: to target. At 25% the trade needs to be right by a third just to break even.
@@ -124,9 +124,9 @@ def evaluate_entry(result: AnalysisResult, account: PaperAccount,
         return Intent("wait", "No target — cannot judge reward against risk.")
     reward, risk_distance = abs(target - entry), abs(entry - stop)
     rr = reward / risk_distance if risk_distance > 0 else 0.0
-    if rr < MIN_RISK_REWARD:
+    if rr < min_risk_reward():
         return Intent("wait", "R:R {:.2f} is below the {:.1f} floor."
-                      .format(rr, MIN_RISK_REWARD))
+                      .format(rr, min_risk_reward()))
 
     # ── gate 4: is the spread eating the trade? ───────────────
     pips = spread_pips if spread_pips is not None else instrument.typical_spread_pips
