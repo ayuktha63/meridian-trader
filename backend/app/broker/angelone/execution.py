@@ -25,11 +25,13 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import AnalysisRow, LiveExecutionRow
-from ...runtime_settings import get as get_runtime_settings
-from ...schemas.execution import ExecutionRecord, ExecutionStatus
 from ... import audit
 from ...config import get_settings
+from ...db.models import AnalysisRow, LiveExecutionRow
+from ...runtime_settings import get as get_runtime_settings
+from ...schemas.execution import (
+    ExecutionPreview, ExecutionRecord, ExecutionStatus, RiskGateResult,
+)
 from ...services.edge import latest_edge
 from ..live_limits import load_ledger
 from ..risk_gate import GateContext, Recommendation, risk_gate
@@ -82,6 +84,7 @@ def _recommendation_from_row(row: AnalysisRow) -> Recommendation:
         take_profit=plan.get("take_profit"), risk_amount=plan.get("risk_amount"),
         suggested_lots=plan.get("suggested_lots"),
         confidence=confidence.get("final_confidence", row.confidence),
+        timeframe=row.timeframe,
     )
 
 
@@ -122,11 +125,47 @@ class AngelOneExecutionService:
 
     async def execute(self, session: AsyncSession, recommendation_id: str,
                       confirmed: bool) -> ExecutionRecord:
-        """The only entry point. Returns the execution record either way —
-        a REJECTED record (risk gate said no) and a persisted broker order
-        are both valid, meaningful results; only an unhandled exception
-        means something actually went wrong in the plumbing.
+        """The only entry point that can place an order. Returns the
+        execution record either way — a REJECTED record (risk gate said no)
+        and a persisted broker order are both valid, meaningful results; only
+        an unhandled exception means something actually went wrong in the
+        plumbing.
         """
+        existing_row, recommendation, ctx, result = await self._prepare(
+            session, recommendation_id, confirmed)
+        if not result.allowed:
+            return await self._persist_rejection(
+                session, existing_row, recommendation, ctx, result.reason)
+        return await self._submit(session, existing_row, recommendation, ctx)
+
+    async def preview(self, session: AsyncSession,
+                      recommendation_id: str) -> ExecutionPreview:
+        """Everything `execute` would do, short of doing it: the exact
+        quantity and prices, what it costs in margin, and the gate's verdict.
+        Places nothing and records nothing — it exists so the confirmation
+        dialog can show the order that will actually be sent."""
+        _, rec, ctx, result = await self._prepare(session, recommendation_id, True)
+        entry = float(ctx.entry_price) if ctx.entry_price else None
+        stop = float(ctx.stop_price) if ctx.stop_price else None
+        quantity = ctx.quantity if (ctx.quantity and entry and stop) else None
+        return ExecutionPreview(
+            allowed=result.allowed, check=result.check, reason=result.reason,
+            symbol=rec.symbol, side=rec.side,
+            trading_symbol=ctx.match.trading_symbol if ctx.match else None,
+            exchange=ctx.match.exchange if ctx.match else None,
+            quantity=quantity, entry_price=entry, stop_price=stop,
+            target_price=float(ctx.target_price) if ctx.target_price else None,
+            order_value=round(entry * quantity, 2) if quantity else None,
+            risk=round(abs(entry - stop) * quantity, 2) if quantity else None,
+            risk_budget=ctx.risk_budget, margin_required=ctx.margin_required,
+            available_funds=ctx.available_funds, last_price=ctx.ltp,
+            edge=(ctx.edge or {}).get("reason"),
+        )
+
+    async def _prepare(self, session: AsyncSession, recommendation_id: str,
+                       confirmed: bool):
+        """Gather the facts and run the gate. Shared by `execute` and
+        `preview`, so the two can never disagree about the order."""
         analysis = await session.get(AnalysisRow, recommendation_id)
         if analysis is None:
             raise RecommendationNotFound(recommendation_id)
@@ -148,7 +187,6 @@ class AngelOneExecutionService:
                                        ExecutionStatus.UNKNOWN.value)))
 
         recommendation = _recommendation_from_row(analysis)
-
         ctx = GateContext(
             recommendation=recommendation, confirmed=confirmed,
             already_executed=already_executed,
@@ -163,13 +201,11 @@ class AngelOneExecutionService:
         # or in production.
         cheap_result = await risk_gate.evaluate_cheap(ctx)
         if not cheap_result.allowed:
-            return await self._persist_rejection(
-                session, existing_row, recommendation, ctx, cheap_result.reason)
+            return existing_row, recommendation, ctx, cheap_result
 
         try:
             from .instruments import angel_instruments
-            match = await angel_instruments.resolve(recommendation.symbol)
-            ctx.match = match
+            ctx.match = await angel_instruments.resolve(recommendation.symbol)
         except Exception:  # noqa: BLE001 - the gate's own check re-derives and reports this
             ctx.match = None
 
@@ -179,20 +215,17 @@ class AngelOneExecutionService:
                 ctx.available_funds = _extract_available_funds(funds)
             except AngelOneOrderError:
                 ctx.available_funds = None
+            # Prices and quantity first: the margin question is about *this*
+            # order, so it cannot be asked until the order is known.
+            risk_gate.derive(ctx)
+            await self._load_market_facts(ctx)
 
         ctx.ledger = await load_ledger(
             session, exclude_id=existing_row.id if existing_row else None)
-        if ctx.match is not None:
-            await self._load_market_facts(ctx)
         ctx.edge = await latest_edge(session, analysis.symbol, analysis.timeframe)
 
-        gate_result = await risk_gate.evaluate(ctx)
-
-        if not gate_result.allowed:
-            return await self._persist_rejection(
-                session, existing_row, recommendation, ctx, gate_result.reason)
-
-        return await self._submit(session, existing_row, recommendation, ctx)
+        result: RiskGateResult = await risk_gate.evaluate(ctx)
+        return existing_row, recommendation, ctx, result
 
     # ── internals ─────────────────────────────────────────────
 
@@ -208,14 +241,13 @@ class AngelOneExecutionService:
                 ctx.ltp = float((quote or {}).get("ltp") or 0) or None
             except Exception:  # noqa: BLE001
                 ctx.ltp = None
-        try:
-            lots = int((rec.suggested_lots or 0) * match.lot_size // match.lot_size)
-            if lots > 0 and rec.entry:
+        if ctx.quantity and ctx.entry_price:
+            try:
                 ctx.margin_required = await angel_broker.get_margin(
                     match.exchange, match.token, rec.side,
-                    lots * match.lot_size, rec.entry)
-        except Exception:  # noqa: BLE001
-            ctx.margin_required = None
+                    int(ctx.quantity), float(ctx.entry_price))
+            except Exception:  # noqa: BLE001
+                ctx.margin_required = None
 
     @staticmethod
     def _upsert(existing: Optional[LiveExecutionRow], session: AsyncSession,
@@ -260,6 +292,17 @@ class AngelOneExecutionService:
     async def _submit(self, session: AsyncSession,
                       existing: Optional[LiveExecutionRow],
                       rec: Recommendation, ctx: GateContext) -> ExecutionRecord:
+        from .reconciler import reconciler
+
+        # Held from the first write to the last: the supervisor's loop works
+        # on these same rows, and must not see this one half-submitted.
+        async with reconciler.exclusive():
+            return await self._submit_locked(session, existing, rec, ctx, reconciler)
+
+    async def _submit_locked(self, session: AsyncSession,
+                             existing: Optional[LiveExecutionRow],
+                             rec: Recommendation, ctx: GateContext,
+                             reconciler) -> ExecutionRecord:
         match = ctx.match
         now = time.time()
         tag = order_tag(rec.id)
@@ -267,16 +310,17 @@ class AngelOneExecutionService:
             existing, session,
             recommendation_id=rec.id, symbol=rec.symbol, side=rec.side,
             exchange=match.exchange, trading_symbol=match.trading_symbol,
-            instrument_token=match.token, requested_quantity=ctx.quantity,
-            requested_price=float(ctx.entry_price),
+            instrument_token=match.token, timeframe=rec.timeframe,
+            requested_quantity=ctx.quantity, filled_quantity=0.0,
+            requested_price=float(ctx.entry_price), average_fill_price=None,
             stop_price=float(ctx.stop_price), initial_stop=float(ctx.stop_price),
             target_price=float(ctx.target_price) if ctx.target_price else None,
-            risk_amount=rec.risk_amount, order_tag=tag, tick_size=match.tick_size,
+            risk_amount=ctx.risk_budget, order_tag=tag, tick_size=match.tick_size,
             status=ExecutionStatus.SUBMITTING.value, error_message=None,
+            broker_order_id=None, submitted_at=now, filled_at=None,
+            child_order_ids=[], exit_quantity=0.0,
             created_at=now, updated_at=now,
         )
-        # Write-ahead: the intent is durable before the broker hears of it.
-        await session.commit()
 
         order_params = {
             "variety": "NORMAL",
@@ -299,6 +343,7 @@ class AngelOneExecutionService:
                  rec.id, rec.symbol, rec.side, ctx.quantity)
         log.info("[RISK_GATE] status=PASS")
         await audit.record("order_submitting", rec.id, session, tag=tag, **order_params)
+        # Write-ahead: the intent is durable before the broker hears of it.
         await session.commit()
 
         try:
@@ -334,46 +379,18 @@ class AngelOneExecutionService:
         row.broker_order_id = order_id
         row.status = ExecutionStatus.SUBMITTED.value
         row.updated_at = time.time()
+        await audit.record("order_submitted", rec.id, session, order_id=order_id)
         await session.commit()
         log.info("[ANGEL_ONE] status=SUBMITTED order_id=%s", order_id)
-        await audit.record("order_submitted", rec.id, session, order_id=order_id)
 
         # One immediate pass: an instant fill gets its stop now rather than
         # on the supervisor's next tick.
-        from .reconciler import reconciler
         try:
-            await reconciler.reconcile_row(session, row)
+            await reconciler.reconcile_now(session, row)
         except Exception:  # noqa: BLE001 - the loop will retry; the order stands
             log.exception("immediate reconcile failed for %s", rec.id)
         await session.flush()
         return _row_to_record(row)
-
-    @staticmethod
-    def _apply_order_status(row: LiveExecutionRow, status: dict) -> None:
-        broker_status = (status.get("status") or "").lower()
-        filled = status.get("filledshares") or status.get("fillquantity") or 0
-        try:
-            row.filled_quantity = float(filled)
-        except (TypeError, ValueError):
-            pass
-        avg_price = status.get("averageprice")
-        if avg_price:
-            try:
-                row.average_fill_price = float(avg_price)
-            except (TypeError, ValueError):
-                pass
-        if broker_status in ("complete", "filled"):
-            row.status = ExecutionStatus.FILLED.value
-        elif broker_status in ("rejected",):
-            row.status = ExecutionStatus.REJECTED.value
-            row.error_message = status.get("text") or row.error_message
-        elif broker_status in ("cancelled", "canceled"):
-            row.status = ExecutionStatus.CANCELLED.value
-        elif row.filled_quantity and row.filled_quantity < row.requested_quantity:
-            row.status = ExecutionStatus.PARTIALLY_FILLED.value
-        else:
-            row.status = ExecutionStatus.OPEN.value
-        row.updated_at = time.time()
 
     @staticmethod
     async def _find_submitted_order(row: LiveExecutionRow,

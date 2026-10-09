@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..schemas.market import MarketClock, MarketSession
 
@@ -29,6 +29,23 @@ INDIA_HOURS = {
     "equity": (3.75, 10.0),
     "commodity": (3.5, 18.0),
 }
+
+
+def session_key(asset_class: str) -> str:
+    """Instrument asset class -> the key its exchange hours are filed under."""
+    return "equity" if asset_class == "stock" else asset_class
+
+
+def minutes_to_close(ts: float, asset_class: str) -> Optional[float]:
+    """Minutes until this segment's session ends, for an Indian exchange
+    instrument while its market is open. None otherwise — a market that never
+    closes, or one that is shut right now, has no "minutes to the close"."""
+    key = session_key(asset_class)
+    if key not in INDIA_HOURS or not is_market_open(ts, key):
+        return None
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    clock = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
+    return (INDIA_HOURS[key][1] - clock) * 60.0
 
 
 def is_market_open(ts: float, asset_class: str = "fx") -> bool:

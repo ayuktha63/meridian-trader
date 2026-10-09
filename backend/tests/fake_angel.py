@@ -24,6 +24,8 @@ class FakeAngel:
         self.ltp: Dict[str, float] = {}
         self.positions_override: Optional[List[dict]] = None
         self.margin: Optional[float] = None
+        self.funds = 1_000_000.0
+        self.order_book_reads = 0
         #: (predicate(params) -> bool, exception) consumed in order.
         self.failures: List[tuple] = []
         self._ids = itertools.count(1001)
@@ -101,6 +103,7 @@ class FakeAngel:
         return {"orderid": order_id}
 
     async def get_orders(self) -> List[dict]:
+        self.order_book_reads += 1
         return [dict(o) for o in self.orders]
 
     async def get_order_status(self, order_id: str) -> Optional[dict]:
@@ -124,4 +127,4 @@ class FakeAngel:
         return self.margin
 
     async def get_funds(self) -> dict:
-        return {"availablecash": "1000000"}
+        return {"availablecash": str(self.funds)}

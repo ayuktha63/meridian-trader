@@ -46,6 +46,7 @@ class Recommendation:
     risk_amount: Optional[float]
     suggested_lots: Optional[float]
     confidence: float
+    timeframe: str = "15m"
 
 
 @dataclass
@@ -58,6 +59,9 @@ class GateContext:
     settings: Optional[RuntimeSettings] = None
     available_funds: Optional[float] = None
     quantity: Optional[float] = None
+    #: Cash this order may lose: the recommendation's own budget, cut down
+    #: to a share of what the account actually holds.
+    risk_budget: Optional[float] = None
     #: Entry / stop / target on the instrument's tick grid, as API strings.
     entry_price: Optional[str] = None
     stop_price: Optional[str] = None
@@ -74,11 +78,15 @@ class GateContext:
 
 
 class PreTradeRiskGate:
-    """Runs checks 1-10 of the live-trading spec's pre-trade gate.
+    """The live-trading spec's pre-trade gate.
 
     Check 11 (daily loss, trades per day, open positions, exposure) runs
     against the live account's own history — `broker/live_limits.py`, kept
     current by the reconciler — never against the paper ledger.
+
+    The gate also *derives* the order: prices on the exchange's tick grid and
+    a quantity sized from the risk budget. Those are computed here, not by
+    the caller, so what was checked is exactly what is sent.
     """
 
     #: Checks 1-5: local state only, zero network calls. Run first, always.
@@ -94,6 +102,13 @@ class PreTradeRiskGate:
         "_check_market_hours", "_check_price_band", "_check_order_limits",
         "_check_account_limits", "_check_measured_edge",
     )
+
+    def derive(self, ctx: GateContext) -> None:
+        """Fill in the order's prices and quantity without judging it, so the
+        caller can ask the broker what *that* order needs in margin. The same
+        two checks run again inside `evaluate`, which is what decides."""
+        if ctx.match is not None and self._check_price_tick(ctx).allowed:
+            self._check_quantity(ctx)
 
     async def evaluate_cheap(self, ctx: GateContext) -> RiskGateResult:
         return await self._run(ctx, self._CHEAP_CHECKS)
@@ -210,56 +225,78 @@ class PreTradeRiskGate:
         """Put every price on the broker's tick grid and make sure the trade
         still makes sense there. An off-grid price is rejected by the
         exchange; a tick that is absurd for the price means the contract
-        data is wrong and nothing derived from it can be trusted."""
-        from .angelone.orders import round_to_tick
+        data is wrong and nothing derived from it can be trusted.
+
+        Each price moves the way that cannot make the trade worse than the
+        one that was sized: the entry never to a worse price than asked, the
+        stop and target toward the entry.
+        """
+        from .angelone.orders import round_to_tick, toward
+
+        def no(reason: str) -> RiskGateResult:
+            return RiskGateResult(allowed=False, check="price_tick", reason=reason)
 
         match, rec = ctx.match, ctx.recommendation
         if match is None:
-            return RiskGateResult(allowed=False, check="price_tick",
-                                  reason="Instrument was not resolved.")
+            return no("Instrument was not resolved.")
         tick = match.tick_size
         if not tick or tick <= 0 or tick > rec.entry * 0.05:
-            return RiskGateResult(
-                allowed=False, check="price_tick",
-                reason="Tick size {} is not plausible for a price of {} — "
-                      "refusing to round a live order against it."
-                      .format(tick, rec.entry))
-        entry, stop = round_to_tick(rec.entry, tick), round_to_tick(rec.stop_loss, tick)
+            return no("Tick size {} is not plausible for a price of {} — refusing "
+                      "to round a live order against it.".format(tick, rec.entry))
         long = rec.side == "BUY"
-        if (long and float(stop) >= float(entry)) or (not long and float(stop) <= float(entry)):
-            return RiskGateResult(
-                allowed=False, check="price_tick",
-                reason="Stop is less than one tick ({}) from entry once both "
-                      "are rounded to the exchange grid.".format(tick))
-        ctx.entry_price, ctx.stop_price = entry, stop
+        entry = round_to_tick(rec.entry, tick, "down" if long else "up")
+        stop = round_to_tick(rec.stop_loss, tick, toward(reference_is_above=long))
+        if (float(stop) >= float(entry)) if long else (float(stop) <= float(entry)):
+            return no("Stop is less than one tick ({}) from entry once both are "
+                      "rounded to the exchange grid.".format(tick))
+        target = None
         if rec.take_profit:
-            target = round_to_tick(rec.take_profit, tick)
-            if (float(target) > float(entry)) == long and float(target) != float(entry):
-                ctx.target_price = target
+            target = round_to_tick(rec.take_profit, tick, toward(reference_is_above=not long))
+            if (float(target) <= float(entry)) if long else (float(target) >= float(entry)):
+                return no("Target {} is not on the profit side of entry {}."
+                          .format(rec.take_profit, rec.entry))
+        ctx.entry_price, ctx.stop_price, ctx.target_price = entry, stop, target
         return RiskGateResult(allowed=True)
 
     # ── check 8 ───────────────────────────────────────────────
     def _check_quantity(self, ctx: GateContext) -> RiskGateResult:
-        match = ctx.match
-        rec = ctx.recommendation
-        if match is None:
+        """Size the order from the risk budget and the broker's real lot.
+
+        Units = budget / (entry − stop), rounded *down* to a whole lot — up
+        would risk more than was budgeted, which §8 forbids outright. The
+        budget is the recommendation's, capped at a share of the cash Angel
+        One says is there: the recommendation was sized against a balance
+        typed into Settings, and a real order must answer to the real one.
+
+        (This used to multiply the recommendation's "lots" by the broker's
+        lot size. A Meridian lot is the F&O contract size, so a cash-equity
+        order came out hundreds of times smaller than it was sized for.)
+        """
+        match, rec = ctx.match, ctx.recommendation
+        if match is None or not ctx.entry_price or not ctx.stop_price:
             return RiskGateResult(allowed=False, check="quantity",
-                                  reason="Instrument was not resolved.")
-        lot_size = match.lot_size
-        # Meridian's suggested_lots is a Meridian "lot" (contract_size units),
-        # not necessarily Angel One's tradable lot — round DOWN to the
-        # nearest whole broker lot. Rounding up would silently increase risk
-        # beyond what the recommendation sized for, which §8 forbids outright.
-        raw_units = rec.suggested_lots * lot_size
-        broker_lots = int(raw_units // lot_size)
-        quantity = broker_lots * lot_size
+                                  reason="Instrument or prices were not resolved.")
+        budget, source = float(rec.risk_amount), "the recommendation's risk budget"
+        cap_pct = get_settings().live_max_risk_pct_of_funds
+        if cap_pct:
+            if ctx.available_funds is None:
+                return RiskGateResult(allowed=False, check="funds",
+                                      reason="Could not read available funds "
+                                            "from Angel One.")
+            from_funds = ctx.available_funds * cap_pct / 100.0
+            if from_funds < budget:
+                budget = from_funds
+                source = "{:g}% of available funds ({:.2f})".format(
+                    cap_pct, ctx.available_funds)
+        per_lot = abs(float(ctx.entry_price) - float(ctx.stop_price)) * match.lot_size
+        quantity = int(budget // per_lot) * match.lot_size if per_lot > 0 else 0
         if quantity <= 0:
             return RiskGateResult(
                 allowed=False, check="quantity",
-                reason="Sized position rounds down to zero at this "
-                      "instrument's lot size ({}) — the risk budget cannot "
-                      "buy even one lot.".format(lot_size))
-        ctx.quantity = quantity
+                reason="One lot ({}) risks {:.2f} between entry and stop, but "
+                      "{} is {:.2f} — it cannot buy even one lot."
+                      .format(match.lot_size, per_lot, source, budget))
+        ctx.quantity, ctx.risk_budget = quantity, budget
         return RiskGateResult(allowed=True)
 
     # ── check 9 ───────────────────────────────────────────────
@@ -273,7 +310,7 @@ class PreTradeRiskGate:
                                   reason="Instrument or quantity not resolved.")
         # The broker's own margin figure when it gives one; full notional
         # otherwise, which can only err towards refusing.
-        notional = ctx.recommendation.entry * ctx.quantity
+        notional = float(ctx.entry_price or ctx.recommendation.entry) * ctx.quantity
         required = ctx.margin_required if ctx.margin_required is not None else notional
         if required > ctx.available_funds:
             return RiskGateResult(
@@ -285,52 +322,78 @@ class PreTradeRiskGate:
 
     # ── check 10 ──────────────────────────────────────────────
     def _check_risk_amount(self, ctx: GateContext) -> RiskGateResult:
-        rec = ctx.recommendation
-        if ctx.quantity is None:
+        """True by construction after check 8 — kept as an independent
+        assertion, because "the order risks no more than its budget" is the
+        one property nothing upstream may ever break."""
+        if ctx.quantity is None or ctx.risk_budget is None:
             return RiskGateResult(allowed=False, check="risk_amount",
                                   reason="Quantity not resolved.")
-        entry = float(ctx.entry_price) if ctx.entry_price else rec.entry
-        stop = float(ctx.stop_price) if ctx.stop_price else rec.stop_loss
-        actual_risk = abs(entry - stop) * ctx.quantity
-        # Broker-lot rounding can only ever reduce quantity (check 8), so the
-        # actual risk can come in under the recommendation's budget but must
-        # never come in over it.
-        tick_slack = (ctx.match.tick_size if ctx.match else 0.0) * ctx.quantity
-        if actual_risk > rec.risk_amount * 1.0001 + tick_slack:  # float + one tick of rounding
+        actual_risk = abs(float(ctx.entry_price) - float(ctx.stop_price)) * ctx.quantity
+        if actual_risk > ctx.risk_budget * 1.0001:  # float tolerance only
             return RiskGateResult(
                 allowed=False, check="risk_amount",
                 reason="Broker-valid quantity implies {:.2f} risk, which "
-                      "exceeds the recommendation's budget of {:.2f}."
-                      .format(actual_risk, rec.risk_amount))
+                      "exceeds the budget of {:.2f}."
+                      .format(actual_risk, ctx.risk_budget))
         return RiskGateResult(allowed=True)
-
 
     # ── is there any reason to believe this makes money? ──────
     def _check_measured_edge(self, ctx: GateContext) -> RiskGateResult:
+        """A recent walk-forward test of this symbol and timeframe showed an
+        edge after costs — and this recommendation is the kind of trade that
+        test took. An edge measured on setups above 65% confidence says
+        nothing about one at 50%."""
         if not get_settings().live_require_measured_edge:
             return RiskGateResult(allowed=True)
-        edge = ctx.edge or {}
+
+        def no(reason: str) -> RiskGateResult:
+            return RiskGateResult(allowed=False, check="measured_edge", reason=reason)
+
+        edge, rec = ctx.edge or {}, ctx.recommendation
         if not edge.get("passed"):
-            return RiskGateResult(
-                allowed=False, check="measured_edge",
-                reason=edge.get("reason") or "No measured edge for this instrument.")
+            return no(edge.get("reason") or "No measured edge for this instrument.")
+        floor = edge.get("min_confidence")
+        if floor is not None and rec.confidence < floor:
+            return no("No measured edge for this setup: confidence is {:.0f}%, and "
+                      "the walk-forward test only traded setups at {:.0f}% or more."
+                      .format(rec.confidence, floor))
+        min_rr = edge.get("min_risk_reward")
+        if min_rr is not None:
+            risk = abs(rec.entry - rec.stop_loss)
+            reward = abs(rec.take_profit - rec.entry) if rec.take_profit else 0.0
+            ratio = reward / risk if risk > 0 else 0.0
+            if ratio + 1e-9 < min_rr:
+                return no("No measured edge for this setup: reward:risk is {:.2f}, "
+                          "and the walk-forward test only traded {:.1f} or better."
+                          .format(ratio, min_rr))
         return RiskGateResult(allowed=True)
 
     # ── session ───────────────────────────────────────────────
     def _check_market_hours(self, ctx: GateContext) -> RiskGateResult:
-        if not get_settings().live_enforce_market_hours:
+        cfg = get_settings()
+        if not cfg.live_enforce_market_hours:
             return RiskGateResult(allowed=True)
         import time
 
-        from ..data.sessions import is_market_open
+        from ..data import sessions
         from ..instruments import get_instrument
         asset = get_instrument(ctx.recommendation.symbol).asset_class
-        if not is_market_open(time.time(), "equity" if asset == "stock" else asset):
+        now = time.time()
+        if not sessions.is_market_open(now, sessions.session_key(asset)):
             return RiskGateResult(
                 allowed=False, check="market_hours",
                 reason="The market for {} is closed — an order placed now "
                       "would rest until the open and fill into whatever the "
                       "gap is.".format(ctx.recommendation.symbol))
+        left = sessions.minutes_to_close(now, asset)
+        window = cfg.live_no_entry_minutes_before_close
+        if left is not None and window and left < window:
+            return RiskGateResult(
+                allowed=False, check="market_hours",
+                reason="{:.0f} minutes to the close. Orders are intraday and are "
+                      "squared off {:.0f} minutes before it, so no new entry is "
+                      "taken in the last {:.0f}.".format(
+                          max(left, 0.0), cfg.live_squareoff_minutes_before_close, window))
         return RiskGateResult(allowed=True)
 
     # ── entry vs the market right now ─────────────────────────
@@ -356,7 +419,7 @@ class PreTradeRiskGate:
     # ── size of this one order ────────────────────────────────
     def _check_order_limits(self, ctx: GateContext) -> RiskGateResult:
         cfg = get_settings()
-        value = ctx.recommendation.entry * (ctx.quantity or 0)
+        value = float(ctx.entry_price or ctx.recommendation.entry) * (ctx.quantity or 0)
         if cfg.live_max_quantity and (ctx.quantity or 0) > cfg.live_max_quantity:
             return RiskGateResult(
                 allowed=False, check="max_quantity",
@@ -387,6 +450,18 @@ class PreTradeRiskGate:
                                                 cfg.live_daily_loss_limit))
             trading_mode.activate_kill_switch(reason)
             return no("daily_loss", reason)
+        # Not only what the day has lost, but what it would have lost if this
+        # order and everything already open were stopped out.
+        new_risk = (abs(float(ctx.entry_price) - float(ctx.stop_price)) * (ctx.quantity or 0)
+                    if ctx.entry_price and ctx.stop_price else 0.0)
+        worst = -ledger.realised_today + ledger.open_risk + new_risk
+        if cfg.live_daily_loss_limit and worst > cfg.live_daily_loss_limit:
+            return no("daily_loss", "This order risks {:.2f}. With {:.2f} lost so far "
+                      "today and {:.2f} at risk in open positions, being stopped out "
+                      "would take the day to {:.2f} — past the daily loss limit of "
+                      "{:.2f}.".format(new_risk, max(-ledger.realised_today, 0.0),
+                                       ledger.open_risk, worst,
+                                       cfg.live_daily_loss_limit))
         if cfg.live_max_trades_per_day and ledger.trades_today >= cfg.live_max_trades_per_day:
             return no("trades_per_day", "{} live trades already today (limit {})."
                       .format(ledger.trades_today, cfg.live_max_trades_per_day))
@@ -395,7 +470,7 @@ class PreTradeRiskGate:
                       "(limit {}).".format(ledger.open_positions,
                                            cfg.live_max_open_positions))
         symbol = ctx.recommendation.symbol
-        value = ctx.recommendation.entry * (ctx.quantity or 0)
+        value = float(ctx.entry_price or ctx.recommendation.entry) * (ctx.quantity or 0)
         held = ledger.symbol_exposure.get(symbol, 0.0)
         if cfg.live_max_symbol_exposure and held + value > cfg.live_max_symbol_exposure:
             return no("symbol_exposure", "{} exposure would be {:.2f} (limit {:.2f})."

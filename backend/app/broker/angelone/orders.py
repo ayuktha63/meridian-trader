@@ -6,7 +6,7 @@ Kept apart from the execution service so each rule that once went wrong
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, Optional
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -26,19 +26,35 @@ def order_tag(recommendation_id: str, leg: str = "") -> str:
     return (recommendation_id[:TAG_LENGTH - len(leg)] + leg)[:TAG_LENGTH]
 
 
-def round_to_tick(price: float, tick: float) -> str:
+_ROUNDING = {"nearest": ROUND_HALF_UP, "down": ROUND_FLOOR, "up": ROUND_CEILING}
+
+
+def round_to_tick(price: float, tick: float, mode: str = "nearest") -> str:
     """`price` on the instrument's tick grid, as the string the API wants.
 
     Sent unrounded, a price off the grid is rejected by the exchange; worse,
     `str(float)` can yield `2500.0000000000005`.
+
+    `mode` says which way an off-grid price moves. It matters: rounding an
+    entry the wrong way pays more than was asked, and rounding a stop away
+    from the entry risks more than was sized for. Callers that care pass
+    "down" or "up"; see `toward`.
     """
     if tick <= 0:
         raise ValueError("tick size must be positive")
     step = Decimal(str(tick))
-    ticks = (Decimal(str(price)) / step).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    # Shed float noise first: 0.1 + 0.2 is 0.30000000000000004, and rounding
+    # *that* "up" would land a whole tick away from the price that was meant.
+    ticks = (Decimal(str(round(price, 8))) / step).quantize(
+        Decimal(1), rounding=_ROUNDING[mode])
     value = ticks * step
     places = max(0, -step.as_tuple().exponent)
     return format(value.quantize(Decimal(1).scaleb(-places)), "f")
+
+
+def toward(reference_is_above: bool) -> str:
+    """The rounding mode that moves a price toward a reference level."""
+    return "up" if reference_is_above else "down"
 
 
 def parse_broker_time(text: Optional[str]) -> Optional[float]:

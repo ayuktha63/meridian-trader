@@ -271,6 +271,16 @@ class LiveExecutionRow(Base):
     error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    timeframe: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    #: When the entry was sent, and when a fill was first seen. `created_at`
+    #: is the first *attempt*, which a retry can leave hours in the past.
+    submitted_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    filled_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    #: Every exit-side order ever placed for this execution — stops, targets,
+    #: market exits, including ones since cancelled or replaced. What has been
+    #: sold is the sum of their fills, never an assumption.
+    child_order_ids: Mapped[List[str]] = mapped_column(JSON, default=list)
+    exit_quantity: Mapped[float] = mapped_column(Float, default=0.0)
     #: Idempotency tag sent as `ordertag` on the entry (see broker.angelone.orders).
     order_tag: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     tick_size: Mapped[float] = mapped_column(Float, default=0.05)

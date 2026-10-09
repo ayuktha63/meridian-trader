@@ -77,6 +77,32 @@ class ExecutionRecord(BaseModel):
     updated_at: float
 
 
+class ExecutionPreview(BaseModel):
+    """The order `execute` would send right now, and whether the gate would
+    let it. Shown in the confirmation dialog: what you confirm is what goes."""
+
+    allowed: bool
+    check: Optional[str] = None
+    reason: Optional[str] = None
+
+    symbol: str
+    side: str
+    trading_symbol: Optional[str] = None
+    exchange: Optional[str] = None
+    quantity: Optional[float] = None
+    entry_price: Optional[float] = None
+    stop_price: Optional[float] = None
+    target_price: Optional[float] = None
+    order_value: Optional[float] = None
+    #: What a stop-out costs, and the budget it was sized inside.
+    risk: Optional[float] = None
+    risk_budget: Optional[float] = None
+    margin_required: Optional[float] = None
+    available_funds: Optional[float] = None
+    last_price: Optional[float] = None
+    edge: Optional[str] = None
+
+
 class ExecuteRequest(BaseModel):
     """What the frontend actually gets to control: nothing about the trade
     itself. Only the explicit go-ahead — every price/quantity/instrument

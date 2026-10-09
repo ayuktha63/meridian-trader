@@ -14,7 +14,7 @@ from ..broker.angelone.execution import (
     RecommendationNotExecutable, RecommendationNotFound, angel_execution,
 )
 from ..db.session import get_session
-from ..schemas.execution import ExecuteRequest, ExecutionRecord
+from ..schemas.execution import ExecuteRequest, ExecutionPreview, ExecutionRecord
 
 router = APIRouter(prefix="/api/trades", tags=["execution"])
 
@@ -34,6 +34,21 @@ async def execute_live(
     try:
         return await angel_execution.execute(
             session, recommendation_id, confirmed=payload.confirmed)
+    except RecommendationNotFound as exc:
+        raise HTTPException(404, "No recommendation found with that id.") from exc
+    except RecommendationNotExecutable as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/{recommendation_id}/preview", response_model=ExecutionPreview)
+async def preview_live(
+    recommendation_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> ExecutionPreview:
+    """The exact order Execute Live would send, and the gate's verdict on it.
+    Read-only: nothing is placed and nothing is recorded."""
+    try:
+        return await angel_execution.preview(session, recommendation_id)
     except RecommendationNotFound as exc:
         raise HTTPException(404, "No recommendation found with that id.") from exc
     except RecommendationNotExecutable as exc:

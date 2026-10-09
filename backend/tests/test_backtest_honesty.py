@@ -117,17 +117,22 @@ def test_an_edge_needs_enough_trades_and_an_interval_clear_of_zero():
     assert edge_verdict([], "holdout").passed is False
 
     few = edge_verdict(_trades([2.0] * 10), "holdout")
-    assert few.passed is False and "too few" in few.reason
+    assert few.passed is False
+    assert "too few" in few.reason
 
     # +0.05R on average with 1R of noise: positive, and indistinguishable from luck.
     noisy = edge_verdict(_trades(rng.normal(0.05, 1.0, 60)), "holdout")
-    assert noisy.passed is False and "includes zero" in noisy.reason
+    assert noisy.passed is False
+    assert "includes zero" in noisy.reason
 
     losing = edge_verdict(_trades(rng.normal(-0.2, 1.0, 200)), "holdout")
-    assert losing.passed is False and losing.ci_high < 0.1
+    assert losing.passed is False
+    assert losing.ci_high < 0.1
 
     real = edge_verdict(_trades(rng.normal(0.4, 1.0, 200)), "walk_forward")
-    assert real.passed is True and real.ci_low > 0 and real.method == "walk_forward"
+    assert real.passed is True
+    assert real.ci_low > 0
+    assert real.method == "walk_forward"
 
 
 def test_walk_forward_finds_no_edge_in_a_random_walk(monkeypatch):

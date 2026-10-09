@@ -83,6 +83,11 @@ _ADDED_COLUMNS = [
     ("live_executions", "exit_reason", "VARCHAR(24)", "NULL"),
     ("live_executions", "gross_pnl", "FLOAT", "NULL"),
     ("live_executions", "closed_at", "FLOAT", "NULL"),
+    ("live_executions", "timeframe", "VARCHAR(8)", "NULL"),
+    ("live_executions", "submitted_at", "FLOAT", "NULL"),
+    ("live_executions", "filled_at", "FLOAT", "NULL"),
+    ("live_executions", "child_order_ids", "JSON", "'[]'"),
+    ("live_executions", "exit_quantity", "FLOAT", "0"),
 ]
 
 

@@ -27,6 +27,12 @@ import shutil  # noqa: E402
 atexit.register(shutil.rmtree, _TEST_DATA, ignore_errors=True)
 os.environ["MERIDIAN_DATA_DIR"] = str(_TEST_DATA)
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DATA / "meridian-test.db")
+# Never the network. Left at its default the app streams live crypto from
+# CoinDCX the moment it starts, so every TestClient opened a connection to a
+# real exchange — and the suite's speed, and now and then whether it finished
+# at all, depended on how that exchange was feeling.
+os.environ["MARKET_PROVIDER"] = "synthetic"
+os.environ["HYBRID_CRYPTO_LIVE"] = "false"
 # The live-order supervisor is driven one pass at a time by the tests that
 # exercise it; a background loop racing them would make every one flaky.
 os.environ["LIVE_RECONCILER_ENABLED"] = "false"

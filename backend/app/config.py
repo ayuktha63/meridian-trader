@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     # boot from the environment and nowhere editable from the UI: a limit
     # that can be raised with a click while LIVE is not a limit. To change
     # one, edit .env and restart — which also drops you back to PAPER.
+    #: A live order never risks more than this share of the cash Angel One
+    #: reports as available, whatever the recommendation was sized for. The
+    #: recommendation's own budget comes from the balance typed into
+    #: Settings, which is not the account.
+    live_max_risk_pct_of_funds: float = 1.0
     live_max_order_value: float = 50_000.0
     live_max_quantity: int = 5_000
     live_max_open_positions: int = 2
@@ -113,6 +118,11 @@ class Settings(BaseSettings):
     #: percent. Also the stale-recommendation check. 0 disables.
     live_price_band_pct: float = 1.0
     live_enforce_market_hours: bool = True
+    #: Orders are intraday. Close what is still open this long before the
+    #: session ends, ahead of the broker's own square-off, and take no new
+    #: entry inside the longer window — it would be closed almost at once.
+    live_squareoff_minutes_before_close: float = 20.0
+    live_no_entry_minutes_before_close: float = 45.0
     #: Refuse a live order unless a recent walk-forward test of this symbol
     #: and timeframe showed positive expectancy after costs.
     live_require_measured_edge: bool = True
