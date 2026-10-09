@@ -19,6 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # settings.json and the persisted kill switch, which live beside the database.
 # A fresh directory per run, so two runs at once cannot share state either.
 _TEST_DATA = Path(tempfile.mkdtemp(prefix="meridian-test-"))
+# …and removed afterwards: a run leaves a database behind, and enough of them
+# fill a disk.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+
+atexit.register(shutil.rmtree, _TEST_DATA, ignore_errors=True)
 os.environ["MERIDIAN_DATA_DIR"] = str(_TEST_DATA)
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DATA / "meridian-test.db")
 # The live-order supervisor is driven one pass at a time by the tests that

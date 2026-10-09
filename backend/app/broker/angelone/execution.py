@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db.models import AnalysisRow, LiveExecutionRow
 from ...runtime_settings import get as get_runtime_settings
 from ...schemas.execution import ExecutionRecord, ExecutionStatus
+from ... import audit
 from ...config import get_settings
 from ...services.edge import latest_edge
 from ..live_limits import load_ledger
@@ -252,6 +253,8 @@ class AngelOneExecutionService:
         await session.flush()
         log.info("[EXECUTION] recommendation_id=%s status=REJECTED reason=%s",
                  rec.id, reason)
+        await audit.record("gate_rejected", rec.id, session, symbol=rec.symbol, side=rec.side,
+                           reason=reason)
         return _row_to_record(row)
 
     async def _submit(self, session: AsyncSession,
@@ -295,6 +298,8 @@ class AngelOneExecutionService:
         log.info("[EXECUTION] recommendation_id=%s symbol=%s side=%s quantity=%s",
                  rec.id, rec.symbol, rec.side, ctx.quantity)
         log.info("[RISK_GATE] status=PASS")
+        await audit.record("order_submitting", rec.id, session, tag=tag, **order_params)
+        await session.commit()
 
         try:
             order_id = await angel_broker.place_order(order_params)
@@ -331,6 +336,7 @@ class AngelOneExecutionService:
         row.updated_at = time.time()
         await session.commit()
         log.info("[ANGEL_ONE] status=SUBMITTED order_id=%s", order_id)
+        await audit.record("order_submitted", rec.id, session, order_id=order_id)
 
         # One immediate pass: an instant fill gets its stop now rather than
         # on the supervisor's next tick.

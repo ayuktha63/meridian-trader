@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from . import __version__, runtime_settings
+from . import __version__, notify, runtime_settings
 from .ai import claude_client
 from .cache import cache
 from .config import settings
@@ -56,6 +56,8 @@ async def lifespan(app: FastAPI):
     await feed.start()
     # Picks up any live order left in flight by the last shutdown.
     await reconciler.start()
+    if notify.install():
+        log.info("alerts will also be sent to Telegram")
 
     cfg = runtime_settings.get()
     log.info("ready — db=%s cache=%s provider=%s analyst=%s",
@@ -81,7 +83,8 @@ app = FastAPI(
     description=(
         "Institutional-grade market analysis. Produces BUY / SELL / WAIT "
         "recommendations with confidence, risk framing and full reasoning. "
-        "**This service never executes trades.**"
+        "Paper trading by default; it can place real orders through Angel "
+        "One only in LIVE mode, after the pre-trade risk gate."
     ),
     version=__version__,
     default_response_class=ORJSONResponse,
@@ -130,8 +133,9 @@ async def health() -> Dict[str, Any]:
         "symbols": SYMBOLS,
         "timeframes": TIMEFRAME_CODES,
         "disclaimer": (
-            "Analysis only. This service does not place, modify or cancel orders. "
-            "Nothing it outputs is a guarantee of any outcome."
+            "PAPER mode by default: no real orders. In LIVE mode it does place "
+            "orders on your Angel One account. Nothing it outputs is a "
+            "guarantee of any outcome, and no setting makes trading risk-free."
         ),
     }
 

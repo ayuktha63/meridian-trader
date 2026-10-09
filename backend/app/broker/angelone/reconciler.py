@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import alerts, runtime_settings
+from ... import alerts, audit, runtime_settings
 from ...config import settings
 from ...db.models import AnalysisRow, LiveExecutionRow
 from ...db.session import session_scope
@@ -65,6 +65,13 @@ FLAT_MIN_AGE_SECONDS = 20.0
 PRODUCT_TYPE = "INTRADAY"
 _DONE = ("complete", "filled")
 _DEAD = ("rejected", "cancelled", "canceled")
+
+
+def object_session_of(row) -> Optional[AsyncSession]:
+    """The AsyncSession a row is attached to, so an audit entry can commit
+    with the change it describes."""
+    from sqlalchemy.ext.asyncio import async_object_session
+    return async_object_session(row)
 
 
 def _status(order: Optional[dict]) -> str:
@@ -365,6 +372,10 @@ class LiveReconciler:
             row.protected_quantity = quantity
             log.info("[PROTECT] %s stop resting at %s for %s (order %s)",
                      row.symbol, row.stop_price, quantity, row.stop_order_id)
+            await audit.record("stop_placed", row.recommendation_id,
+                               object_session_of(row), symbol=row.symbol,
+                               order_id=row.stop_order_id, trigger=row.stop_price,
+                               quantity=quantity)
             return True
         return False
 
@@ -511,6 +522,9 @@ class LiveReconciler:
         self._flat_seen.pop(row.id, None)
         self._target_unavailable.discard(row.id)
         log.info("[CLOSED] %s %s at %s pnl=%s", row.symbol, reason, price, row.gross_pnl)
+        await audit.record("position_closed", row.recommendation_id,
+                           object_session_of(row), symbol=row.symbol,
+                           reason=reason, exit_price=price, gross_pnl=row.gross_pnl)
 
     # ── kill switch ───────────────────────────────────────────
 

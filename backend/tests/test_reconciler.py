@@ -475,3 +475,38 @@ def test_the_trading_day_starts_at_midnight_ist():
     from app.broker.live_limits import trading_day_start
     # 2026-01-01 00:30 IST is 2025-12-31 19:00 UTC — already the new day.
     assert trading_day_start(1767207600.0) == 1767205800.0
+
+
+# ── audit trail and alert channel ─────────────────────────────
+
+def test_everything_that_touches_real_money_is_audited(client, fake):
+    rec_id, _ = filled(client, fake)
+    fake.fill(row(rec_id).stop_order_id, price=2480.0)
+    tick()
+    client.post("/api/trading/kill-switch?activate=true")
+    attempt(client)                                   # refused: kill switch
+    events = [e["event"] for e in client.get("/api/audit").json()]
+    for expected in ("order_submitting", "order_submitted", "stop_placed",
+                     "position_closed", "kill_switch", "gate_rejected"):
+        assert expected in events, expected
+    closed = next(e for e in client.get("/api/audit").json() if e["event"] == "position_closed")
+    assert closed["subject"] == rec_id and closed["detail"]["reason"] == "STOP"
+
+
+def test_telegram_gets_warnings_and_criticals_but_never_the_token_in_a_log(monkeypatch, caplog):
+    from app import notify
+
+    sent = []
+    monkeypatch.setattr(settings, "telegram_bot_token", "123:SECRET")
+    monkeypatch.setattr(settings, "telegram_chat_id", "42")
+    monkeypatch.setattr(notify.httpx, "post", lambda url, **kw: sent.append((url, kw)))
+    notify._send({"level": "critical", "code": "STOP_NOT_PLACED", "message": "boom",
+                  "context": {"symbol": "RELIANCE"}})
+    assert "123:SECRET" in sent[0][0] and sent[0][1]["json"]["chat_id"] == "42"
+    assert "RELIANCE" in sent[0][1]["json"]["text"]
+
+    def fail(url, **kw):
+        raise RuntimeError("could not reach " + url)
+    monkeypatch.setattr(notify.httpx, "post", fail)
+    notify._send({"level": "warning", "code": "X", "message": "y", "context": {}})
+    assert "SECRET" not in caplog.text

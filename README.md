@@ -110,7 +110,7 @@ Press **Ctrl-C** once in the terminal running `make dev`. It stops both servers.
 If a server was started some other way and is still holding a port:
 
 ```bash
-pkill -f "uvicorn app.main"    # the API
+pkill -f "app.serve"    # the API
 pkill -f vite                  # the UI
 ```
 
@@ -168,7 +168,7 @@ make clean       # remove venv, node_modules, build output
 | --- | --- | --- |
 | "Cannot reach the analysis engine" | API not running, or died | Check the `make dev` terminal for a traceback; `make backend` alone shows its logs clearly |
 | Browser shows a *different* app | You opened 5173 but Vite moved to 5174 | Use the URL from the banner |
-| `Address already in use` on 8000 | An old API is still alive | `pkill -f "uvicorn app.main"`, then `make dev` |
+| `Address already in use` on 8000 | An old API is still alive | `pkill -f "app.serve"`, then `make dev` |
 | `make: command not found` | No build tools | macOS: `xcode-select --install` |
 | `make setup` fails on `python3 -m venv` | Python missing or too old | Install Python 3.9+ and re-run |
 | Chart shows **SIM**, not **LIVE** | That symbol has no keyless source | Expected for NSE/MCX symbols — they need Zerodha (see [TRADING.md](TRADING.md)). Crypto should always read LIVE |

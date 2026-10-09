@@ -7,7 +7,7 @@ from app.analysis import indicators as ind
 from app.analysis import mtf, patterns, candlesticks, strategies
 from app.analysis import structure as structure_engine
 from app.instruments import get_instrument
-from conftest import make_df, trending_df
+from conftest import make_df
 
 
 def build(df, symbol="EURUSD", timeframe="15m"):

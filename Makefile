@@ -46,6 +46,7 @@ test:
 	cd backend && .venv/bin/python -m pytest tests -q
 
 lint:
+	cd backend && .venv/bin/ruff check app tests
 	cd frontend && npm run typecheck
 
 docker:

@@ -12,7 +12,6 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .. import runtime_settings
 from ..config import settings
 from ..instruments import DEFAULT_STREAM_SYMBOLS, TIMEFRAME_CODES, get_instrument
 from ..schemas.market import QuoteSnapshot

@@ -11,7 +11,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException
 
-from .. import alerts
+from .. import alerts, audit
 from ..broker.angelone import angel_auth, angel_broker, angel_instruments
 from ..broker.angelone.reconciler import reconciler
 from ..broker.angelone.auth import AngelOneAuthError
@@ -116,6 +116,7 @@ async def set_trading_mode(payload: TradingModeRequest) -> TradingModeStatus:
         trading_mode.set_mode(mode, confirmed=payload.confirmed)
     except PermissionError as exc:
         raise HTTPException(428, str(exc)) from exc
+    await audit.record("mode_changed", mode)
     return TradingModeStatus(**trading_mode.status())
 
 
@@ -138,6 +139,7 @@ async def set_kill_switch(activate: bool = True) -> TradingModeStatus:
                             "Kill switch: {} working order(s) cancelled.".format(cancelled))
     else:
         trading_mode.deactivate_kill_switch()
+    await audit.record("kill_switch", "on" if activate else "off")
     return TradingModeStatus(**trading_mode.status())
 
 
@@ -153,6 +155,11 @@ async def flatten_all(payload: FlattenRequest) -> dict:
     except AngelOneOrderError as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"closing": closing, **trading_mode.status()}
+
+
+@router.get("/api/audit")
+async def audit_log(limit: int = 200) -> list:
+    return await audit.recent(min(max(limit, 1), 1000))
 
 
 @router.get("/api/alerts")

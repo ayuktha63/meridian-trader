@@ -200,8 +200,12 @@ connection, zero orders sent. Switching to LIVE is a deliberate two-part act:
 flip the toggle in the DEMO/LIVE control in the top bar, then confirm the
 dialog that follows. **A backend restart always drops back to PAPER**, on
 purpose — a crash mid-session must never wake back up still armed. There's
-also a **kill switch** (the same top-bar control → Emergency Stop) that
-blocks new live orders immediately without touching anything already open.
+also a **kill switch** (the same top-bar control → Emergency Stop). It blocks
+new live orders and cancels every entry order still working; protective
+stops are left exactly where they are. It stays on — through a switch to
+PAPER and back, and through a restart — until you clear it yourself. Closing
+open positions is a separate, explicit button beside it (**Flatten N live
+positions**), which asks first.
 
 **Instrument support is checked, not assumed.** Angel One does not support
 crypto at all — BTCUSD, ETHUSD and every other CoinDCX pair simply cannot be
@@ -345,23 +349,57 @@ stop, target, quantity and risk — the same numbers the recommendation
 already gave you, never re-typed, never editable from the frontend. Only
 after you click **Confirm & Execute** does anything reach Angel One.
 
-**What happens after submission is intentionally limited right now:**
+**Before the order is sent** the pre-trade gate has to pass every check, and
+any one of them refuses the order with its reason:
 
-- It places a plain **LIMIT entry order at the recommended price**. No
-  stop-loss or target order is submitted alongside it — those exist only as
-  numbers on your screen, exactly like the manual Kite flow above.
-- **§3's stop-loss rule applies here with zero exceptions**: if you get
-  filled, place the SL-M yourself, immediately, in Angel One's own app. The
-  "one thing that can go badly wrong" warning below is not softened by any
-  of this being automated up to the entry — if anything it's *more*
-  important, because it's easier to assume the system did more than it did.
-- You'll see one of: **SUBMITTED**, **FILLED** (with the actual average
-  price — never assume the fill matches your requested price), **REJECTED**
-  (with Angel One's real reason), or **UNKNOWN**. That last one means the
-  request to Angel One failed in a way Meridian couldn't resolve — a network
-  timeout, typically. It is not treated as "probably fine": go check Angel
-  One's own order book directly before doing anything else with that
-  recommendation.
+- a walk-forward test of this symbol and timeframe, under 30 days old,
+  showed positive expectancy after costs (Backtest tab → **Walk-forward
+  test**). No measured edge, no live order;
+- the market for the instrument is open, and the entry is within
+  `LIVE_PRICE_BAND_PCT` of Angel One's last traded price;
+- order value, quantity, open positions, trades today, and exposure per
+  symbol and per sector are inside the `LIVE_*` limits in `.env`;
+- today's realised loss is under `LIVE_DAILY_LOSS_LIMIT` — reaching it trips
+  the kill switch the moment the losing trade closes;
+- Angel One's own margin figure for the order fits your available funds.
+
+Those limits are read from `.env` at startup and cannot be changed from the
+UI. Changing one means a restart, which also puts you back in PAPER.
+
+**After the order is sent** Meridian keeps watching it — every few seconds,
+and again from scratch after a restart:
+
+- It places a **LIMIT entry at the recommended price**, rounded to the
+  exchange tick. If it has not filled in `LIVE_ENTRY_TIMEOUT_SECONDS` (five
+  minutes by default) it is cancelled as stale.
+- On a fill it places a **stop order at Angel One** for the filled quantity
+  (SL-M, or a stop-limit where SL-M is refused), and a target limit order
+  beside it. When one fills the other is cancelled. The result card says
+  **"Stop resting at Angel One"** — or, in red, that it is not.
+- **If the stop cannot be placed the position is closed at market, the kill
+  switch trips, and a critical alert is raised.** A live position is never
+  left open without a stop at the broker.
+- As the trade runs, the protection ladder moves that real stop — only ever
+  tighter.
+- If Angel One will not rest a target beside the stop (it may want extra
+  margin), the stop stays and the target is taken by Meridian when price
+  reaches it — which needs Meridian running.
+- If you close the position yourself in Angel One's app, Meridian notices
+  and cancels its own stop so it cannot open a new position later.
+- **UNKNOWN** still means a submission timed out. Meridian now looks for
+  that exact order by its tag and adopts it if it exists; until that is
+  settled a second click is refused.
+
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to have warnings and critical
+alerts sent to your phone. Every order, stop, close, mode change and refused
+order is in the audit log at `/api/audit`.
+
+**None of this has yet been run against a real Angel One account.** It is
+tested against a simulated broker. Make the first live order the smallest
+one the exchange allows, on a liquid stock, and watch Angel One's own app
+while it goes: confirm the stop appears there, at the right price, for the
+right quantity. Orders are intraday (MIS); Angel One squares them off before
+the close.
 
 ### After the trade
 

@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "AI Forex Trading Analysis Terminal — analysis only, never executes trades",
+  "description": "AI Forex Trading Analysis Terminal — paper by default, live execution via Angel One when armed",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",

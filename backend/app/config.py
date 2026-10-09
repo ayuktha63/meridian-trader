@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     #: and timeframe showed positive expectancy after costs.
     live_require_measured_edge: bool = True
 
+    # ── alert channel (optional) ──────────────────────────────
+    #: Critical and warning alerts are also sent here when both are set.
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+
     # ── angel one (live execution) ───────────────────────────
     # Boot-time only, deliberately not in runtime_settings.py: that store
     # persists to a plain-JSON file readable over the settings API (masked,

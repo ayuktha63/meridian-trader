@@ -317,7 +317,6 @@ def test_a_losing_run_reports_a_negative_return():
 def test_full_lifecycle_settles_against_the_account(client):
     """Open a trade, stop it out, and confirm the account actually moved by the
     net loss — costs included."""
-    import json
     import urllib.request  # noqa: F401 - kept for symmetry with live probes
 
     state = client.post("/api/paper/reset",

@@ -219,6 +219,20 @@ class PaperTradeRow(Base):
     analysis_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
+class AuditRow(Base):
+    """Append-only record of everything that touched real money: mode and
+    kill-switch changes, every pre-trade decision, every order and close.
+    Nothing in the app updates or deletes a row here."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    at: Mapped[float] = mapped_column(Float, default=_now, index=True)
+    event: Mapped[str] = mapped_column(String(40), index=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    detail: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class LiveExecutionRow(Base):
     """A real Angel One order and what became of it.
 

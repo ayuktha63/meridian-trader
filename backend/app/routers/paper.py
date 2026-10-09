@@ -15,7 +15,7 @@ from .. import runtime_settings
 from ..data.feed import feed
 from ..db.session import get_session
 from ..instruments import get_instrument
-from ..schemas.paper import ExitReason, PaperAccount, PaperState, PaperTrade
+from ..schemas.paper import ExitReason, PaperState, PaperTrade
 from ..services import paper as repo
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])

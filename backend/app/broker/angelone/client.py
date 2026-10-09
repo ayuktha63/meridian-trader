@@ -16,7 +16,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from .auth import AngelOneAuthError, angel_auth
+from .auth import angel_auth
 
 log = logging.getLogger("meridian.angelone.client")
 

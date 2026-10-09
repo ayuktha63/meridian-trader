@@ -104,7 +104,7 @@ class SyntheticProvider(MarketDataProvider):
         shocks = rng.normal(0.0, 1.0, size=n)
         # Fat tails: occasional news shocks.
         jump_mask = rng.random(n) < 0.012
-        jump_size = rng.normal(0.0, base_sigma * 4.0, size=n) * jump_mask
+        jump_size = rng.normal(0.0, base_sigma * 4.0, size=n) * jump_mask  # noqa: F841
 
         level = 0.0
         for i in range(n):

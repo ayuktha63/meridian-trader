@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from app.analysis import indicators, plan as plan_builder, structure as structure_engine
 from app.backtest import run_backtest
 from app.data.feed import feed
-from app.schemas.analysis import Decision, IndicatorSnapshot
+from app.schemas.analysis import Decision
 from app.schemas.journal import BacktestRequest
-from conftest import trending_df
 
 
 def _snapshot(df, instrument):

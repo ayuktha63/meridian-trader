@@ -138,7 +138,7 @@ def detect_trendline_structures(df: pd.DataFrame, swings: List[SwingPoint],
 
 def detect_head_and_shoulders(df: pd.DataFrame, swings: List[SwingPoint],
                               atr: float) -> List[PatternHit]:
-    times = df["time"].to_numpy()
+    times = df["time"].to_numpy()  # noqa: F841
     hits: List[PatternHit] = []
     seq = swings[-9:]
     if len(seq) < 5:

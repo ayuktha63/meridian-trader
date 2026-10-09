@@ -22,7 +22,6 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from .. import runtime_settings
-from ..config import settings
 from ..data.feed import feed
 from ..data.store import store
 from ..instruments import MTF_LADDER, get_instrument, get_timeframe
@@ -35,7 +34,7 @@ from ..overlays.builder import build_overlays, build_scenario_overlays
 from ..ai import claude_client, fallback as rule_analyst
 from ..ai.narrative import build_evidence, build_narrative
 from . import candlesticks, confidence, drawings as drawing_engine, manage
-from . import derivatives, guardrails, indicators, mtf, patterns
+from . import derivatives, indicators, mtf, patterns
 from . import risk as risk_engine
 from . import plan as plan_builder, strategies
 from . import structure as structure_engine

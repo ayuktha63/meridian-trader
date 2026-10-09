@@ -41,3 +41,4 @@ pytest-asyncio>=0.23
 #   pip install pandas-ta
 #   pip install TA-Lib          # requires the ta-lib C library
 #   pip install opencv-python   # optional geometric pattern matching
+ruff>=0.6

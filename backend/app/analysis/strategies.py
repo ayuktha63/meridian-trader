@@ -16,7 +16,7 @@ with each other on purpose.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd

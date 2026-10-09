@@ -18,7 +18,7 @@ import os
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .config import DATA_DIR, settings as env_settings
 

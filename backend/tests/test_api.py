@@ -19,7 +19,7 @@ def test_health_reports_subsystems(client):
     assert body["cache"] in ("memory", "redis")
     assert "EURUSD" in body["symbols"]
     assert "analyst" in body
-    assert "does not place" in body["disclaimer"]
+    assert "risk-free" in body["disclaimer"]
 
 
 def test_symbol_and_timeframe_catalogue(client):
