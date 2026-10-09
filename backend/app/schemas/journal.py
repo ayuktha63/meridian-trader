@@ -73,6 +73,12 @@ class BacktestRequest(BaseModel):
     use_ai: bool = False               # replaying with Claude is slow/expensive
     starting_balance: float = 10000.0
     risk_pct: float = 1.0
+    #: Charge spread, brokerage, statutory charges and stop slippage. Off only
+    #: to see how much of a result the costs were.
+    include_costs: bool = True
+    #: Share of the bars, at the end, held out as the out-of-sample segment.
+    oos_fraction: float = 0.3
+    seed: int = 7
 
 
 class BacktestTrade(BaseModel):
@@ -90,6 +96,21 @@ class BacktestTrade(BaseModel):
     bars_held: int = 0
     confidence: float = 0.0
     reason: str = ""
+    #: What the round trip cost, in R. `r_multiple` is already net of it.
+    cost_r: float = 0.0
+
+
+class EdgeVerdict(BaseModel):
+    """Is there a measured edge after costs, on data the parameters never saw?"""
+
+    passed: bool = False
+    reason: str = "Not evaluated."
+    trades: int = 0
+    expectancy: float = 0.0
+    #: 90% bootstrap interval on per-trade expectancy, in R.
+    ci_low: float = 0.0
+    ci_high: float = 0.0
+    method: str = "holdout"       # holdout | walk_forward
 
 
 class BacktestMetrics(BaseModel):
@@ -125,3 +146,9 @@ class BacktestResult(BaseModel):
     trades: List[BacktestTrade] = Field(default_factory=list)
     equity_curve: List[Dict[str, float]] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
+    #: The same run split in time: fitted segment vs the part held out.
+    in_sample: Optional[BacktestMetrics] = None
+    out_of_sample: Optional[BacktestMetrics] = None
+    edge: EdgeVerdict = Field(default_factory=EdgeVerdict)
+    #: Walk-forward only: the parameters chosen for each fold.
+    folds: List[Dict[str, float]] = Field(default_factory=list)

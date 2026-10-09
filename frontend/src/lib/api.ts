@@ -295,4 +295,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  /** The test the live gate reads: parameters fitted on one stretch, traded on the next. */
+  walkForward: (payload: { symbol: string; timeframe: string; bars?: number; strategy?: string }) =>
+    request<BacktestResult>('/api/backtest/walk-forward', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 }

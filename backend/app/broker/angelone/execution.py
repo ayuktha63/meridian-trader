@@ -29,6 +29,7 @@ from ...db.models import AnalysisRow, LiveExecutionRow
 from ...runtime_settings import get as get_runtime_settings
 from ...schemas.execution import ExecutionRecord, ExecutionStatus
 from ...config import get_settings
+from ...services.edge import latest_edge
 from ..live_limits import load_ledger
 from ..risk_gate import GateContext, Recommendation, risk_gate
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker
@@ -182,6 +183,7 @@ class AngelOneExecutionService:
             session, exclude_id=existing_row.id if existing_row else None)
         if ctx.match is not None:
             await self._load_market_facts(ctx)
+        ctx.edge = await latest_edge(session, analysis.symbol, analysis.timeframe)
 
         gate_result = await risk_gate.evaluate(ctx)
 

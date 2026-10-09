@@ -114,7 +114,8 @@ async def test_backtest_exits_never_precede_entries():
     for trade in result.trades:
         if trade.exit_time:
             assert trade.bars_held >= 0
-            assert trade.exit_time > trade.time
+            # A fill at the bar's open can be stopped within that same bar.
+            assert trade.exit_time >= trade.time
 
 
 @pytest.mark.asyncio

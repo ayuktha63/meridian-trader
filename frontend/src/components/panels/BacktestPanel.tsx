@@ -42,7 +42,20 @@ export default function BacktestPanel() {
     }
   }
 
+  const runWalkForward = async () => {
+    setRunning(true)
+    setError(null)
+    try {
+      setResult(await api.walkForward({ symbol, timeframe, bars: Math.max(bars, 3000), strategy }))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Walk-forward failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
   const metrics = result?.metrics
+  const edge = result?.edge
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -73,6 +86,10 @@ export default function BacktestPanel() {
               title="Replay the rules over this symbol's history and score the result">
           {running ? <Spinner /> : null}
           Replay {symbol} {timeframe}
+        </button>
+        <button type="button" className="btn w-full" onClick={runWalkForward} disabled={running}
+                title="Fit parameters on one stretch of history, trade them on the next, repeat. This is the test Execute Live requires.">
+          Walk-forward test (required for live)
         </button>
         {error && <p className="text-2xs text-bear">{error}</p>}
       </div>
@@ -143,6 +160,25 @@ export default function BacktestPanel() {
                 ))}
               </div>
             </div>
+
+            {edge && (
+              <div className={`rounded-lg border px-2.5 py-2 text-2xs leading-relaxed ${
+                edge.passed ? 'border-bull/50 bg-bull/10 text-bull'
+                  : 'border-warn/50 bg-warn/10 text-warn'}`}>
+                <div className="font-bold uppercase tracking-wide">
+                  {edge.passed ? 'Measured edge' : 'No measured edge'}
+                  <span className="font-normal normal-case text-faint">
+                    {' '}· {edge.method === 'walk_forward' ? 'walk-forward' : 'holdout only'}
+                  </span>
+                </div>
+                <div className="text-ink/85">{edge.reason}</div>
+                {edge.method !== 'walk_forward' && (
+                  <div className="text-faint">
+                    Execute Live needs a passing walk-forward test, not this one.
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-1">
               {result.notes.map((note) => (

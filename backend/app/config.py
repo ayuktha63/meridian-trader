@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     #: percent. Also the stale-recommendation check. 0 disables.
     live_price_band_pct: float = 1.0
     live_enforce_market_hours: bool = True
+    #: Refuse a live order unless a recent walk-forward test of this symbol
+    #: and timeframe showed positive expectancy after costs.
+    live_require_measured_edge: bool = True
 
     # ── angel one (live execution) ───────────────────────────
     # Boot-time only, deliberately not in runtime_settings.py: that store

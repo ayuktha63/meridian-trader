@@ -782,6 +782,21 @@ export interface BacktestResult {
   trades: BacktestTrade[]
   equity_curve: { time: number; equity: number }[]
   notes: string[]
+  in_sample?: BacktestMetrics | null
+  out_of_sample?: BacktestMetrics | null
+  edge?: EdgeVerdict
+  folds?: Record<string, number>[]
+}
+
+/** Is there a measured edge after costs, on data the parameters never saw? */
+export interface EdgeVerdict {
+  passed: boolean
+  reason: string
+  trades: number
+  expectancy: number
+  ci_low: number
+  ci_high: number
+  method: 'holdout' | 'walk_forward'
 }
 
 // ── websocket ───────────────────────────────────────────────

@@ -35,15 +35,7 @@ from ..db.models import PaperAccountRow, PaperTradeRow
 from ..instruments import Instrument
 from ..schemas.paper import ExitReason, PaperAccount, PaperStatus, PaperTrade
 
-#: Taker fee per side, as a fraction of notional. CoinDCX charges 0.05% on the
-#: USDT books at the default tier; NSE equity delivery is far less but F&O
-#: brokerage plus STT lands near this once everything is counted.
-COMMISSION_RATE = 0.0005
-
-#: Slippage applied against you on a stop fill, as a fraction of the ATR-free
-#: distance. A stop is a market order once triggered, and it fills where the
-#: book is, which is never in your favour.
-STOP_SLIPPAGE_PIPS = 0.5
+from ..costs import COMMISSION_RATE, STOP_SLIPPAGE_PIPS  # noqa: E402,F401 - shared with the backtest
 
 ACCOUNT_ID = "demo"
 

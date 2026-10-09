@@ -6,8 +6,12 @@ look-ahead discipline:
 * Indicators are vectorised once, then read only at index `i`.
 * Swings are detected once over the whole series but a swing is only visible
   from `swing.index + right` — the bar on which it was actually confirmed.
-* Entries fill at the close of the signal bar. Exits are checked on subsequent
-  bars only.
+* A signal on bar `i` fills at the **open of bar `i+1`** — the first price
+  that exists after the signal does. Exits are checked from that bar on.
+* Every trade pays the round trip from `app/costs.py`: spread, brokerage,
+  statutory charges, and slippage on a stop. Results are net.
+* No statistic of the whole series reaches the loop: the ATR scale handed to
+  structure detection comes from the warm-up bars only.
 * When a bar's range covers both stop and target, the **stop** is assumed to
   fill first. Without tick data you cannot know the order, and assuming the
   favourable one is how backtests come to lie.
@@ -29,11 +33,12 @@ from ..data.feed import feed
 from ..data.store import store
 from ..instruments import get_instrument
 from ..schemas.journal import (
-    BacktestRequest, BacktestResult, BacktestTrade,
+    BacktestRequest, BacktestResult, BacktestTrade, EdgeVerdict,
 )
 from ..analysis import indicators as ind
 from ..analysis.structure import detect_structure_events, find_swings
 from ..analysis.candlesticks import PATTERNS, build_ctx
+from .. import costs
 from . import metrics as metrics_mod
 
 log = logging.getLogger("meridian.backtest")
@@ -41,6 +46,8 @@ log = logging.getLogger("meridian.backtest")
 SWING_LEFT = SWING_RIGHT = 3
 WARMUP = 210
 MAX_HOLD_BARS = 200
+#: Fewer out-of-sample trades than this cannot establish an edge.
+MIN_EDGE_TRADES = 30
 
 # Live weights minus the AI component, renormalised to 1.0.
 WEIGHTS = {"trend": 0.278, "momentum": 0.222, "volume": 0.167,
@@ -262,13 +269,212 @@ def _signal(i: int, s: Dict[str, np.ndarray], close: np.ndarray,
             "confidence": min(100.0, confidence), **components}
 
 
+def _simulate(df: pd.DataFrame, instrument, request: BacktestRequest,
+              start: int, end: int):
+    """Replay bars [start, end). Returns (trades, equity_curve).
+
+    Indicators are computed over the whole frame but are causal — each value
+    at `i` depends only on bars up to `i` — so a segment that starts late
+    still sees properly warmed-up values.
+    """
+    close = df["close"].to_numpy()
+    opens = df["open"].to_numpy()
+    high = df["high"].to_numpy()
+    low = df["low"].to_numpy()
+    times = df["time"].to_numpy()
+    n = len(df)
+    end = min(end, n)
+
+    s = _series(df)
+    # Known before the first tradable bar. The mean over the whole series
+    # was a number from the future.
+    warm = s["atr"][:WARMUP]
+    atr_scale = float(np.nanmean(warm)) if np.isfinite(np.nanmean(warm)) else 1e-6
+    struct_bias, event_bias = _structure_timeline(df, atr_scale or 1e-6)
+    ctx = build_ctx(df)
+    rng = np.random.default_rng(request.seed)
+
+    balance = request.starting_balance
+    risk_amount = balance * (request.risk_pct / 100.0)
+    equity_curve: List[Dict[str, float]] = [{"time": float(times[start]), "equity": balance}]
+    trades: List[BacktestTrade] = []
+    open_trade: Optional[BacktestTrade] = None
+    open_index = 0
+    pending = None        # a signal waiting for the next bar's open
+
+    for i in range(start, end):
+        # ── fill yesterday's signal at today's open ──────────
+        if pending is not None and open_trade is None:
+            direction, signal_price, stop, target, confidence, reason = pending
+            pending = None
+            entry = float(opens[i])
+            # Keep the stop/target distances the setup asked for; a gap moves
+            # the levels with the fill rather than quietly changing the risk.
+            shift = entry - signal_price
+            stop, target = stop + shift, target + shift
+            open_trade = BacktestTrade(
+                index=i, time=int(times[i]), direction=direction,
+                entry=round(entry, instrument.digits),
+                stop_loss=round(stop, instrument.digits),
+                take_profit=round(target, instrument.digits),
+                confidence=round(confidence, 1), reason=reason)
+            open_index = i
+            trades.append(open_trade)
+
+        # ── manage the open position ─────────────────────────
+        if open_trade is not None:
+            bars_held = i - open_index
+            long = open_trade.direction == "BUY"
+            hit_stop = low[i] <= open_trade.stop_loss if long else high[i] >= open_trade.stop_loss
+            hit_target = (high[i] >= open_trade.take_profit if long
+                          else low[i] <= open_trade.take_profit)
+
+            exit_price = outcome = None
+            if hit_stop:            # pessimistic ordering — stop wins ties
+                exit_price, outcome = open_trade.stop_loss, "loss"
+            elif hit_target:
+                exit_price, outcome = open_trade.take_profit, "win"
+            elif bars_held >= MAX_HOLD_BARS:
+                exit_price, outcome = close[i], "breakeven"
+
+            if exit_price is None:
+                continue
+
+            risk = abs(open_trade.entry - open_trade.stop_loss)
+            move = (exit_price - open_trade.entry) if long else (open_trade.entry - exit_price)
+            cost = (costs.round_trip_cost(instrument, open_trade.entry, float(exit_price),
+                                          stopped=bool(hit_stop))
+                    if request.include_costs else 0.0)
+            r_multiple = (move - cost) / risk if risk > 0 else 0.0
+            if abs(r_multiple) <= 0.15:
+                outcome = "breakeven"
+            else:
+                outcome = "win" if r_multiple > 0 else "loss"
+
+            open_trade.exit_price = round(float(exit_price), instrument.digits)
+            open_trade.exit_time = int(times[i])
+            open_trade.outcome = outcome
+            open_trade.r_multiple = round(float(r_multiple), 3)
+            open_trade.cost_r = round(float(cost / risk), 3) if risk > 0 else 0.0
+            open_trade.pnl = round(float(r_multiple * risk_amount), 2)
+            open_trade.bars_held = bars_held
+
+            balance += open_trade.pnl
+            risk_amount = max(balance, 0.0) * (request.risk_pct / 100.0)
+            equity_curve.append({"time": float(times[i]), "equity": round(balance, 2)})
+            open_trade = None
+            continue
+
+        if i + 1 >= end:
+            continue            # no next bar to fill on
+
+        atr = s["atr"][i]
+        if np.isnan(atr) or atr <= 0:
+            continue
+
+        signal = _signal(i, s, close, struct_bias, event_bias, _candle_bias(ctx, i))
+
+        if request.strategy == "random":
+            # The control: entries with no information in them. After costs
+            # this must lose; if it does not, the harness is flattering.
+            if rng.random() > 0.08:
+                continue
+            direction = "BUY" if rng.random() < 0.5 else "SELL"
+            entry = float(close[i])
+            distance = float(atr * request.atr_stop_mult)
+            stop = entry - distance if direction == "BUY" else entry + distance
+            target = (entry + distance * request.risk_reward if direction == "BUY"
+                      else entry - distance * request.risk_reward)
+            reason = "random entry (control)"
+        elif request.strategy == "mean_reversion":
+            setup = _mean_reversion_setup(i, s, close, struct_bias, event_bias)
+            if setup is None:
+                continue
+            direction, entry, stop, target = setup
+            reason = "ADX {:.0f} (ranging) · RSI {:.0f} · %B {:.2f} — fading back toward the mean".format(
+                s["adx"][i], s["rsi"][i], s["bb_pctb"][i])
+        elif request.strategy == "breakout":
+            setup = _breakout_setup(i, s, close)
+            if setup is None:
+                continue
+            direction, entry, stop, target = setup
+            reason = "ATR ratio {:.2f} (compressed) · RVOL {:.1f}x — break from the range edge".format(
+                s["atr_ratio"][i], s["rvol"][i])
+        else:
+            if signal["confidence"] < request.min_confidence:
+                continue
+            if request.strategy == "structure" and abs(struct_bias[i]) < 0.3:
+                continue
+            if request.strategy == "trend_pullback":
+                rsi = s["rsi"][i]
+                aligned_long = signal["directional"] > 0 and rsi < 48
+                aligned_short = signal["directional"] < 0 and rsi > 52
+                if not (aligned_long or aligned_short):
+                    continue
+            direction = "BUY" if signal["directional"] > 0 else "SELL"
+            entry = float(close[i])
+            distance = float(atr * request.atr_stop_mult)
+            stop = entry - distance if direction == "BUY" else entry + distance
+            target = (entry + distance * request.risk_reward if direction == "BUY"
+                      else entry - distance * request.risk_reward)
+            reason = ("trend {:+.2f} · momentum {:+.2f} · structure {:+.2f} · "
+                      "volume {:+.2f} · pattern {:+.2f} ({:.0f}% agreement)".format(
+                          signal["trend"], signal["momentum"], signal["structure"],
+                          signal["volume"], signal["pattern"], signal["agreement"] * 100))
+
+        pending = (direction, entry, stop, target, signal["confidence"], reason)
+
+    if open_trade is not None:
+        open_trade.outcome = "open"
+        open_trade.bars_held = end - 1 - open_index
+    return trades, equity_curve
+
+
+def _closed(trades: List[BacktestTrade]) -> List[BacktestTrade]:
+    return [t for t in trades if t.outcome in ("win", "loss", "breakeven")]
+
+
+def edge_verdict(trades: List[BacktestTrade], method: str, seed: int = 7) -> EdgeVerdict:
+    """Positive expectancy after costs, with enough trades that the lower end
+    of a 90% bootstrap interval is still above zero. A point estimate above
+    zero on thirty trades is what luck looks like."""
+    r = np.array([t.r_multiple for t in _closed(trades)], dtype=float)
+    verdict = EdgeVerdict(method=method, trades=int(len(r)))
+    if len(r) == 0:
+        verdict.reason = "No out-of-sample trades — nothing was measured."
+        return verdict
+    rng = np.random.default_rng(seed)
+    means = rng.choice(r, size=(2000, len(r)), replace=True).mean(axis=1)
+    verdict.expectancy = round(float(r.mean()), 3)
+    verdict.ci_low = round(float(np.percentile(means, 5)), 3)
+    verdict.ci_high = round(float(np.percentile(means, 95)), 3)
+    if len(r) < MIN_EDGE_TRADES:
+        verdict.reason = ("Only {} out-of-sample trades (need {}) — too few to tell "
+                          "an edge from luck.".format(len(r), MIN_EDGE_TRADES))
+    elif verdict.ci_low <= 0:
+        verdict.reason = ("No measured edge: out-of-sample expectancy after costs is "
+                          "{:+.3f}R, and its 90% interval ({:+.3f}R to {:+.3f}R) "
+                          "includes zero.".format(verdict.expectancy, verdict.ci_low,
+                                                  verdict.ci_high))
+    else:
+        verdict.passed = True
+        verdict.reason = ("Out-of-sample expectancy after costs is {:+.3f}R over {} "
+                          "trades (90% interval {:+.3f}R to {:+.3f}R).".format(
+                              verdict.expectancy, len(r), verdict.ci_low, verdict.ci_high))
+    return verdict
+
+
+async def _frame(request: BacktestRequest):
+    symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
+    await feed.ensure_history(symbol, timeframe, request.bars)
+    return store.frame(symbol, timeframe, request.bars)
+
+
 async def run_backtest(request: BacktestRequest) -> BacktestResult:
     symbol = request.symbol.upper()
     timeframe = request.timeframe.lower()
     instrument = get_instrument(symbol)
-
-    await feed.ensure_history(symbol, timeframe, request.bars)
-    df = store.frame(symbol, timeframe, request.bars)
+    df = await _frame(request)
 
     result = BacktestResult(
         symbol=symbol, timeframe=timeframe, strategy=request.strategy,
@@ -282,134 +488,9 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         return result
 
     started = time.perf_counter()
-    close = df["close"].to_numpy()
-    high = df["high"].to_numpy()
-    low = df["low"].to_numpy()
     times = df["time"].to_numpy()
     n = len(df)
-
-    s = _series(df)
-    atr_mean = float(np.nanmean(s["atr"])) or 1e-6
-    struct_bias, event_bias = _structure_timeline(df, atr_mean)
-    ctx = build_ctx(df)
-
-    balance = request.starting_balance
-    risk_amount = balance * (request.risk_pct / 100.0)
-    equity_curve: List[Dict[str, float]] = [
-        {"time": float(times[WARMUP]), "equity": balance}
-    ]
-    trades: List[BacktestTrade] = []
-    open_trade: Optional[BacktestTrade] = None
-    open_index = 0
-
-    for i in range(WARMUP, n):
-        # ── manage the open position first ───────────────────
-        if open_trade is not None:
-            bars_held = i - open_index
-            hit_stop = (low[i] <= open_trade.stop_loss if open_trade.direction == "BUY"
-                        else high[i] >= open_trade.stop_loss)
-            hit_target = (high[i] >= open_trade.take_profit if open_trade.direction == "BUY"
-                          else low[i] <= open_trade.take_profit)
-
-            exit_price = None
-            outcome = None
-            if hit_stop:            # pessimistic ordering — stop wins ties
-                exit_price, outcome = open_trade.stop_loss, "loss"
-            elif hit_target:
-                exit_price, outcome = open_trade.take_profit, "win"
-            elif bars_held >= MAX_HOLD_BARS:
-                exit_price, outcome = close[i], "breakeven"
-
-            if exit_price is not None:
-                risk = abs(open_trade.entry - open_trade.stop_loss)
-                move = ((exit_price - open_trade.entry)
-                        if open_trade.direction == "BUY"
-                        else (open_trade.entry - exit_price))
-                r_multiple = move / risk if risk > 0 else 0.0
-                if outcome == "breakeven" and abs(r_multiple) > 0.15:
-                    outcome = "win" if r_multiple > 0 else "loss"
-
-                open_trade.exit_price = round(float(exit_price), instrument.digits)
-                open_trade.exit_time = int(times[i])
-                open_trade.outcome = outcome
-                open_trade.r_multiple = round(float(r_multiple), 3)
-                open_trade.pnl = round(float(r_multiple * risk_amount), 2)
-                open_trade.bars_held = bars_held
-
-                balance += open_trade.pnl
-                risk_amount = balance * (request.risk_pct / 100.0)
-                equity_curve.append({"time": float(times[i]), "equity": round(balance, 2)})
-                open_trade = None
-            else:
-                continue
-
-        if open_trade is not None:
-            continue
-
-        atr = s["atr"][i]
-        if np.isnan(atr) or atr <= 0:
-            continue
-
-        signal = _signal(i, s, close, struct_bias, event_bias, _candle_bias(ctx, i))
-
-        # Mean reversion and breakout have their own direction/entry/stop/
-        # target rule — the confluence score below is not used to size or
-        # aim these, only as a baseline "is anything obviously wrong" floor.
-        if request.strategy == "mean_reversion":
-            setup = _mean_reversion_setup(i, s, close, struct_bias, event_bias)
-            if setup is None:
-                continue
-            direction, entry, stop, target = setup
-        elif request.strategy == "breakout":
-            setup = _breakout_setup(i, s, close)
-            if setup is None:
-                continue
-            direction, entry, stop, target = setup
-        else:
-            if signal["confidence"] < request.min_confidence:
-                continue
-            if request.strategy == "structure" and abs(struct_bias[i]) < 0.3:
-                continue
-            if request.strategy == "trend_pullback":
-                rsi = s["rsi"][i]
-                aligned_long = signal["directional"] > 0 and rsi < 48
-                aligned_short = signal["directional"] < 0 and rsi > 52
-                if not (aligned_long or aligned_short):
-                    continue
-
-            direction = "BUY" if signal["directional"] > 0 else "SELL"
-            entry = float(close[i])
-            stop_distance = float(atr * request.atr_stop_mult)
-            stop = entry - stop_distance if direction == "BUY" else entry + stop_distance
-            target = (entry + stop_distance * request.risk_reward if direction == "BUY"
-                      else entry - stop_distance * request.risk_reward)
-
-        if request.strategy == "mean_reversion":
-            reason = "ADX {:.0f} (ranging) · RSI {:.0f} · %B {:.2f} — fading back toward the mean".format(
-                s["adx"][i], s["rsi"][i], s["bb_pctb"][i])
-        elif request.strategy == "breakout":
-            reason = "ATR ratio {:.2f} (compressed) · RVOL {:.1f}x — break from the range edge".format(
-                s["atr_ratio"][i], s["rvol"][i])
-        else:
-            reason = ("trend {:+.2f} · momentum {:+.2f} · structure {:+.2f} · "
-                      "volume {:+.2f} · pattern {:+.2f} ({:.0f}% agreement)".format(
-                          signal["trend"], signal["momentum"], signal["structure"],
-                          signal["volume"], signal["pattern"], signal["agreement"] * 100))
-
-        open_trade = BacktestTrade(
-            index=i, time=int(times[i]), direction=direction,
-            entry=round(entry, instrument.digits),
-            stop_loss=round(stop, instrument.digits),
-            take_profit=round(target, instrument.digits),
-            confidence=round(signal["confidence"], 1),
-            reason=reason,
-        )
-        open_index = i
-        trades.append(open_trade)
-
-    if open_trade is not None:
-        open_trade.outcome = "open"
-        open_trade.bars_held = n - 1 - open_index
+    trades, equity_curve = _simulate(df, instrument, request, WARMUP, n)
 
     result.bars_tested = n - WARMUP
     result.from_time = int(times[WARMUP])
@@ -419,10 +500,30 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
     result.metrics = metrics_mod.compute(
         trades, request.starting_balance, equity_curve, result.bars_tested)
 
+    # ── the same run, split in time ──────────────────────────
+    split = WARMUP + int((n - WARMUP) * (1.0 - min(max(request.oos_fraction, 0.1), 0.6)))
+    early = [t for t in trades if t.index < split]
+    late = [t for t in trades if t.index >= split]
+    result.in_sample = metrics_mod.compute(early, request.starting_balance, [], split - WARMUP)
+    result.out_of_sample = metrics_mod.compute(late, request.starting_balance, [], n - split)
+    result.edge = edge_verdict(late, "holdout", request.seed)
+
     result.notes.append(
-        "Replayed {} bars in {:.0f}ms. Entries fill at signal-bar close; when a bar "
-        "spans both stop and target the stop is assumed to fill first.".format(
+        "Replayed {} bars in {:.0f}ms. A signal fills at the next bar's open; when a "
+        "bar spans both stop and target the stop is assumed to fill first.".format(
             result.bars_tested, (time.perf_counter() - started) * 1000))
+    if request.include_costs:
+        charged = [t.cost_r for t in _closed(trades)]
+        result.notes.append(
+            "Net of costs: spread, brokerage, statutory charges and stop slippage "
+            "averaged {:.3f}R per trade.".format(float(np.mean(charged)) if charged else 0.0))
+    else:
+        result.notes.append("COSTS ARE OFF — these figures are not achievable.")
+    result.notes.append(
+        "The last {:.0f}% of bars are reported separately as out-of-sample. That is "
+        "only a fair test if these parameters were not chosen by looking at it — "
+        "use walk-forward for that.".format(
+            100 * (n - split) / max(n - WARMUP, 1)))
     result.notes.append(
         "Claude was not consulted during replay — this measures the deterministic "
         "confluence engine only, which is 90% of the live score.")
@@ -434,5 +535,73 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         result.notes.append(
             "use_ai was requested but per-bar AI replay is intentionally not "
             "implemented; it would cost thousands of API calls per run.")
+    return result
 
+
+#: The small grid walk-forward is allowed to choose from. Kept small on
+#: purpose: every extra combination is another chance to fit noise.
+WF_GRID = [(conf, rr) for conf in (50.0, 60.0, 70.0) for rr in (1.5, 2.0, 3.0)]
+
+
+async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResult:
+    """Choose parameters on one stretch of history, trade them on the next,
+    roll forward, repeat. Only the traded stretches are reported, so nothing
+    in the result was ever fitted to the bars it was measured on."""
+    symbol = request.symbol.upper()
+    timeframe = request.timeframe.lower()
+    instrument = get_instrument(symbol)
+    df = await _frame(request)
+
+    result = BacktestResult(
+        symbol=symbol, timeframe=timeframe, strategy=request.strategy,
+        bars_tested=0, from_time=0, to_time=0,
+        metrics=metrics_mod.BacktestMetrics(ending_balance=request.starting_balance),
+    )
+    usable = 0 if df is None else len(df) - WARMUP
+    if df is None or usable < (folds + 1) * 100:
+        result.edge = EdgeVerdict(method="walk_forward",
+                                  reason="Not enough history for walk-forward.")
+        result.notes.append("Not enough history for a {}-fold walk-forward ({} usable "
+                            "bars, need {}).".format(folds, max(usable, 0), (folds + 1) * 100))
+        return result
+
+    n = len(df)
+    step = usable // (folds + 1)
+    traded: List[BacktestTrade] = []
+    for fold in range(folds):
+        train_start = WARMUP + fold * step
+        test_start = train_start + step
+        test_end = n if fold == folds - 1 else test_start + step
+
+        best, best_score = WF_GRID[0], -np.inf
+        for conf, rr in WF_GRID:
+            candidate = request.model_copy(update={"min_confidence": conf, "risk_reward": rr})
+            fitted, _ = _simulate(df, instrument, candidate, train_start, test_start)
+            r = [t.r_multiple for t in _closed(fitted)]
+            score = float(np.mean(r)) if len(r) >= 8 else -np.inf
+            if score > best_score:
+                best, best_score = (conf, rr), score
+        chosen = request.model_copy(update={"min_confidence": best[0], "risk_reward": best[1]})
+        out, _ = _simulate(df, instrument, chosen, test_start, test_end)
+        traded += out
+        result.folds.append({
+            "fold": fold + 1, "min_confidence": best[0], "risk_reward": best[1],
+            "train_expectancy": round(best_score, 3) if np.isfinite(best_score) else 0.0,
+            "test_trades": len(_closed(out)),
+            "test_expectancy": round(float(np.mean([t.r_multiple for t in _closed(out)])), 3)
+            if _closed(out) else 0.0,
+        })
+
+    times = df["time"].to_numpy()
+    first = WARMUP + step
+    result.bars_tested = n - first
+    result.from_time, result.to_time = int(times[first]), int(times[-1])
+    result.trades = traded[-400:]
+    result.metrics = metrics_mod.compute(traded, request.starting_balance, [], result.bars_tested)
+    result.out_of_sample = result.metrics
+    result.edge = edge_verdict(traded, "walk_forward", request.seed)
+    result.notes.append(
+        "{}-fold walk-forward: parameters chosen from a {}-combination grid on each "
+        "training stretch, then traded on the stretch after it. Every figure here is "
+        "out-of-sample and net of costs.".format(folds, len(WF_GRID)))
     return result

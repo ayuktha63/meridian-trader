@@ -29,6 +29,7 @@ os.environ["LIVE_RECONCILER_ENABLED"] = "false"
 os.environ["LIVE_ENFORCE_MARKET_HOURS"] = "false"
 os.environ["LIVE_PRICE_BAND_PCT"] = "0"
 os.environ["LIVE_MAX_TRADES_PER_DAY"] = "0"
+os.environ["LIVE_REQUIRE_MEASURED_EDGE"] = "false"
 
 import starlette.testclient as _testclient  # noqa: E402
 

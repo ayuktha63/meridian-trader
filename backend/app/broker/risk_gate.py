@@ -68,6 +68,8 @@ class GateContext:
     margin_required: Optional[float] = None
     #: The live account's own history (broker.live_limits.LiveLedger).
     ledger: Optional[object] = None
+    #: services.edge.latest_edge() for this symbol and timeframe.
+    edge: Optional[dict] = None
     warnings: list = field(default_factory=list)
 
 
@@ -90,7 +92,7 @@ class PreTradeRiskGate:
         "_check_instrument_capability", "_check_untrusted_tick_conversion",
         "_check_price_tick", "_check_quantity", "_check_funds", "_check_risk_amount",
         "_check_market_hours", "_check_price_band", "_check_order_limits",
-        "_check_account_limits",
+        "_check_account_limits", "_check_measured_edge",
     )
 
     async def evaluate_cheap(self, ctx: GateContext) -> RiskGateResult:
@@ -302,6 +304,17 @@ class PreTradeRiskGate:
                       .format(actual_risk, rec.risk_amount))
         return RiskGateResult(allowed=True)
 
+
+    # ── is there any reason to believe this makes money? ──────
+    def _check_measured_edge(self, ctx: GateContext) -> RiskGateResult:
+        if not get_settings().live_require_measured_edge:
+            return RiskGateResult(allowed=True)
+        edge = ctx.edge or {}
+        if not edge.get("passed"):
+            return RiskGateResult(
+                allowed=False, check="measured_edge",
+                reason=edge.get("reason") or "No measured edge for this instrument.")
+        return RiskGateResult(allowed=True)
 
     # ── session ───────────────────────────────────────────────
     def _check_market_hours(self, ctx: GateContext) -> RiskGateResult:
