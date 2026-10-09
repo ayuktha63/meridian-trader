@@ -24,6 +24,11 @@ os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DATA / "meridian
 # The live-order supervisor is driven one pass at a time by the tests that
 # exercise it; a background loop racing them would make every one flaky.
 os.environ["LIVE_RECONCILER_ENABLED"] = "false"
+# The suite runs at any hour and most tests have no broker quote to compare
+# against; the tests for these two checks switch them back on.
+os.environ["LIVE_ENFORCE_MARKET_HOURS"] = "false"
+os.environ["LIVE_PRICE_BAND_PCT"] = "0"
+os.environ["LIVE_MAX_TRADES_PER_DAY"] = "0"
 
 import starlette.testclient as _testclient  # noqa: E402
 

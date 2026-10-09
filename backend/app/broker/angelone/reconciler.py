@@ -175,6 +175,23 @@ class LiveReconciler:
             await self._supervise_position(session, row, orders, by_id, positions)
         row.updated_at = time.time()
         await session.flush()
+        if row.status == S.CLOSED.value:
+            await self._enforce_daily_loss(session)
+
+    @staticmethod
+    async def _enforce_daily_loss(session: AsyncSession) -> None:
+        """Trip the kill switch the moment the day's realised loss crosses
+        the limit — not at the next attempted entry."""
+        from ..live_limits import load_ledger
+        limit = settings.live_daily_loss_limit
+        if not limit or trading_mode.kill_switch_active:
+            return
+        lost = -(await load_ledger(session)).realised_today
+        if lost >= limit:
+            reason = "Daily loss limit reached: {:.2f} lost today (limit {:.2f}).".format(
+                lost, limit)
+            trading_mode.activate_kill_switch(reason)
+            alerts.emit("critical", "DAILY_LOSS_LIMIT", reason)
 
     async def _follow_entry(self, row: LiveExecutionRow, orders: List[dict],
                             by_id: Dict[str, dict]) -> None:

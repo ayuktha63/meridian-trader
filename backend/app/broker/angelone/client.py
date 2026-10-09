@@ -93,6 +93,25 @@ class AngelOneBrokerService:
             client.ltpData, exchange, trading_symbol, token)
         return self._unwrap(data, "quote")
 
+    async def get_margin(self, exchange: str, token: str, side: str,
+                         quantity: int, price: float,
+                         product_type: str = "INTRADAY") -> Optional[float]:
+        """Margin Angel One would actually block for this order, or None if
+        it will not say. Notional is the wrong test either way round: far
+        too strict for a leveraged intraday order, and blind to span margin
+        on a future."""
+        client = await asyncio.to_thread(angel_auth.ensure)
+        params = {"positions": [{
+            "exchange": exchange, "qty": int(quantity), "price": price,
+            "productType": product_type, "token": token, "tradeType": side,
+        }]}
+        try:
+            data = await asyncio.to_thread(client.getMarginApi, params)
+            value = (self._unwrap(data, "margin") or {}).get("totalMarginRequired")
+            return float(value) if value is not None else None
+        except Exception:  # noqa: BLE001 - caller falls back to full notional
+            return None
+
     # ── orders ────────────────────────────────────────────────
     #
     # These place/modify/cancel real orders. Nothing here decides whether a

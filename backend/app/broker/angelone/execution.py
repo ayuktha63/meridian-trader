@@ -28,6 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db.models import AnalysisRow, LiveExecutionRow
 from ...runtime_settings import get as get_runtime_settings
 from ...schemas.execution import ExecutionRecord, ExecutionStatus
+from ...config import get_settings
+from ..live_limits import load_ledger
 from ..risk_gate import GateContext, Recommendation, risk_gate
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker
 from .orders import find_order_by_tag, order_tag
@@ -176,6 +178,11 @@ class AngelOneExecutionService:
             except AngelOneOrderError:
                 ctx.available_funds = None
 
+        ctx.ledger = await load_ledger(
+            session, exclude_id=existing_row.id if existing_row else None)
+        if ctx.match is not None:
+            await self._load_market_facts(ctx)
+
         gate_result = await risk_gate.evaluate(ctx)
 
         if not gate_result.allowed:
@@ -185,6 +192,27 @@ class AngelOneExecutionService:
         return await self._submit(session, existing_row, recommendation, ctx)
 
     # ── internals ─────────────────────────────────────────────
+
+    @staticmethod
+    async def _load_market_facts(ctx: GateContext) -> None:
+        """Last traded price and required margin — each optional, each
+        leaving its field None on failure for the gate to judge."""
+        match, rec = ctx.match, ctx.recommendation
+        if get_settings().live_price_band_pct:
+            try:
+                quote = await angel_broker.get_quote(
+                    match.exchange, match.trading_symbol, match.token)
+                ctx.ltp = float((quote or {}).get("ltp") or 0) or None
+            except Exception:  # noqa: BLE001
+                ctx.ltp = None
+        try:
+            lots = int((rec.suggested_lots or 0) * match.lot_size // match.lot_size)
+            if lots > 0 and rec.entry:
+                ctx.margin_required = await angel_broker.get_margin(
+                    match.exchange, match.token, rec.side,
+                    lots * match.lot_size, rec.entry)
+        except Exception:  # noqa: BLE001
+            ctx.margin_required = None
 
     @staticmethod
     def _upsert(existing: Optional[LiveExecutionRow], session: AsyncSession,

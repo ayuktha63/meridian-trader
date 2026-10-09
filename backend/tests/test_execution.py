@@ -37,11 +37,20 @@ def _reset_broker_state():
     """Every test starts from a clean slate: PAPER, disconnected, no kill switch."""
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()   # no longer implied by PAPER
+    _run(_wipe_executions())            # the live limits count what is open
     angel_auth._session = None  # noqa: SLF001 - test-only reset of the singleton
     yield
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()
     angel_auth._session = None  # noqa: SLF001
+
+
+async def _wipe_executions():
+    from sqlalchemy import delete
+
+    from app.db.models import LiveExecutionRow
+    async with session_scope() as session:
+        await session.execute(delete(LiveExecutionRow))
 
 
 def _fake_connect():

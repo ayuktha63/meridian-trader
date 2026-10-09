@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from ..config import get_settings
 from ..instruments import Instrument
 from ..runtime_settings import RuntimeSettings
 from ..schemas.execution import RiskGateResult
@@ -61,20 +62,21 @@ class GateContext:
     entry_price: Optional[str] = None
     stop_price: Optional[str] = None
     target_price: Optional[str] = None
+    #: Broker's last traded price, fetched for this decision.
+    ltp: Optional[float] = None
+    #: Margin the broker says this order blocks; None if it would not say.
+    margin_required: Optional[float] = None
+    #: The live account's own history (broker.live_limits.LiveLedger).
+    ledger: Optional[object] = None
     warnings: list = field(default_factory=list)
 
 
 class PreTradeRiskGate:
     """Runs checks 1-10 of the live-trading spec's pre-trade gate.
 
-    Check 11 (daily loss limit / open risk / trades-per-day / open positions)
-    is deliberately NOT implemented here. Meridian's existing guardrails
-    (`analysis/guardrails.py`) compute those against the PAPER account's
-    trade history — there is no equivalent live trade history yet, and
-    faking one against the wrong ledger would be worse than not checking at
-    all. This is a real, acknowledged gap for the next phase (once
-    reconciliation gives this gate a real live trade history to check
-    against), not an oversight.
+    Check 11 (daily loss, trades per day, open positions, exposure) runs
+    against the live account's own history — `broker/live_limits.py`, kept
+    current by the reconciler — never against the paper ledger.
     """
 
     #: Checks 1-5: local state only, zero network calls. Run first, always.
@@ -87,6 +89,8 @@ class PreTradeRiskGate:
     _NETWORK_DEPENDENT_CHECKS = (
         "_check_instrument_capability", "_check_untrusted_tick_conversion",
         "_check_price_tick", "_check_quantity", "_check_funds", "_check_risk_amount",
+        "_check_market_hours", "_check_price_band", "_check_order_limits",
+        "_check_account_limits",
     )
 
     async def evaluate_cheap(self, ctx: GateContext) -> RiskGateResult:
@@ -265,12 +269,16 @@ class PreTradeRiskGate:
         if ctx.match is None or ctx.quantity is None:
             return RiskGateResult(allowed=False, check="funds",
                                   reason="Instrument or quantity not resolved.")
-        required = ctx.recommendation.entry * ctx.quantity
+        # The broker's own margin figure when it gives one; full notional
+        # otherwise, which can only err towards refusing.
+        notional = ctx.recommendation.entry * ctx.quantity
+        required = ctx.margin_required if ctx.margin_required is not None else notional
         if required > ctx.available_funds:
             return RiskGateResult(
                 allowed=False, check="funds",
-                reason="Order notional ({:.2f}) exceeds available funds "
-                      "({:.2f}).".format(required, ctx.available_funds))
+                reason="Order {} ({:.2f}) exceeds available funds ({:.2f})."
+                      .format("margin" if ctx.margin_required is not None
+                              else "notional", required, ctx.available_funds))
         return RiskGateResult(allowed=True)
 
     # ── check 10 ──────────────────────────────────────────────
@@ -292,6 +300,100 @@ class PreTradeRiskGate:
                 reason="Broker-valid quantity implies {:.2f} risk, which "
                       "exceeds the recommendation's budget of {:.2f}."
                       .format(actual_risk, rec.risk_amount))
+        return RiskGateResult(allowed=True)
+
+
+    # ── session ───────────────────────────────────────────────
+    def _check_market_hours(self, ctx: GateContext) -> RiskGateResult:
+        if not get_settings().live_enforce_market_hours:
+            return RiskGateResult(allowed=True)
+        import time
+
+        from ..data.sessions import is_market_open
+        from ..instruments import get_instrument
+        asset = get_instrument(ctx.recommendation.symbol).asset_class
+        if not is_market_open(time.time(), "equity" if asset == "stock" else asset):
+            return RiskGateResult(
+                allowed=False, check="market_hours",
+                reason="The market for {} is closed — an order placed now "
+                      "would rest until the open and fill into whatever the "
+                      "gap is.".format(ctx.recommendation.symbol))
+        return RiskGateResult(allowed=True)
+
+    # ── entry vs the market right now ─────────────────────────
+    def _check_price_band(self, ctx: GateContext) -> RiskGateResult:
+        band = get_settings().live_price_band_pct
+        if not band:
+            return RiskGateResult(allowed=True)
+        if not ctx.ltp or ctx.ltp <= 0:
+            return RiskGateResult(
+                allowed=False, check="price_band",
+                reason="Could not read a current price from Angel One — "
+                      "refusing to send an order blind.")
+        drift = abs(ctx.recommendation.entry - ctx.ltp) / ctx.ltp * 100.0
+        if drift > band:
+            return RiskGateResult(
+                allowed=False, check="price_band",
+                reason="Entry {} is {:.2f}% from the last traded price {} "
+                      "(limit {:.2f}%) — the recommendation is stale or the "
+                      "price is wrong.".format(ctx.recommendation.entry, drift,
+                                               ctx.ltp, band))
+        return RiskGateResult(allowed=True)
+
+    # ── size of this one order ────────────────────────────────
+    def _check_order_limits(self, ctx: GateContext) -> RiskGateResult:
+        cfg = get_settings()
+        value = ctx.recommendation.entry * (ctx.quantity or 0)
+        if cfg.live_max_quantity and (ctx.quantity or 0) > cfg.live_max_quantity:
+            return RiskGateResult(
+                allowed=False, check="max_quantity",
+                reason="Quantity {:.0f} exceeds the limit of {}."
+                      .format(ctx.quantity, cfg.live_max_quantity))
+        if cfg.live_max_order_value and value > cfg.live_max_order_value:
+            return RiskGateResult(
+                allowed=False, check="max_order_value",
+                reason="Order value {:.2f} exceeds the limit of {:.2f}."
+                      .format(value, cfg.live_max_order_value))
+        return RiskGateResult(allowed=True)
+
+    # ── check 11: the account, not the trade ──────────────────
+    def _check_account_limits(self, ctx: GateContext) -> RiskGateResult:
+        from .live_limits import sector_of
+
+        cfg, ledger = get_settings(), ctx.ledger
+        if ledger is None:
+            return RiskGateResult(allowed=False, check="account_limits",
+                                  reason="Live trade history was not loaded.")
+
+        def no(check: str, reason: str) -> RiskGateResult:
+            return RiskGateResult(allowed=False, check=check, reason=reason)
+
+        if cfg.live_daily_loss_limit and ledger.realised_today <= -cfg.live_daily_loss_limit:
+            reason = ("Daily loss limit reached: {:.2f} lost today against a "
+                      "limit of {:.2f}.".format(-ledger.realised_today,
+                                                cfg.live_daily_loss_limit))
+            trading_mode.activate_kill_switch(reason)
+            return no("daily_loss", reason)
+        if cfg.live_max_trades_per_day and ledger.trades_today >= cfg.live_max_trades_per_day:
+            return no("trades_per_day", "{} live trades already today (limit {})."
+                      .format(ledger.trades_today, cfg.live_max_trades_per_day))
+        if cfg.live_max_open_positions and ledger.open_positions >= cfg.live_max_open_positions:
+            return no("open_positions", "{} live positions or orders already open "
+                      "(limit {}).".format(ledger.open_positions,
+                                           cfg.live_max_open_positions))
+        symbol = ctx.recommendation.symbol
+        value = ctx.recommendation.entry * (ctx.quantity or 0)
+        held = ledger.symbol_exposure.get(symbol, 0.0)
+        if cfg.live_max_symbol_exposure and held + value > cfg.live_max_symbol_exposure:
+            return no("symbol_exposure", "{} exposure would be {:.2f} (limit {:.2f})."
+                      .format(symbol, held + value, cfg.live_max_symbol_exposure))
+        sector = sector_of(symbol)
+        if sector and cfg.live_max_sector_exposure:
+            total = ledger.sector_exposure.get(sector, 0.0) + value
+            if total > cfg.live_max_sector_exposure:
+                return no("sector_exposure", "{} sector exposure would be {:.2f} "
+                          "(limit {:.2f}).".format(sector, total,
+                                                   cfg.live_max_sector_exposure))
         return RiskGateResult(allowed=True)
 
 

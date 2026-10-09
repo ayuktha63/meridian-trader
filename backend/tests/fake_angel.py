@@ -23,13 +23,15 @@ class FakeAngel:
         self.cancelled: List[str] = []
         self.ltp: Dict[str, float] = {}
         self.positions_override: Optional[List[dict]] = None
+        self.margin: Optional[float] = None
         #: (predicate(params) -> bool, exception) consumed in order.
         self.failures: List[tuple] = []
         self._ids = itertools.count(1001)
 
     def install(self, monkeypatch) -> "FakeAngel":
         for name in ("place_order", "modify_order", "cancel_order", "get_orders",
-                     "get_positions", "get_funds", "get_order_status"):
+                     "get_positions", "get_funds", "get_order_status",
+                     "get_quote", "get_margin"):
             monkeypatch.setattr(angel_broker, name, getattr(self, name))
         return self
 
@@ -114,6 +116,12 @@ class FakeAngel:
             net[key] = net.get(key, 0) + sign * int(float(o["filledshares"]))
         return [{"exchange": ex, "symboltoken": tok, "netqty": str(qty),
                  "ltp": str(self.ltp.get(tok, 0.0))} for (ex, tok), qty in net.items()]
+
+    async def get_quote(self, exchange: str, trading_symbol: str, token: str) -> dict:
+        return {"ltp": self.ltp.get(token)}
+
+    async def get_margin(self, *args, **kwargs):
+        return self.margin
 
     async def get_funds(self) -> dict:
         return {"availablecash": "1000000"}

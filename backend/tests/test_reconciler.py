@@ -382,3 +382,96 @@ def test_the_protection_ladder_modifies_the_resting_stop(client, fake):
     tick()
     assert row(rec_id).stop_price == r.stop_price
     assert len(fake.modified) == 1
+
+
+# ── enforced live limits (the gate's check 11) ────────────────
+
+def attempt(client, **kwargs):
+    params = dict(entry=2500.0, stop=2480.0, target=2560.0,
+                  risk_amount=2000.0, suggested_lots=float(QTY))
+    params.update(kwargs)
+    rec_id = run(_seed_recommendation(**params))
+    return client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True}).json()
+
+
+def test_order_value_and_quantity_limits(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_max_order_value", 20_000.0)
+    body = attempt(client)                     # 10 x 2500 = 25,000
+    assert body["status"] == "REJECTED" and "Order value" in body["error_message"]
+    monkeypatch.setattr(settings, "live_max_order_value", 50_000.0)
+    monkeypatch.setattr(settings, "live_max_quantity", 5)
+    assert "Quantity" in attempt(client)["error_message"]
+    assert fake.placed == []
+
+
+def test_open_position_limit_counts_working_orders_too(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_max_open_positions", 1)
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 0.0)
+    assert attempt(client)["status"] == "OPEN"          # resting, unfilled
+    body = attempt(client)
+    assert body["status"] == "REJECTED" and "already open" in body["error_message"]
+    assert len(fake.placed) == 1
+
+
+def test_symbol_exposure_limit(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 40_000.0)
+    assert attempt(client)["status"] == "OPEN"          # 25,000
+    assert "RELIANCE exposure" in attempt(client)["error_message"]   # would be 50,000
+
+
+def test_trades_per_day_limit(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_max_trades_per_day", 1)
+    monkeypatch.setattr(settings, "live_max_open_positions", 0)
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 0.0)
+    assert attempt(client)["status"] == "OPEN"
+    assert "already today" in attempt(client)["error_message"]
+
+
+def test_entry_far_from_the_market_is_refused(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_price_band_pct", 1.0)
+    body = attempt(client)
+    assert "current price" in body["error_message"], "no quote means no order"
+    fake.ltp["2885"] = 2560.0                             # entry 2500 is 2.3% away
+    assert "stale" in attempt(client)["error_message"]
+    fake.ltp["2885"] = 2504.0
+    assert attempt(client)["status"] == "OPEN"
+
+
+def test_market_hours_are_enforced(client, fake, monkeypatch):
+    from app.data import sessions
+
+    monkeypatch.setattr(settings, "live_enforce_market_hours", True)
+    monkeypatch.setattr(sessions, "is_market_open", lambda ts, asset="fx": False)
+    assert "closed" in attempt(client)["error_message"]
+    monkeypatch.setattr(sessions, "is_market_open", lambda ts, asset="fx": True)
+    assert attempt(client)["status"] == "OPEN"
+
+
+def test_funds_are_checked_against_broker_margin_not_notional(client, fake, monkeypatch):
+    async def poor():
+        return {"availablecash": "6000"}
+    monkeypatch.setattr(reconciler_module.angel_broker, "get_funds", poor)
+    fake.margin = 5_000.0                                 # 5x intraday leverage
+    assert attempt(client)["status"] == "OPEN"            # notional 25,000 > 6,000
+    fake.margin = 7_000.0
+    monkeypatch.setattr(settings, "live_max_open_positions", 0)
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 0.0)
+    assert "margin" in attempt(client)["error_message"]
+
+
+def test_daily_loss_limit_trips_the_kill_switch_as_the_loss_lands(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 150.0)
+    rec_id, _ = filled(client, fake)
+    fake.fill(row(rec_id).stop_order_id, price=2480.0)    # -20 x 10 = -200
+    tick()
+    assert trading_mode.kill_switch_active
+    assert "Daily loss limit" in trading_mode.kill_switch_reason
+    assert alerts.recent()[-1]["code"] == "DAILY_LOSS_LIMIT"
+    body = attempt(client)
+    assert body["status"] == "REJECTED" and len(fake.placed) == 3
+
+
+def test_the_trading_day_starts_at_midnight_ist():
+    from app.broker.live_limits import trading_day_start
+    # 2026-01-01 00:30 IST is 2025-12-31 19:00 UTC — already the new day.
+    assert trading_day_start(1767207600.0) == 1767205800.0

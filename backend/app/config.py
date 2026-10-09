@@ -96,6 +96,24 @@ class Settings(BaseSettings):
     #: 0 disables the timeout.
     live_entry_timeout_seconds: float = 300.0
 
+    # ── live risk limits ─────────────────────────────────────
+    # Hard limits on real orders, in the account's currency. Read once at
+    # boot from the environment and nowhere editable from the UI: a limit
+    # that can be raised with a click while LIVE is not a limit. To change
+    # one, edit .env and restart — which also drops you back to PAPER.
+    live_max_order_value: float = 50_000.0
+    live_max_quantity: int = 5_000
+    live_max_open_positions: int = 2
+    live_max_trades_per_day: int = 5
+    #: Realised loss for the IST trading day at which the kill switch trips.
+    live_daily_loss_limit: float = 2_000.0
+    live_max_symbol_exposure: float = 50_000.0
+    live_max_sector_exposure: float = 100_000.0
+    #: Furthest the entry may sit from the broker's last traded price, in
+    #: percent. Also the stale-recommendation check. 0 disables.
+    live_price_band_pct: float = 1.0
+    live_enforce_market_hours: bool = True
+
     # ── angel one (live execution) ───────────────────────────
     # Boot-time only, deliberately not in runtime_settings.py: that store
     # persists to a plain-JSON file readable over the settings API (masked,
