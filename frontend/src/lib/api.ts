@@ -1,6 +1,6 @@
 import type {
   AngelStatus, AnalysisResult, BacktestResult, Candle, Drawing, DrawingAnalytics,
-  DrawingType, ExecutionRecord, InstrumentCapability, JournalEntry, JournalStats,
+  DrawingType, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
   MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
   SettingsPayload, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from './types'
@@ -23,11 +23,50 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
+const TOKEN_KEY = 'meridian.accessToken'
+
+/**
+ * The backend's APP_ACCESS_TOKEN, when it has one. Asked for once and kept in
+ * this browser — never baked into the bundle, where anyone served the page
+ * could read it. Local use needs none: the backend answers this machine
+ * without a token.
+ */
+export function accessToken(): string | null {
+  try { return window.localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
+let asking: Promise<string | null> | null = null
+
+function askForToken(): Promise<string | null> {
+  // One prompt however many requests failed at once.
+  asking ??= Promise.resolve().then(() => {
+    const entered = window.prompt(
+      'This Meridian server requires its access token (APP_ACCESS_TOKEN).')?.trim() || null
+    try {
+      if (entered) window.localStorage.setItem(TOKEN_KEY, entered)
+      else window.localStorage.removeItem(TOKEN_KEY)
+    } catch { /* storage unavailable — the token lasts for this request only */ }
+    window.setTimeout(() => { asking = null }, 0)
+    return entered
   })
+  return asking
+}
+
+async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+  const token = accessToken()
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  })
+
+  if (response.status === 401 && !retried) {
+    const entered = await askForToken()
+    if (entered) return request<T>(path, init, true)
+  }
 
   if (!response.ok) {
     let detail = response.statusText
@@ -198,6 +237,12 @@ export const api = {
     request<TradingModeStatus>(`/api/trading/kill-switch?activate=${activate}`, {
       method: 'POST',
     }),
+  flattenAll: () =>
+    request<TradingModeStatus & { closing: number }>('/api/trading/flatten-all', {
+      method: 'POST', body: JSON.stringify({ confirmed: true }),
+    }),
+  liveExecutions: () => request<ExecutionRecord[]>('/api/trades/live'),
+  alerts: (since = 0) => request<LiveAlert[]>(`/api/alerts?since=${since}`),
   angelStatus: () => request<AngelStatus>('/api/broker/angel/status'),
   angelConnect: () => request<AngelStatus>('/api/broker/angel/connect', { method: 'POST' }),
   angelDisconnect: () =>

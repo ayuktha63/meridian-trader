@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import type { AngelStatus, TradingModeStatus } from '../../lib/types'
+import type { AngelStatus, LiveAlert, TradingModeStatus } from '../../lib/types'
 
 /**
  * The one control that answers "where am I?" — DEMO or LIVE — and nothing
@@ -25,12 +25,21 @@ export default function TradingModeControl() {
   const [confirmingSwitch, setConfirmingSwitch] = useState<'LIVE' | 'PAPER' | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [critical, setCritical] = useState<LiveAlert | null>(null)
+  const [openPositions, setOpenPositions] = useState(0)
 
   const refresh = async () => {
     try {
-      const [m, a] = await Promise.all([api.tradingMode(), api.angelStatus()])
+      const [m, a, alerts, live] = await Promise.all([
+        api.tradingMode(), api.angelStatus(),
+        // Supervision endpoints are newer than the mode switch; a backend
+        // that predates them must not blank this control.
+        api.alerts().catch(() => []), api.liveExecutions().catch(() => [])])
       setMode(m)
       setAngel(a)
+      setCritical([...alerts].reverse().find((x) => x.level === 'critical') ?? null)
+      setOpenPositions(live.filter((x) =>
+        x.filled_quantity > 0 && !['CLOSED', 'REJECTED', 'CANCELLED'].includes(x.status)).length)
     } catch {
       /* transient — next poll retries; the button just stays in its last known state */
     }
@@ -81,8 +90,29 @@ export default function TradingModeControl() {
     }
   }
 
+  const flattenAll = async () => {
+    if (!window.confirm(
+      `Close ${openPositions} live position(s) at market now? This also stops new live orders.`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      setMode(await api.flattenAll())
+    } catch (exc) {
+      setError(exc instanceof ApiError ? exc.message : 'Could not flatten — check Angel One.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="relative">
+      {critical && (
+        <div role="alert"
+             className="fixed inset-x-0 top-0 z-[220] bg-bear px-4 py-1.5 text-center text-2xs font-semibold text-white">
+          {critical.message}
+          {typeof critical.context.symbol === 'string' ? ` — ${critical.context.symbol}` : ''}
+        </div>
+      )}
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -130,10 +160,19 @@ export default function TradingModeControl() {
             {mode.kill_switch_active && (
               <p className="text-2xs text-warn bg-warn/10 rounded-lg px-2 py-1.5">
                 🔴 New live trades blocked (kill switch)
+                {mode.kill_switch_reason ? ` — ${mode.kill_switch_reason}` : ''}
               </p>
             )}
 
-            {isLive && (
+            {openPositions > 0 && (
+              <button type="button" className="btn w-full !py-1 !border-bear/60 !text-bear"
+                      onClick={flattenAll} disabled={busy}
+                      title="Cancel protective orders and close every live position at market">
+                Flatten {openPositions} live position{openPositions > 1 ? 's' : ''}
+              </button>
+            )}
+
+            {(isLive || mode.kill_switch_active) && (
               <button type="button" className="btn w-full !py-1 !text-warn"
                       onClick={toggleKillSwitch} disabled={busy}>
                 {mode.kill_switch_active ? 'Clear emergency stop' : 'Emergency stop'}

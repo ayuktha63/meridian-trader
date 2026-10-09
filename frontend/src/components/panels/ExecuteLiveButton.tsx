@@ -174,6 +174,13 @@ function ExecutionResultCard({ record, onDismiss }: {
           <div>Average price: {record.average_fill_price}</div>
         </>
       )}
+      {filled && (
+        <div className={record.protection_status === 'PROTECTED' ? '' : 'text-bear font-bold'}>
+          {record.protection_status === 'PROTECTED'
+            ? `Stop resting at Angel One: ${record.stop_price}`
+            : 'NO STOP AT THE BROKER YET — check Angel One'}
+        </div>
+      )}
       {record.error_message && <div className="text-ink/80">{record.error_message}</div>}
     </div>
   )

@@ -872,7 +872,18 @@ export interface AngelStatus {
 export interface TradingModeStatus {
   mode: 'PAPER' | 'LIVE'
   kill_switch_active: boolean
+  kill_switch_reason?: string | null
+  kill_switch_activated_at?: number | null
   live_confirmed_at: number | null
+}
+
+export interface LiveAlert {
+  id: string
+  level: 'info' | 'warning' | 'critical'
+  code: string
+  message: string
+  context: Record<string, unknown>
+  created_at: number
 }
 
 export interface InstrumentCapability {
@@ -909,6 +920,15 @@ export interface ExecutionRecord {
   broker_order_id: string | null
   error_code: string | null
   error_message: string | null
+  /** NONE until filled; PROTECTED once a stop rests at the broker. */
+  protection_status?: 'NONE' | 'PROTECTED' | 'FAILED' | 'CLOSED'
+  stop_order_id?: string | null
+  target_order_id?: string | null
+  protection_tier?: number
+  exit_price?: number | null
+  exit_reason?: string | null
+  gross_pnl?: number | null
+  closed_at?: number | null
   created_at: number
   updated_at: number
 }

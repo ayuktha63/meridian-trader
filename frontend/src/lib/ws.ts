@@ -1,3 +1,4 @@
+import { accessToken } from './api'
 import type { StreamMessage } from './types'
 
 type Listener = (message: StreamMessage) => void
@@ -41,7 +42,11 @@ export class StreamClient {
     this.closedByUser = false
     this.emitStatus(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting')
 
-    const socket = new WebSocket(resolveUrl())
+    // A browser cannot set headers on a websocket handshake, so the token
+    // rides in the query string.
+    const token = accessToken()
+    const socket = new WebSocket(
+      resolveUrl() + (token ? `?token=${encodeURIComponent(token)}` : ''))
     this.socket = socket
 
     socket.onopen = () => {

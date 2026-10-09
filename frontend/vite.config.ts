@@ -15,8 +15,11 @@ export default defineConfig({
     // another project is already on 5173.
     strictPort: false,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/ws': { target: 'ws://localhost:8000', ws: true },
+      // xfwd: tell the backend who the browser really is. Without a token it
+      // serves this machine only, and `vite --host` must not launder a LAN
+      // client into a local one.
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true, xfwd: true },
+      '/ws': { target: 'ws://127.0.0.1:8000', ws: true, xfwd: true },
     },
   },
   build: {
