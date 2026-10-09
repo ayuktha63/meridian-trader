@@ -57,6 +57,10 @@ class GateContext:
     settings: Optional[RuntimeSettings] = None
     available_funds: Optional[float] = None
     quantity: Optional[float] = None
+    #: Entry / stop / target on the instrument's tick grid, as API strings.
+    entry_price: Optional[str] = None
+    stop_price: Optional[str] = None
+    target_price: Optional[str] = None
     warnings: list = field(default_factory=list)
 
 
@@ -82,7 +86,7 @@ class PreTradeRiskGate:
     #: into the context by the caller.
     _NETWORK_DEPENDENT_CHECKS = (
         "_check_instrument_capability", "_check_untrusted_tick_conversion",
-        "_check_quantity", "_check_funds", "_check_risk_amount",
+        "_check_price_tick", "_check_quantity", "_check_funds", "_check_risk_amount",
     )
 
     async def evaluate_cheap(self, ctx: GateContext) -> RiskGateResult:
@@ -195,6 +199,39 @@ class PreTradeRiskGate:
                       "for the specific gap.".format(ctx.match.exchange))
         return RiskGateResult(allowed=True)
 
+    # ── tick grid ─────────────────────────────────────────────
+    def _check_price_tick(self, ctx: GateContext) -> RiskGateResult:
+        """Put every price on the broker's tick grid and make sure the trade
+        still makes sense there. An off-grid price is rejected by the
+        exchange; a tick that is absurd for the price means the contract
+        data is wrong and nothing derived from it can be trusted."""
+        from .angelone.orders import round_to_tick
+
+        match, rec = ctx.match, ctx.recommendation
+        if match is None:
+            return RiskGateResult(allowed=False, check="price_tick",
+                                  reason="Instrument was not resolved.")
+        tick = match.tick_size
+        if not tick or tick <= 0 or tick > rec.entry * 0.05:
+            return RiskGateResult(
+                allowed=False, check="price_tick",
+                reason="Tick size {} is not plausible for a price of {} — "
+                      "refusing to round a live order against it."
+                      .format(tick, rec.entry))
+        entry, stop = round_to_tick(rec.entry, tick), round_to_tick(rec.stop_loss, tick)
+        long = rec.side == "BUY"
+        if (long and float(stop) >= float(entry)) or (not long and float(stop) <= float(entry)):
+            return RiskGateResult(
+                allowed=False, check="price_tick",
+                reason="Stop is less than one tick ({}) from entry once both "
+                      "are rounded to the exchange grid.".format(tick))
+        ctx.entry_price, ctx.stop_price = entry, stop
+        if rec.take_profit:
+            target = round_to_tick(rec.take_profit, tick)
+            if (float(target) > float(entry)) == long and float(target) != float(entry):
+                ctx.target_price = target
+        return RiskGateResult(allowed=True)
+
     # ── check 8 ───────────────────────────────────────────────
     def _check_quantity(self, ctx: GateContext) -> RiskGateResult:
         match = ctx.match
@@ -242,11 +279,14 @@ class PreTradeRiskGate:
         if ctx.quantity is None:
             return RiskGateResult(allowed=False, check="risk_amount",
                                   reason="Quantity not resolved.")
-        actual_risk = abs(rec.entry - rec.stop_loss) * ctx.quantity
+        entry = float(ctx.entry_price) if ctx.entry_price else rec.entry
+        stop = float(ctx.stop_price) if ctx.stop_price else rec.stop_loss
+        actual_risk = abs(entry - stop) * ctx.quantity
         # Broker-lot rounding can only ever reduce quantity (check 8), so the
         # actual risk can come in under the recommendation's budget but must
         # never come in over it.
-        if actual_risk > rec.risk_amount * 1.0001:  # float tolerance only
+        tick_slack = (ctx.match.tick_size if ctx.match else 0.0) * ctx.quantity
+        if actual_risk > rec.risk_amount * 1.0001 + tick_slack:  # float + one tick of rounding
             return RiskGateResult(
                 allowed=False, check="risk_amount",
                 reason="Broker-valid quantity implies {:.2f} risk, which "

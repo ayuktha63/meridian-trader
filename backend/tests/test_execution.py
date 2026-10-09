@@ -23,6 +23,7 @@ from app.broker.trading_mode import PAPER, trading_mode
 from app.db.models import AnalysisRow
 from app.db.session import session_scope
 from app.main import app
+from fake_angel import FakeAngel, broker_now
 
 
 @pytest.fixture
@@ -247,32 +248,26 @@ def test_risk_exceeding_budget_is_rejected(client, monkeypatch):
 def test_successful_execution_calls_place_order_once_and_persists(client, monkeypatch):
     _go_live()
     _patch_instrument_ok(monkeypatch)
-    _patch_funds(monkeypatch)
-
-    calls = []
-    async def fake_place_order(params):
-        calls.append(params)
-        return "ANGEL123"
-    async def fake_status(order_id):
-        return {"orderid": order_id, "status": "complete",
-               "filledshares": "1", "averageprice": "2501.5"}
-    monkeypatch.setattr(angel_broker, "place_order", fake_place_order)
-    monkeypatch.setattr(angel_broker, "get_order_status", fake_status)
+    fake = FakeAngel().install(monkeypatch)
 
     rec_id = _run(_seed_recommendation(
-        entry=2500.0, stop=2480.0, risk_amount=2000.0, suggested_lots=1.0))
+        entry=2500.03, stop=2480.0, risk_amount=2000.0, suggested_lots=1.0))
     resp = client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True})
     assert resp.status_code == 200
     body = resp.json()
-    assert len(calls) == 1
-    assert body["broker_order_id"] == "ANGEL123"
-    assert body["status"] == "FILLED"
-    assert body["average_fill_price"] == 2501.5
+    entry = fake.placed[0]
+    assert len(fake.placed) == 1
+    assert body["broker_order_id"] == "A1001"
+    assert body["status"] == "OPEN"
     assert body["recommendation_id"] == rec_id
+    # On the 0.1 tick grid, as a clean string — not str(float).
+    assert entry["price"] == "2500.0"
+    assert entry["ordertag"] == rec_id[:20]
+    assert entry["ordertype"] == "LIMIT"
 
     fetched = client.get(f"/api/trades/{rec_id}/execution")
     assert fetched.status_code == 200
-    assert fetched.json()["broker_order_id"] == "ANGEL123"
+    assert fetched.json()["broker_order_id"] == "A1001"
 
 
 # ── broker rejection ──────────────────────────────────────────
@@ -326,25 +321,49 @@ def test_ambiguous_response_does_not_retry_and_queries_status(client, monkeypatc
     assert body["broker_order_id"] is None
 
 
-def test_ambiguous_response_recovers_when_order_is_found(client, monkeypatch):
+def test_ambiguous_response_recovers_only_the_order_carrying_our_tag(client, monkeypatch):
+    """The timeout case. The order book also holds an older order for the
+    same symbol, side and quantity — exactly what the old matcher adopted."""
     _go_live()
     _patch_instrument_ok(monkeypatch)
-    _patch_funds(monkeypatch)
-
-    async def fake_place_order(params):
-        raise AngelOneAmbiguousError("connection reset")
-    async def fake_get_orders():
-        return [{"tradingsymbol": "RELIANCE-EQ", "transactiontype": "BUY",
-                 "quantity": "1", "orderid": "RECOVERED42"}]
-    monkeypatch.setattr(angel_broker, "place_order", fake_place_order)
-    monkeypatch.setattr(angel_broker, "get_orders", fake_get_orders)
+    fake = FakeAngel().install(monkeypatch)
+    fake.orders.append({
+        "orderid": "SOMEONE_ELSES", "tradingsymbol": "RELIANCE-EQ", "symboltoken": "2885",
+        "transactiontype": "BUY", "quantity": "1", "exchange": "NSE", "ordertag": "",
+        "ordertype": "LIMIT", "variety": "NORMAL", "price": "2500.0", "status": "open",
+        "filledshares": "0", "averageprice": "0", "updatetime": broker_now()})
+    fake.fail_next(lambda p: True, AngelOneAmbiguousError("connection reset"),
+                   still_places=True)
 
     rec_id = _run(_seed_recommendation(
         entry=2500.0, stop=2480.0, risk_amount=2000.0, suggested_lots=1.0))
-    resp = client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True})
-    body = resp.json()
-    assert body["broker_order_id"] == "RECOVERED42"
+    body = client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True}).json()
+    assert body["broker_order_id"] == "A1001"
     assert body["status"] == "SUBMITTED"
+    assert len(fake.placed) == 1
+
+
+def test_ambiguous_response_never_adopts_a_lookalike_order(client, monkeypatch):
+    _go_live()
+    _patch_instrument_ok(monkeypatch)
+    fake = FakeAngel().install(monkeypatch)
+    fake.orders.append({
+        "orderid": "LOOKALIKE", "tradingsymbol": "RELIANCE-EQ", "symboltoken": "2885",
+        "transactiontype": "BUY", "quantity": "1", "exchange": "NSE", "ordertag": "",
+        "ordertype": "LIMIT", "variety": "NORMAL", "price": "2500.0", "status": "open",
+        "filledshares": "0", "averageprice": "0", "updatetime": broker_now()})
+    fake.fail_next(lambda p: True, AngelOneAmbiguousError("timed out"))
+
+    rec_id = _run(_seed_recommendation(
+        entry=2500.0, stop=2480.0, risk_amount=2000.0, suggested_lots=1.0))
+    body = client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True}).json()
+    assert body["status"] == "UNKNOWN"
+    assert body["broker_order_id"] is None
+
+    # And while it is unknown, a second click must not send a second order.
+    again = client.post(f"/api/trades/{rec_id}/execute", json={"confirmed": True}).json()
+    assert again["status"] == "REJECTED"
+    assert len(fake.placed) == 1
 
 
 # ── duplicate protection ──────────────────────────────────────

@@ -64,6 +64,15 @@ class ExecutionRecord(BaseModel):
     error_code: Optional[str] = None
     error_message: Optional[str] = None
 
+    protection_status: str = "NONE"
+    stop_order_id: Optional[str] = None
+    target_order_id: Optional[str] = None
+    protection_tier: int = 0
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
+    gross_pnl: Optional[float] = None
+    closed_at: Optional[float] = None
+
     created_at: float
     updated_at: float
 

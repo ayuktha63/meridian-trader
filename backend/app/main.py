@@ -20,6 +20,7 @@ from . import __version__, runtime_settings
 from .ai import claude_client
 from .cache import cache
 from .config import settings
+from .broker.angelone.reconciler import reconciler
 from .data.feed import feed
 from .db.session import dialect, init_db, shutdown_db
 from .instruments import SYMBOLS, TIMEFRAME_CODES
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
     db_dialect = await init_db()
     cache_backend = await cache.connect()
     await feed.start()
+    # Picks up any live order left in flight by the last shutdown.
+    await reconciler.start()
 
     cfg = runtime_settings.get()
     log.info("ready — db=%s cache=%s provider=%s analyst=%s",
@@ -67,6 +70,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         log.info("shutting down")
+        await reconciler.stop()
         await feed.stop()
         await cache.close()
         await shutdown_db()

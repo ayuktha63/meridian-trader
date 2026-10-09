@@ -70,6 +70,19 @@ _ADDED_COLUMNS = [
     ("positions", "trough_r", "FLOAT", "0"),
     ("positions", "broker_stop", "FLOAT", "NULL"),
     ("paper_accounts", "timeframes", "TEXT", "NULL"),
+    ("live_executions", "order_tag", "VARCHAR(20)", "NULL"),
+    ("live_executions", "tick_size", "FLOAT", "0.05"),
+    ("live_executions", "initial_stop", "FLOAT", "NULL"),
+    ("live_executions", "protection_tier", "INTEGER", "0"),
+    ("live_executions", "protection_status", "VARCHAR(16)", "'NONE'"),
+    ("live_executions", "stop_order_id", "VARCHAR(32)", "NULL"),
+    ("live_executions", "target_order_id", "VARCHAR(32)", "NULL"),
+    ("live_executions", "protected_quantity", "FLOAT", "0"),
+    ("live_executions", "exit_order_id", "VARCHAR(32)", "NULL"),
+    ("live_executions", "exit_price", "FLOAT", "NULL"),
+    ("live_executions", "exit_reason", "VARCHAR(24)", "NULL"),
+    ("live_executions", "gross_pnl", "FLOAT", "NULL"),
+    ("live_executions", "closed_at", "FLOAT", "NULL"),
 ]
 
 

@@ -11,13 +11,15 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException
 
+from .. import alerts
 from ..broker.angelone import angel_auth, angel_broker, angel_instruments
+from ..broker.angelone.reconciler import reconciler
 from ..broker.angelone.auth import AngelOneAuthError
 from ..broker.angelone.client import AngelOneOrderError
 from ..broker.trading_mode import LIVE, PAPER, trading_mode
 from ..data.feed import feed
 from ..schemas.broker import (
-    AngelAccount, AngelStatus, InstrumentCapability, TradingModeRequest,
+    AngelAccount, AngelStatus, FlattenRequest, InstrumentCapability, TradingModeRequest,
     TradingModeStatus,
 )
 
@@ -119,8 +121,40 @@ async def set_trading_mode(payload: TradingModeRequest) -> TradingModeStatus:
 
 @router.post("/api/trading/kill-switch", response_model=TradingModeStatus)
 async def set_kill_switch(activate: bool = True) -> TradingModeStatus:
+    """Stop: no new live orders, and every entry still working is pulled.
+    Protective stops stay where they are; closing positions is the separate,
+    explicit `flatten-all`."""
     if activate:
-        trading_mode.activate_kill_switch()
+        trading_mode.activate_kill_switch("Activated manually.")
+        try:
+            cancelled = await reconciler.cancel_working_entries()
+        except Exception as exc:  # noqa: BLE001 - the switch itself has tripped
+            alerts.emit("critical", "KILL_SWITCH_CANCEL_FAILED",
+                        "Kill switch is on, but working orders could not be "
+                        "cancelled — check Angel One.", error=str(exc))
+        else:
+            if cancelled:
+                alerts.emit("warning", "KILL_SWITCH",
+                            "Kill switch: {} working order(s) cancelled.".format(cancelled))
     else:
         trading_mode.deactivate_kill_switch()
     return TradingModeStatus(**trading_mode.status())
+
+
+@router.post("/api/trading/flatten-all")
+async def flatten_all(payload: FlattenRequest) -> dict:
+    """Close every live position at market. Trips the kill switch first."""
+    if not payload.confirmed:
+        raise HTTPException(428, "Flattening every position requires confirmed=true.")
+    trading_mode.activate_kill_switch("Flatten-all requested.")
+    try:
+        await reconciler.cancel_working_entries()
+        closing = await reconciler.flatten_all()
+    except AngelOneOrderError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"closing": closing, **trading_mode.status()}
+
+
+@router.get("/api/alerts")
+async def list_alerts(since: float = 0.0) -> list:
+    return alerts.recent(since)

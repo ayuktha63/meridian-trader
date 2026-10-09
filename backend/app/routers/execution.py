@@ -5,6 +5,8 @@ nothing but the confirmation flag, on purpose (§21 of the live-trading spec).
 """
 from __future__ import annotations
 
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,12 @@ from ..db.session import get_session
 from ..schemas.execution import ExecuteRequest, ExecutionRecord
 
 router = APIRouter(prefix="/api/trades", tags=["execution"])
+
+
+@router.get("/live", response_model=List[ExecutionRecord])
+async def list_live(session: AsyncSession = Depends(get_session)) -> List[ExecutionRecord]:
+    """Every live execution, newest first — open ones and the recent closed."""
+    return await angel_execution.list_executions(session)
 
 
 @router.post("/{recommendation_id}/execute", response_model=ExecutionRecord)

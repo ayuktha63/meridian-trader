@@ -32,6 +32,10 @@ class TradingModeRequest(BaseModel):
     confirmed: bool = False
 
 
+class FlattenRequest(BaseModel):
+    confirmed: bool = False
+
+
 class InstrumentCapability(BaseModel):
     supported: bool
     reason: Optional[str] = None

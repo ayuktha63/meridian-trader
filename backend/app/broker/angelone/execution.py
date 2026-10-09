@@ -6,12 +6,14 @@ happen (that's `PreTradeRiskGate`) and never talks to the SmartAPI SDK
 directly (that's `AngelOneBrokerService`). It only orchestrates the two in
 the fixed order the spec requires, and persists exactly what happened.
 
-What this phase deliberately does NOT do, so nothing here is mistaken for
-more than it is:
-  - No SL/TP order is placed. A plain entry order only (§26 of the spec).
-    `stop_price`/`target_price` are persisted as metadata for the next phase,
-    not submitted to the broker.
-  - No reconciliation loop, no restart recovery, no broker-side monitoring.
+This module places the *entry* only. Everything after it — following the
+order to a fill, resting a stop and target behind that fill, recovering
+orders in flight across a restart — is `reconciler.py`, which is handed the
+row the moment the entry is submitted.
+
+  - The intent is committed, with its idempotency tag, *before* the broker
+    is called. If the process dies mid-request the reconciler still knows an
+    order may exist and can find it by tag.
   - No retry of any kind on an ambiguous outcome — see `_submit`.
 """
 from __future__ import annotations
@@ -28,8 +30,13 @@ from ...runtime_settings import get as get_runtime_settings
 from ...schemas.execution import ExecutionRecord, ExecutionStatus
 from ..risk_gate import GateContext, Recommendation, risk_gate
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker
+from .orders import find_order_by_tag, order_tag
 
 log = logging.getLogger("meridian.angelone.execution")
+
+#: Intraday (MIS): the broker squares the position off before the close, so
+#: nothing here can be carried overnight unprotected by a DAY stop order.
+PRODUCT_TYPE = "INTRADAY"
 
 
 class RecommendationNotFound(RuntimeError):
@@ -50,7 +57,12 @@ def _row_to_record(row: LiveExecutionRow) -> ExecutionRecord:
         stop_price=row.stop_price, target_price=row.target_price,
         risk_amount=row.risk_amount, status=ExecutionStatus(row.status),
         broker_order_id=row.broker_order_id, error_code=row.error_code,
-        error_message=row.error_message, created_at=row.created_at,
+        error_message=row.error_message,
+        protection_status=row.protection_status or "NONE",
+        stop_order_id=row.stop_order_id, target_order_id=row.target_order_id,
+        protection_tier=row.protection_tier or 0, exit_price=row.exit_price,
+        exit_reason=row.exit_reason, gross_pnl=row.gross_pnl,
+        closed_at=row.closed_at, created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
@@ -92,6 +104,12 @@ class AngelOneExecutionService:
         return _row_to_record(row) if row else None
 
     @staticmethod
+    async def list_executions(session: AsyncSession, limit: int = 100) -> list:
+        stmt = (select(LiveExecutionRow)
+                .order_by(LiveExecutionRow.created_at.desc()).limit(limit))
+        return [_row_to_record(r) for r in (await session.execute(stmt)).scalars().all()]
+
+    @staticmethod
     async def _get_row(session: AsyncSession,
                        recommendation_id: str) -> Optional[LiveExecutionRow]:
         stmt = select(LiveExecutionRow).where(
@@ -118,7 +136,12 @@ class AngelOneExecutionService:
         # prior REJECTED-before-submission attempt (bad funds, gate failure)
         # must not permanently lock out a recommendation that could succeed
         # once the underlying issue is fixed.
-        already_executed = bool(existing_row and existing_row.broker_order_id)
+        # A row still SUBMITTING or UNKNOWN has no order id yet may well have
+        # an order: it blocks too, until the reconciler settles which.
+        already_executed = bool(existing_row and (
+            existing_row.broker_order_id
+            or existing_row.status in (ExecutionStatus.SUBMITTING.value,
+                                       ExecutionStatus.UNKNOWN.value)))
 
         recommendation = _recommendation_from_row(analysis)
 
@@ -206,17 +229,21 @@ class AngelOneExecutionService:
                       rec: Recommendation, ctx: GateContext) -> ExecutionRecord:
         match = ctx.match
         now = time.time()
+        tag = order_tag(rec.id)
         row = self._upsert(
             existing, session,
             recommendation_id=rec.id, symbol=rec.symbol, side=rec.side,
             exchange=match.exchange, trading_symbol=match.trading_symbol,
             instrument_token=match.token, requested_quantity=ctx.quantity,
-            requested_price=rec.entry, stop_price=rec.stop_loss,
-            target_price=rec.take_profit, risk_amount=rec.risk_amount,
+            requested_price=float(ctx.entry_price),
+            stop_price=float(ctx.stop_price), initial_stop=float(ctx.stop_price),
+            target_price=float(ctx.target_price) if ctx.target_price else None,
+            risk_amount=rec.risk_amount, order_tag=tag, tick_size=match.tick_size,
             status=ExecutionStatus.SUBMITTING.value, error_message=None,
             created_at=now, updated_at=now,
         )
-        await session.flush()
+        # Write-ahead: the intent is durable before the broker hears of it.
+        await session.commit()
 
         order_params = {
             "variety": "NORMAL",
@@ -225,14 +252,14 @@ class AngelOneExecutionService:
             "transactiontype": rec.side,
             "exchange": match.exchange,
             # Explicit LIMIT at the recommendation's entry price — never
-            # silently widened to MARKET (§16). This is the deliberate,
-            # documented default for this phase: it will not fill through a
+            # silently widened to MARKET (§16): it will not fill through a
             # gap past the intended entry.
             "ordertype": "LIMIT",
-            "producttype": "INTRADAY",
+            "producttype": PRODUCT_TYPE,
             "duration": "DAY",
-            "price": str(rec.entry),
+            "price": ctx.entry_price,
             "quantity": str(int(ctx.quantity)),
+            "ordertag": tag,
         }
 
         log.info("[EXECUTION] recommendation_id=%s symbol=%s side=%s quantity=%s",
@@ -249,10 +276,9 @@ class AngelOneExecutionService:
             log.info("[ANGEL_ONE] status=REJECTED reason=%s", exc)
             return _row_to_record(row)
         except AngelOneAmbiguousError as exc:
-            # §30: never retry blindly. Best-effort reconcile by checking the
-            # order book for a very recent, matching, untracked order before
-            # giving up and surfacing UNKNOWN.
-            matched_id = await self._find_recent_matching_order(match, rec, ctx)
+            # §30: never retry blindly. Look for *this* order — by tag — and
+            # otherwise surface UNKNOWN; the reconciler keeps looking.
+            matched_id = await self._find_submitted_order(row, since=now)
             if matched_id:
                 row.broker_order_id = matched_id
                 row.status = ExecutionStatus.SUBMITTED.value
@@ -273,20 +299,17 @@ class AngelOneExecutionService:
         row.broker_order_id = order_id
         row.status = ExecutionStatus.SUBMITTED.value
         row.updated_at = time.time()
-        await session.flush()
+        await session.commit()
         log.info("[ANGEL_ONE] status=SUBMITTED order_id=%s", order_id)
 
-        # One immediate status check — enough to distinguish "submitted" from
-        # an instant fill/rejection, without building the full monitoring
-        # loop that belongs to the next phase.
+        # One immediate pass: an instant fill gets its stop now rather than
+        # on the supervisor's next tick.
+        from .reconciler import reconciler
         try:
-            status = await angel_broker.get_order_status(order_id)
-        except AngelOneOrderError:
-            status = None
-        if status:
-            self._apply_order_status(row, status)
-            await session.flush()
-
+            await reconciler.reconcile_row(session, row)
+        except Exception:  # noqa: BLE001 - the loop will retry; the order stands
+            log.exception("immediate reconcile failed for %s", rec.id)
+        await session.flush()
         return _row_to_record(row)
 
     @staticmethod
@@ -317,25 +340,17 @@ class AngelOneExecutionService:
         row.updated_at = time.time()
 
     @staticmethod
-    async def _find_recent_matching_order(match, rec: Recommendation,
-                                          ctx: GateContext) -> Optional[str]:
+    async def _find_submitted_order(row: LiveExecutionRow,
+                                    since: float) -> Optional[str]:
         try:
             orders = await angel_broker.get_orders()
         except AngelOneOrderError:
             return None
-        cutoff = time.time() - 120  # only orders from the last two minutes
-        for order in orders:
-            if (order.get("tradingsymbol") == match.trading_symbol
-                    and order.get("transactiontype") == rec.side
-                    and str(order.get("quantity")) == str(int(ctx.quantity or 0))):
-                placed_at = order.get("updatetime") or order.get("exchtime")
-                # Angel One's timestamps are broker-local strings, not epoch —
-                # without a reliable parse, matching on symbol+side+quantity
-                # within the recent order book is the safest correlation
-                # available without an idempotency key the SDK doesn't expose.
-                del placed_at, cutoff
-                return order.get("orderid")
-        return None
+        order = find_order_by_tag(
+            orders, row.order_tag or "", since=since,
+            trading_symbol=row.trading_symbol, side=row.side,
+            quantity=int(row.requested_quantity or 0))
+        return order.get("orderid") if order else None
 
 
 angel_execution = AngelOneExecutionService()

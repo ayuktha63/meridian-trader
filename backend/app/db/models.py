@@ -257,5 +257,24 @@ class LiveExecutionRow(Base):
     error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    #: Idempotency tag sent as `ordertag` on the entry (see broker.angelone.orders).
+    order_tag: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    tick_size: Mapped[float] = mapped_column(Float, default=0.05)
+    #: The stop as first placed — the risk unit, never changed (cf. PositionRow).
+    initial_stop: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    protection_tier: Mapped[int] = mapped_column(Integer, default=0)
+    #: Broker-side protective orders. NONE until a fill; PROTECTED once a stop
+    #: rests at the broker for the full filled quantity; FAILED means the
+    #: stop could not be placed and the position was flattened.
+    protection_status: Mapped[str] = mapped_column(String(16), default="NONE")
+    stop_order_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    target_order_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    protected_quantity: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_order_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    gross_pnl: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closed_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
+
     created_at: Mapped[float] = mapped_column(Float, default=_now)
     updated_at: Mapped[float] = mapped_column(Float, default=_now)
