@@ -821,6 +821,8 @@ export interface ExecutionPreview {
   order_value: number | null
   risk: number | null
   risk_budget: number | null
+  /** Estimated brokerage and statutory charges on top of `risk` if stopped. */
+  charges: number | null
   margin_required: number | null
   available_funds: number | null
   last_price: number | null
@@ -971,6 +973,9 @@ export interface ExecutionRecord {
   exit_price?: number | null
   exit_reason?: string | null
   gross_pnl?: number | null
+  /** Estimated charges on the round trip, and the profit or loss after them. */
+  charges?: number | null
+  net_pnl?: number | null
   closed_at?: number | null
   created_at: number
   updated_at: number

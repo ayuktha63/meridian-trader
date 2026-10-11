@@ -138,6 +138,7 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
                     <Row label="Target" value={num(preview.target_price)} />
                     <Row label="Order value" value={num(preview.order_value)} />
                     <Row label="Loss if stopped" value={num(preview.risk)} />
+                    <Row label="+ charges (est.)" value={num(preview.charges)} />
                     <Row label={preview.margin_required != null ? 'Margin blocked' : 'Available funds'}
                          value={num(preview.margin_required ?? preview.available_funds)} />
                     <Row label="R:R" value={`${analysis.plan.risk_reward ?? '—'}`} />

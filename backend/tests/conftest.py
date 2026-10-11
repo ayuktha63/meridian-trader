@@ -40,6 +40,9 @@ os.environ["LIVE_RECONCILER_ENABLED"] = "false"
 # against; the tests for these two checks switch them back on.
 os.environ["LIVE_ENFORCE_MARKET_HOURS"] = "false"
 os.environ["LIVE_PRICE_BAND_PCT"] = "0"
+# …and no end-of-day square-off either, or every position these tests open is
+# closed under them whenever the suite runs in NSE's last twenty minutes.
+os.environ["LIVE_SQUAREOFF_MINUTES_BEFORE_CLOSE"] = "0"
 os.environ["LIVE_MAX_TRADES_PER_DAY"] = "0"
 os.environ["LIVE_REQUIRE_MEASURED_EDGE"] = "false"
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,6 +82,7 @@ def _clean():
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()
     for scratch in (reconciler._flat_seen, reconciler._missing,      # noqa: SLF001
+                    reconciler._reduced_seen,                        # noqa: SLF001
                     reconciler._ambiguous, reconciler._triggered,    # noqa: SLF001
                     reconciler._cancel_asked, reconciler._target_unavailable,  # noqa: SLF001
                     reconciler._corrected):                          # noqa: SLF001
@@ -544,7 +546,7 @@ def test_a_broker_rejection_after_acceptance_is_recorded(client, fake):
 
 def test_kill_switch_cancels_working_entries_but_leaves_stops(client, fake):
     held, _ = filled(client, fake)
-    _, resting = submit(client, symbol="RELIANCE")
+    _, resting = submit(client, symbol="TCS")
     resp = client.post("/api/trading/kill-switch?activate=true").json()
     assert resp["kill_switch_active"]
     assert resp["kill_switch_reason"]
@@ -599,8 +601,9 @@ def test_flatten_is_capped_by_the_position_the_broker_reports(client, fake):
 
 
 def test_positions_are_closed_before_the_session_ends(client, fake, monkeypatch):
-    rec_id, _ = filled(client, fake)
+    monkeypatch.setattr(settings, "live_squareoff_minutes_before_close", 20.0)
     monkeypatch.setattr(sessions, "minutes_to_close", lambda ts, asset: 60.0)
+    rec_id, _ = filled(client, fake)
     tick()
     assert fake.by_type("MARKET") == []
     monkeypatch.setattr(sessions, "minutes_to_close", lambda ts, asset: 12.0)
@@ -671,11 +674,149 @@ def test_a_position_from_a_finished_session_is_recorded_as_squared_off(
     fake.positions_override = []
     update(rec_id, filled_at=time.time() - 2 * 86_400,
            submitted_at=time.time() - 2 * 86_400)
+    sent = len(fake.placed)
     tick(4)
     r = row(rec_id)
     assert (r.status, r.exit_reason) == ("CLOSED", "SQUARED_OFF")
-    assert fake.placed
-    assert all(p["ordertype"] != "MARKET" for p in fake.placed)
+    assert len(fake.placed) == sent, "nothing is sent for a position long gone"
+
+
+def test_no_order_is_placed_for_a_position_the_broker_does_not_show(client, fake):
+    """We still count it open, its stop is gone, and Angel One reports
+    nothing held. A fresh stop there is a sell order with no shares behind it."""
+    rec_id, _ = filled(client, fake)
+    update(rec_id, filled_at=time.time() - 60)      # not a fill still settling
+    for order in working(fake.orders):
+        order["status"] = "cancelled"               # pulled by hand, in the app
+    fake.positions_override = []
+    sent = len(fake.placed)
+    tick(6)
+    assert len(fake.placed) == sent
+    assert row(rec_id).status == "FILLED", "and not written off either: nothing explains it"
+    assert "POSITION_MISMATCH" in codes()
+
+
+def test_a_fill_still_settling_is_protected_before_the_position_shows(client, fake):
+    """The other side of the same rule: seconds after a fill the positions
+    endpoint can lag the order book, and the stop does not wait for it."""
+    rec_id, entry_id = submit(client)
+    fake.fill(entry_id, price=2500.0)
+    fake.ltp[TOKEN] = 2500.0
+    fake.positions_override = []
+    tick()
+    assert len(working(stops(fake))) == 1
+    assert row(rec_id).protection_status == "PROTECTED"
+    # …nor is it cut down to a position still catching up with the fills.
+    fake.positions_override = [{"exchange": "NSE", "symboltoken": TOKEN,
+                                "producttype": "INTRADAY", "netqty": "4", "ltp": "2500"}]
+    tick(3)
+    assert stops(fake)[0]["quantity"] == str(QTY)
+
+
+def _left_by_an_older_version(age_seconds):
+    """A FILLED row as the release before this one wrote it: no tag, no fill
+    time, no child orders — it never tracked an exit, so it stayed FILLED."""
+    rec_id = uuid.uuid4().hex
+    sent = time.time() - age_seconds
+
+    async def add():
+        async with session_scope() as session:
+            session.add(LiveExecutionRow(
+                recommendation_id=rec_id, symbol="RELIANCE", side="BUY", exchange="NSE",
+                trading_symbol="RELIANCE-EQ", instrument_token=TOKEN,
+                requested_quantity=QTY, filled_quantity=QTY, requested_price=2500.0,
+                average_fill_price=2500.0, stop_price=2480.0, target_price=2560.0,
+                status="FILLED", broker_order_id="OLD1", created_at=sent,
+                updated_at=sent))
+    run(add())
+    return rec_id
+
+
+def test_a_fill_an_older_version_left_open_is_closed_out_not_protected(client, fake):
+    """Upgrading must not rest a stop for every trade the old code ever
+    filled and never saw close."""
+    rec_id = _left_by_an_older_version(2 * 86_400)
+    fake.ltp[TOKEN] = 2500.0
+    tick(4)
+    r = row(rec_id)
+    assert (r.status, r.exit_reason, r.gross_pnl) == ("CLOSED", "SQUARED_OFF", None)
+    assert fake.placed == []
+
+
+def test_a_fill_an_older_version_left_open_gets_its_stop_if_still_held(client, fake):
+    rec_id = _left_by_an_older_version(3600)
+    fake.positions_override = [{"exchange": "NSE", "symboltoken": TOKEN,
+                                "producttype": "INTRADAY", "netqty": str(QTY),
+                                "ltp": "2500"}]
+    tick()
+    stop = working(stops(fake))[0]
+    assert (stop["quantity"], stop["triggerprice"]) == (str(QTY), "2480.00")
+    assert row(rec_id).protection_status == "PROTECTED"
+
+
+def test_shares_sold_by_hand_shrink_the_stop_and_target_to_what_is_left(client, fake):
+    """Four of ten sold in Angel One's app. A stop still resting for ten
+    would sell six that are held and four that are not."""
+    rec_id, _ = filled(client, fake)
+    update(rec_id, filled_at=time.time() - 60)
+    _sold_by_hand(fake, quantity=4)
+    tick()
+    assert stops(fake)[0]["quantity"] == str(QTY), "one reading is not proof"
+    tick()
+    assert stops(fake)[0]["quantity"] == "6"
+    assert targets(fake)[0]["quantity"] == "6"
+    assert row(rec_id).protected_quantity == 6
+    assert codes().count("POSITION_REDUCED") == 1
+
+    fake.fill(row(rec_id).stop_order_id, price=2480.0)
+    sent = len(fake.placed)
+    tick(4)
+    r = row(rec_id)
+    assert r.status == "CLOSED"
+    assert r.gross_pnl == pytest.approx(6 * -20.0 + 4 * 4.0), "both exits accounted"
+    assert run(fake.get_positions())[0]["netqty"] == "0", "flat — not short four"
+    assert len(fake.placed) == sent
+    assert working(fake.orders) == []
+
+
+def test_shares_bought_back_by_hand_are_covered_again(client, fake):
+    rec_id, _ = filled(client, fake)
+    update(rec_id, filled_at=time.time() - 60)
+    fake.positions_override = [{"exchange": "NSE", "symboltoken": TOKEN,
+                                "producttype": "INTRADAY", "netqty": "6", "ltp": "2500"}]
+    tick(2)
+    assert stops(fake)[0]["quantity"] == "6"
+    fake.positions_override = None                   # the book shows all ten again
+    tick()
+    assert stops(fake)[0]["quantity"] == str(QTY)
+    assert targets(fake)[0]["quantity"] == str(QTY)
+
+
+def test_a_delivery_holding_in_the_same_stock_is_not_read_as_the_position(client, fake):
+    """Angel One lists a position per product. Three shares held for delivery
+    are not seven of the intraday ten gone missing."""
+    rec_id, _ = filled(client, fake)
+    update(rec_id, filled_at=time.time() - 60)
+    fake.positions_override = [
+        {"exchange": "NSE", "symboltoken": TOKEN, "producttype": "DELIVERY",
+         "netqty": "3", "ltp": "2500"},
+        {"exchange": "NSE", "symboltoken": TOKEN, "producttype": "INTRADAY",
+         "netqty": str(QTY), "ltp": "2500"}]
+    tick(3)
+    assert stops(fake)[0]["quantity"] == str(QTY)
+    assert "POSITION_REDUCED" not in codes()
+
+
+def test_an_execution_that_cannot_be_checked_raises_an_alert(client, fake, monkeypatch):
+    """One row failing must not stop the others — but it must not fail in
+    silence either: that row is a position nobody is watching."""
+    filled(client, fake)
+
+    async def broken(view):
+        raise RuntimeError("something nobody anticipated")
+    monkeypatch.setattr(reconciler, "_keep_stop", broken)
+    assert tick() == 1
+    assert codes()[-1] == "SUPERVISION_FAILED"
 
 
 # ── the ladder moves the real stop ────────────────────────────
@@ -760,9 +901,24 @@ def test_open_position_limit_counts_working_orders_too(client, fake, monkeypatch
 
 
 def test_symbol_exposure_limit(client, fake, monkeypatch):
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 20_000.0)
+    assert "RELIANCE exposure" in attempt(client)["error_message"]   # 25,000
     monkeypatch.setattr(settings, "live_max_symbol_exposure", 40_000.0)
-    assert attempt(client)["status"] == "OPEN"          # 25,000
-    assert "RELIANCE exposure" in attempt(client)["error_message"]   # would be 50,000
+    assert attempt(client)["status"] == "OPEN"
+
+
+def test_one_live_execution_per_instrument(client, fake):
+    """Angel One nets every order in an instrument into one position, so a
+    second — adding to it or reversing it — cannot be protected on its own."""
+    filled(client, fake)
+    again = attempt(client)
+    assert again["status"] == "REJECTED"
+    assert "already has a live position" in again["error_message"]
+    reverse = attempt(client, decision="SELL", stop=2520.0, target=2440.0)
+    assert reverse["status"] == "REJECTED"
+    assert "already has a live position" in reverse["error_message"]
+    assert len(fake.placed) == 3, "the entry, its stop and its target — nothing since"
+    assert attempt(client, symbol="TCS")["status"] == "OPEN", "another instrument is fine"
 
 
 def test_trades_per_day_limit(client, fake, monkeypatch):
@@ -839,8 +995,8 @@ def test_a_stop_at_breakeven_frees_the_risk_it_was_holding(client, fake, monkeyp
     monkeypatch.setattr(settings, "live_max_symbol_exposure", 0.0)
     rec_id, _ = filled(client, fake)
     update(rec_id, stop_price=2500.0)                     # ratcheted to the entry
-    assert attempt(client)["status"] == "OPEN"
-    assert attempt(client)["status"] == "REJECTED"
+    assert attempt(client, symbol="TCS")["status"] == "OPEN"
+    assert "daily loss limit" in attempt(client, symbol="INFY")["error_message"]
 
 
 def test_daily_loss_limit_trips_the_kill_switch_as_the_loss_lands(client, fake, monkeypatch):
@@ -854,6 +1010,50 @@ def test_daily_loss_limit_trips_the_kill_switch_as_the_loss_lands(client, fake, 
     body = attempt(client)
     assert body["status"] == "REJECTED"
     assert len(fake.placed) == 3
+
+
+def test_the_daily_limit_counts_what_the_broker_and_exchange_take(client, fake, monkeypatch):
+    """Stopped exactly at the stop is 200 lost on price — and about 26 more
+    in brokerage and statutory charges. The day's limit is on what is gone."""
+    rec_id, _ = filled(client, fake)
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 215.0)
+    fake.fill(row(rec_id).stop_order_id, price=2480.0)
+    tick()
+    assert row(rec_id).gross_pnl == pytest.approx(-200.0)
+    assert trading_mode.kill_switch_active
+    assert "226.41 lost today" in trading_mode.kill_switch_reason
+
+
+def test_the_days_worst_case_includes_the_charges(client, fake, monkeypatch):
+    """An order that fits the limit on price alone, and not once its round
+    trip is paid for, does not fit."""
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 215.0)
+    body = attempt(client)                                # 200 at the stop + ~26
+    assert body["status"] == "REJECTED"
+    assert "daily loss limit" in body["error_message"]
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 230.0)
+    assert attempt(client)["status"] == "OPEN"
+
+
+def test_a_breakeven_stop_still_owes_the_round_trip(client, fake, monkeypatch):
+    """Out at the entry price is not out for free."""
+    rec_id, _ = filled(client, fake)
+    update(rec_id, stop_price=2500.0)
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 240.0)
+    # The next order would lose 226 at its stop: inside 240 alone, outside it
+    # with the 27 the open trade still owes.
+    assert "daily loss limit" in attempt(client, symbol="TCS")["error_message"]
+
+
+def test_a_closed_trade_reports_its_charges_and_what_is_left(client, fake):
+    rec_id, _ = filled(client, fake)
+    fake.fill(row(rec_id).target_order_id, price=2560.0)
+    tick()
+    record = client.get("/api/trades/live").json()[0]
+    assert record["gross_pnl"] == pytest.approx(600.0)
+    # Equity intraday: about 0.053% a side, on 25,000 in and 25,600 out.
+    assert record["charges"] == pytest.approx(26.83, abs=0.01)
+    assert record["net_pnl"] == pytest.approx(600.0 - 26.83, abs=0.01)
 
 
 def test_the_trading_day_starts_at_midnight_ist():

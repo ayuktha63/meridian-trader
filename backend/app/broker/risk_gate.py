@@ -16,8 +16,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .. import costs
 from ..config import get_settings
-from ..instruments import Instrument
+from ..instruments import Instrument, get_instrument
 from ..runtime_settings import RuntimeSettings
 from ..schemas.execution import RiskGateResult
 from .angelone.auth import angel_auth
@@ -32,6 +33,14 @@ log = logging.getLogger("meridian.risk_gate")
 #: not a computed check, precisely because it must not be silently "fixed"
 #: by a future refactor that forgets why it's here.
 UNTRUSTED_TICK_EXCHANGES = {"CDS"}
+
+#: Orders here are sized in contract units — lots × the scrip master's lot
+#: size — which is what Angel One takes for equity and for NFO. Commodity
+#: orders are widely reported to be taken in *lots* instead, and that has not
+#: been confirmed against the broker. Guessing wrong one way is an order the
+#: exchange rejects; the other way it is a position a hundred times the size
+#: that was risked. Blocked for the same reason, and in the same way, as CDS.
+UNVERIFIED_QUANTITY_EXCHANGES = {"MCX"}
 
 
 @dataclass
@@ -98,7 +107,7 @@ class PreTradeRiskGate:
     #: into the context by the caller.
     _NETWORK_DEPENDENT_CHECKS = (
         "_check_instrument_capability", "_check_untrusted_tick_conversion",
-        "_check_price_tick", "_check_quantity", "_check_funds", "_check_risk_amount",
+        "_check_unverified_quantity_unit", "_check_price_tick", "_check_quantity", "_check_funds", "_check_risk_amount",
         "_check_market_hours", "_check_price_band", "_check_order_limits",
         "_check_account_limits", "_check_measured_edge",
     )
@@ -218,6 +227,17 @@ class PreTradeRiskGate:
                       "execution is refused on this exchange until that's "
                       "confirmed. See AngelOneInstrumentService.resolve() "
                       "for the specific gap.".format(ctx.match.exchange))
+        return RiskGateResult(allowed=True)
+
+    def _check_unverified_quantity_unit(self, ctx: GateContext) -> RiskGateResult:
+        if ctx.match and ctx.match.exchange in UNVERIFIED_QUANTITY_EXCHANGES:
+            return RiskGateResult(
+                allowed=False, check="unverified_quantity_unit",
+                reason="Whether Angel One takes a {} order's quantity in lots or in "
+                       "contract units has not been verified, and a wrong guess is "
+                       "a position many times the intended size — live execution "
+                       "is refused on this exchange until it is confirmed with a "
+                       "real one-lot order.".format(ctx.match.exchange))
         return RiskGateResult(allowed=True)
 
     # ── tick grid ─────────────────────────────────────────────
@@ -434,55 +454,100 @@ class PreTradeRiskGate:
 
     # ── check 11: the account, not the trade ──────────────────
     def _check_account_limits(self, ctx: GateContext) -> RiskGateResult:
+        if ctx.ledger is None:
+            return _no("account_limits", "Live trade history was not loaded.")
+        cfg = get_settings()
+        for limit in (self._daily_loss, self._activity, self._exposure):
+            result = limit(ctx, ctx.ledger, cfg)
+            if not result.allowed:
+                return result
+        return RiskGateResult(allowed=True)
+
+    @staticmethod
+    def _daily_loss(ctx: GateContext, ledger, cfg) -> RiskGateResult:
+        limit = cfg.live_daily_loss_limit
+        if not limit:
+            return RiskGateResult(allowed=True)
+        if ledger.realised_today <= -limit:
+            reason = ("Daily loss limit reached: {:.2f} lost today against a "
+                      "limit of {:.2f}.".format(-ledger.realised_today, limit))
+            trading_mode.activate_kill_switch(reason)
+            return _no("daily_loss", reason)
+        # Not only what the day has lost, but what it would have lost if this
+        # order and everything already open were stopped out — and paid for.
+        new_risk = stop_out_loss(ctx)
+        worst = -ledger.realised_today + ledger.open_risk + new_risk
+        if worst > limit:
+            return _no("daily_loss", "This order would lose {:.2f} at its stop, charges "
+                       "included. With {:.2f} lost so far today and {:.2f} at risk in "
+                       "open positions, being stopped out would take the day to "
+                       "{:.2f} — past the daily loss limit of {:.2f}."
+                       .format(new_risk, max(-ledger.realised_today, 0.0),
+                               ledger.open_risk, worst, limit))
+        return RiskGateResult(allowed=True)
+
+    @staticmethod
+    def _activity(ctx: GateContext, ledger, cfg) -> RiskGateResult:
+        if cfg.live_max_trades_per_day and ledger.trades_today >= cfg.live_max_trades_per_day:
+            return _no("trades_per_day", "{} live trades already today (limit {})."
+                       .format(ledger.trades_today, cfg.live_max_trades_per_day))
+        if cfg.live_max_open_positions and ledger.open_positions >= cfg.live_max_open_positions:
+            return _no("open_positions", "{} live positions or orders already open "
+                       "(limit {}).".format(ledger.open_positions,
+                                            cfg.live_max_open_positions))
+        symbol = ctx.recommendation.symbol
+        if symbol in ledger.symbol_exposure:
+            # Angel One nets every order in an instrument into one position.
+            # A second entry — adding to it, or the other way — could not be
+            # stopped, sized or even told apart on its own.
+            return _no("instrument_open", "{} already has a live position or working "
+                       "order. One at a time per instrument: close it first."
+                       .format(symbol))
+        return RiskGateResult(allowed=True)
+
+    @staticmethod
+    def _exposure(ctx: GateContext, ledger, cfg) -> RiskGateResult:
         from .live_limits import sector_of
 
-        cfg, ledger = get_settings(), ctx.ledger
-        if ledger is None:
-            return RiskGateResult(allowed=False, check="account_limits",
-                                  reason="Live trade history was not loaded.")
-
-        def no(check: str, reason: str) -> RiskGateResult:
-            return RiskGateResult(allowed=False, check=check, reason=reason)
-
-        if cfg.live_daily_loss_limit and ledger.realised_today <= -cfg.live_daily_loss_limit:
-            reason = ("Daily loss limit reached: {:.2f} lost today against a "
-                      "limit of {:.2f}.".format(-ledger.realised_today,
-                                                cfg.live_daily_loss_limit))
-            trading_mode.activate_kill_switch(reason)
-            return no("daily_loss", reason)
-        # Not only what the day has lost, but what it would have lost if this
-        # order and everything already open were stopped out.
-        new_risk = (abs(float(ctx.entry_price) - float(ctx.stop_price)) * (ctx.quantity or 0)
-                    if ctx.entry_price and ctx.stop_price else 0.0)
-        worst = -ledger.realised_today + ledger.open_risk + new_risk
-        if cfg.live_daily_loss_limit and worst > cfg.live_daily_loss_limit:
-            return no("daily_loss", "This order risks {:.2f}. With {:.2f} lost so far "
-                      "today and {:.2f} at risk in open positions, being stopped out "
-                      "would take the day to {:.2f} — past the daily loss limit of "
-                      "{:.2f}.".format(new_risk, max(-ledger.realised_today, 0.0),
-                                       ledger.open_risk, worst,
-                                       cfg.live_daily_loss_limit))
-        if cfg.live_max_trades_per_day and ledger.trades_today >= cfg.live_max_trades_per_day:
-            return no("trades_per_day", "{} live trades already today (limit {})."
-                      .format(ledger.trades_today, cfg.live_max_trades_per_day))
-        if cfg.live_max_open_positions and ledger.open_positions >= cfg.live_max_open_positions:
-            return no("open_positions", "{} live positions or orders already open "
-                      "(limit {}).".format(ledger.open_positions,
-                                           cfg.live_max_open_positions))
         symbol = ctx.recommendation.symbol
         value = float(ctx.entry_price or ctx.recommendation.entry) * (ctx.quantity or 0)
-        held = ledger.symbol_exposure.get(symbol, 0.0)
-        if cfg.live_max_symbol_exposure and held + value > cfg.live_max_symbol_exposure:
-            return no("symbol_exposure", "{} exposure would be {:.2f} (limit {:.2f})."
-                      .format(symbol, held + value, cfg.live_max_symbol_exposure))
+        if cfg.live_max_symbol_exposure and value > cfg.live_max_symbol_exposure:
+            return _no("symbol_exposure", "{} exposure would be {:.2f} (limit {:.2f})."
+                       .format(symbol, value, cfg.live_max_symbol_exposure))
         sector = sector_of(symbol)
-        if sector and cfg.live_max_sector_exposure:
-            total = ledger.sector_exposure.get(sector, 0.0) + value
-            if total > cfg.live_max_sector_exposure:
-                return no("sector_exposure", "{} sector exposure would be {:.2f} "
-                          "(limit {:.2f}).".format(sector, total,
-                                                   cfg.live_max_sector_exposure))
+        total = ledger.sector_exposure.get(sector, 0.0) + value if sector else 0.0
+        if cfg.live_max_sector_exposure and total > cfg.live_max_sector_exposure:
+            return _no("sector_exposure", "{} sector exposure would be {:.2f} "
+                       "(limit {:.2f}).".format(sector, total,
+                                                cfg.live_max_sector_exposure))
         return RiskGateResult(allowed=True)
+
+
+def _no(check: str, reason: str) -> RiskGateResult:
+    return RiskGateResult(allowed=False, check=check, reason=reason)
+
+
+def stop_out_charges(ctx: GateContext) -> float:
+    """Estimated brokerage and statutory charges if this order fills and is
+    then stopped out (app/costs.py — the model the backtest is charged by)."""
+    if not ctx.entry_price or not ctx.stop_price or not ctx.quantity:
+        return 0.0
+    if ctx.instrument is None:
+        try:
+            ctx.instrument = get_instrument(ctx.recommendation.symbol)
+        except KeyError:
+            return 0.0
+    return costs.charges(ctx.instrument, float(ctx.entry_price) * ctx.quantity,
+                         float(ctx.stop_price) * ctx.quantity)
+
+
+def stop_out_loss(ctx: GateContext) -> float:
+    """What this order takes from the account if it is stopped at its stop:
+    the distance to it, and the round trip's charges on top."""
+    if not ctx.entry_price or not ctx.stop_price or not ctx.quantity:
+        return 0.0
+    distance = abs(float(ctx.entry_price) - float(ctx.stop_price)) * ctx.quantity
+    return distance + stop_out_charges(ctx)
 
 
 def _is_async(fn) -> bool:

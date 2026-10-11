@@ -22,6 +22,13 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 > hard limits before it is sent, and a live order is refused outright unless a walk-forward
 > test of that market has shown an edge after costs. If the honest answer is "no measured
 > edge", the system says so and will not trade it.
+>
+> **That is the answer it currently gives.** Run on 12 October 2026 against six months of
+> real BTC, ETH and SOL history, neither the engine nor any of the five named plays showed an
+> edge after costs — twenty-four walk-forward tests, none passed, and on two of the three
+> hourly markets the engine was indistinguishable from entries chosen at random. The numbers
+> are in [TRADING.md §7](TRADING.md#7-so--will-this-make-money). Indian equities and F&O need
+> a broker connection for their history and have not been tested.
 
 > **Trading with it?** Read **[TRADING.md](TRADING.md)** — what you can legally trade from
 > India, how to connect Zerodha or Angel One, how a signal becomes an order (manual or live),
@@ -153,7 +160,7 @@ make desktop     # Electron shell wrapping the same UI
 ### Other commands
 
 ```bash
-make test        # 330+ backend tests (pytest) — offline, about 25 seconds
+make test        # 360+ backend tests (pytest) — offline, about 25 seconds
 make lint        # backend lint (ruff) and frontend typecheck (tsc --noEmit)
 make clean       # remove venv, node_modules, build output
 ```
@@ -301,11 +308,14 @@ analysis that changes with them.
 ```
   recommendation ──► PreTradeRiskGate ──► LIMIT entry ──► LiveReconciler (every few seconds)
    (stored, server-   mode · confirmation   tagged, written    follow the entry · stop at the
-    side; the UI      kill switch · tick    down before the    broker for every share held ·
-    sends only a      grid · size from      broker is called   target · ladder · square-off
-    confirmation)     risk budget · funds                      before the close · count what
-                      and margin · hours                       is held from the fills
-                      price band · limits
+    side; the UI      kill switch · tick    down before the    broker for every share held,
+    sends only a      grid · size from      broker is called   never for more than the broker
+    confirmation)     risk budget · funds                      shows · target · ladder ·
+                      and margin · hours                       square-off before the close ·
+                      price band · limits                      count what is held from the
+                      net of charges · one                     fills
+                      position per
+                      instrument ·
                       measured edge
 ```
 
@@ -314,6 +324,11 @@ analysis that changes with them.
 them. The backtest calls the same two functions, so a backtest result is evidence about the
 engine that trades rather than about a second implementation of it. A test puts a market in the
 store and checks that the replay and `engine.run` agree bar for bar.
+
+Live orders are intraday, one position per instrument, on **cash equity and index futures**.
+Currency futures and commodity futures are refused outright: each depends on a number — a tick
+size, and whether a quantity is read in lots or in units — that has not been checked against the
+broker, and a wrong guess there is a wrong order ([TRADING.md §2a](TRADING.md)).
 
 ### Confidence model
 
@@ -399,7 +414,7 @@ frontend/src
 ## Testing
 
 ```bash
-make test          # 330+ pytest cases, offline, about 25 seconds
+make test          # 360+ pytest cases, offline, about 25 seconds
 make lint          # ruff on the backend, tsc --noEmit on the frontend
 ```
 
@@ -412,21 +427,23 @@ protection ladder, the account guardrails, demo auto-trading, and:
   websocket are each refused without a token; the token is compared in
   constant time; the server will not start on a network address without one.
 * **The pre-trade gate** — PAPER-mode isolation, sizing from the risk budget
-  in real shares, tick rounding that cannot add risk, every hard limit, the
-  measured-edge requirement and its thresholds.
+  in real shares, tick rounding that cannot add risk, every hard limit (the
+  daily one counted after brokerage and statutory charges), one position per
+  instrument, the measured-edge requirement and its thresholds.
 * **The live-order supervisor**, driven one pass at a time against an
   in-memory Angel One: a stop behind every fill, flatten when none can be
   placed, one-cancels-the-other, a partly filled target, two exits that both
   fill, recovery of an order whose submission timed out, a restart mid-order,
-  a position closed by hand, a flat reading nothing explains, the square-off
-  before the close, the kill switch.
+  a position closed by hand, part of one sold by hand, a flat reading nothing
+  explains, no order for a position the broker does not show, a fill left
+  open by an older version, the square-off before the close, the kill switch.
 * **Backtest honesty** — a random-entry control that must lose after costs;
   a limit that is missed when the market does not come back; nothing from
   the future reaching a decision; and the replay reaching the same verdict
   as the live engine on the same bar.
 
-The safety rules were also checked the other way round: fifteen of them were
-broken on purpose, one at a time, and in every case a test failed.
+The safety rules were also checked the other way round: twenty-six of them
+were broken on purpose, one at a time, and in every case a test failed.
 
 Tests never touch the network or your data. They run on the synthetic feed
 against a throwaway directory that is removed afterwards — never

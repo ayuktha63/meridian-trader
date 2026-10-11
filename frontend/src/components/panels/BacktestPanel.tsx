@@ -27,6 +27,7 @@ const STRATEGIES = [
 
 /** Rough cost of replaying the engine: one full analysis per bar. */
 const SECONDS_PER_BAR = 0.045
+const WALK_FORWARD_BARS = 4000
 
 export default function BacktestPanel() {
   const symbol = useStore((s) => s.symbol)
@@ -60,7 +61,11 @@ export default function BacktestPanel() {
     setRunning(true)
     setError(null)
     try {
-      setResult(await api.walkForward({ symbol, timeframe, bars: Math.max(bars, 2000), strategy }))
+      // A verdict needs 30 trades on bars it was not fitted to, and four of
+      // every five bars are the tested ones: fewer than this rarely concludes.
+      setResult(await api.walkForward({
+        symbol, timeframe, bars: Math.max(bars, WALK_FORWARD_BARS), strategy,
+      }))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Walk-forward failed')
     } finally {
@@ -110,7 +115,8 @@ export default function BacktestPanel() {
         <p className="text-[10px] text-faint leading-relaxed">
           {running
             ? 'Replaying the live engine bar by bar — this is the slow, honest way.'
-            : `About ${estimate}s the first time on a market; other strategies and re-runs reuse it.`}
+            : `A replay takes about ${estimate}s the first time on a market, a walk-forward about `
+              + `${Math.round(WALK_FORWARD_BARS * SECONDS_PER_BAR / 60)} minutes; other strategies and re-runs reuse it.`}
         </p>
         {error && <p className="text-2xs text-bear">{error}</p>}
       </div>

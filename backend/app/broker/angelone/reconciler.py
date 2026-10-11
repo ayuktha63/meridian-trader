@@ -135,6 +135,13 @@ def _working(order: Optional[dict]) -> bool:
     return order is not None and _status(order) not in _DONE + _DEAD
 
 
+def _same_product(entry: dict) -> bool:
+    """Angel One keeps a position — and reports orders — per product, so the
+    same stock held for delivery is a different line from the intraday trade
+    being supervised here. An entry that does not say is taken as ours."""
+    return (entry.get("producttype") or PRODUCT_TYPE).upper() == PRODUCT_TYPE
+
+
 @dataclass
 class Book:
     """One reading of the broker, shared by every execution in a pass."""
@@ -168,10 +175,18 @@ class _View:
     now: float
     position: Optional[dict]
     ltp: Optional[float] = None
+    #: Shares the stop and target should cover (see `_coverable`).
+    protect_qty: int = 0
 
     @property
     def long(self) -> bool:
         return self.row.side == "BUY"
+
+    @property
+    def settled(self) -> bool:
+        """Long enough after the fill for the broker's positions to have
+        caught up with its order book."""
+        return self.now - (self.row.filled_at or self.now) > FLAT_MIN_AGE_SECONDS
 
     @property
     def open_qty(self) -> int:
@@ -194,6 +209,7 @@ class LiveReconciler:
         # Per-execution scratch state. Losing it in a restart only costs a
         # few passes of re-confirmation; nothing here is a record.
         self._flat_seen: Dict[str, int] = {}
+        self._reduced_seen: Dict[str, int] = {}
         self._missing: Dict[Tuple[str, str], int] = {}
         self._ambiguous: Dict[Tuple[str, str], float] = {}
         self._triggered: Dict[str, int] = {}
@@ -274,8 +290,13 @@ class LiveReconciler:
                         row = await session.get(LiveExecutionRow, row_id)
                         if row is not None:
                             await self._reconcile(session, row, book)
-                except Exception:  # noqa: BLE001 - one bad row must not strand the rest
+                except Exception as exc:  # noqa: BLE001 - one bad row must not strand the rest
                     log.exception("reconcile failed for execution %s", row_id)
+                    alerts.emit("critical", "SUPERVISION_FAILED",
+                                "A live execution could not be checked this pass — "
+                                "its position may not be supervised. Look at it in "
+                                "Angel One.", throttle=300.0, execution=row_id,
+                                error=str(exc))
         return len(ids)
 
     async def reconcile_now(self, session: AsyncSession, row: LiveExecutionRow) -> None:
@@ -456,7 +477,10 @@ class LiveReconciler:
     async def _supervise_position(self, row: LiveExecutionRow, book: Book) -> None:
         now = time.time()
         if not row.filled_at:
-            row.filled_at = now
+            # Only a row written before fills were timed has none. It filled
+            # around when it was sent — calling it fresh would have it treated
+            # as a fill still settling, and protected on that basis.
+            row.filled_at = row.submitted_at or row.created_at or now
         holding = self._holding(row, book)
         for order_id, variety in self._track_legs(row, book, holding):
             # Two working orders for one leg — a submission that timed out,
@@ -475,6 +499,7 @@ class LiveReconciler:
 
         view = _View(row=row, book=book, holding=holding, now=now,
                      position=self._position_for(row, book.positions))
+        view.protect_qty = self._coverable(view)
         # Each step answers "is this execution done for this pass?" — in the
         # order that matters: nothing competes with an exit already working,
         # and no order is placed for a position the broker says is not there.
@@ -504,7 +529,39 @@ class LiveReconciler:
         if view.held > 0:
             self._flat_seen.pop(view.row.id, None)
             return False
-        return await self._closed_elsewhere(view.row, view.book, view.holding, view.now)
+        if await self._closed_elsewhere(view.row, view.book, view.holding, view.now):
+            return True
+        # Not there, and nothing yet says why. Straight after a fill the
+        # positions endpoint may only be behind the order book, and the stop
+        # cannot wait for it. Any later, an order placed now would be an order
+        # for a position the broker says does not exist — so place none, and
+        # leave what is resting alone, until the two agree again.
+        return view.settled
+
+    def _coverable(self, view: "_View") -> int:
+        """How many shares the stop and target should cover: what our fills
+        say is held, but never more than Angel One itself shows.
+
+        Selling part of a position by hand leaves the two apart, and a stop
+        still resting for the full size would sell shares that are no longer
+        there — opening a short with nothing behind it.
+        """
+        row = view.row
+        fewer = (view.book.positions is not None and view.settled
+                 and 0 < view.held < view.open_qty)
+        if not fewer:
+            self._reduced_seen.pop(row.id, None)
+            return view.open_qty
+        self._reduced_seen[row.id] = self._reduced_seen.get(row.id, 0) + 1
+        if self._reduced_seen[row.id] < MISSING_CONFIRMATIONS:
+            return view.open_qty            # one reading is not proof
+        alerts.emit("warning", "POSITION_REDUCED",
+                    "Angel One shows fewer shares than this trade's fills account "
+                    "for — part of it was closed outside Meridian. The stop and "
+                    "target now cover what is there.",
+                    throttle=300.0, symbol=row.symbol, expected=view.open_qty,
+                    held=int(view.held))
+        return int(view.held)
 
     async def _session_ending(self, view: "_View") -> bool:
         return (self._near_close(view.row, view.now)
@@ -526,7 +583,7 @@ class LiveReconciler:
                 # Price is already past the stop: a stop order placed now
                 # would be refused. Nothing has malfunctioned — get out.
                 return await self._flatten(row, "STOP", view.book, view.open_qty)
-            if not await self._place_stop(row, view.open_qty):
+            if not await self._place_stop(row, view.protect_qty):
                 await self._protection_failed(row, view.book, view.open_qty)
                 return True
             return False
@@ -536,8 +593,8 @@ class LiveReconciler:
             return (self._triggered[row.id] >= 2
                     and await self._flatten(row, "STOP", view.book, view.open_qty))
         self._triggered.pop(row.id, None)
-        if _filled(stop) == 0 and int(_num(stop.get("quantity"))) != view.open_qty:
-            await self._modify_stop(row, stop, quantity=view.open_qty)
+        if _filled(stop) == 0 and int(_num(stop.get("quantity"))) != view.protect_qty:
+            await self._modify_stop(row, stop, quantity=view.protect_qty)
         return False
 
     async def _keep_target(self, view: "_View") -> bool:
@@ -548,8 +605,8 @@ class LiveReconciler:
         if row.target_order_id and target is None:
             return False      # tracked but absent from this reading
         if target is not None:
-            if _filled(target) == 0 and int(_num(target.get("quantity"))) != view.open_qty:
-                await self._modify_target(row, view.open_qty)
+            if _filled(target) == 0 and int(_num(target.get("quantity"))) != view.protect_qty:
+                await self._modify_target(row, view.protect_qty)
             return False
         if row.id in self._target_unavailable:
             # The broker would not rest one, so it is taken by price instead.
@@ -557,7 +614,7 @@ class LiveReconciler:
                                           else (view.ltp <= row.target_price))
             return reached and await self._flatten(row, "TARGET", view.book, view.open_qty)
         if not self._awaiting(row, "T", view.now):
-            await self._place_target(row, view.open_qty)
+            await self._place_target(row, view.protect_qty)
         return False
 
     def _track_legs(self, row: LiveExecutionRow, book: Book,
@@ -946,7 +1003,8 @@ class LiveReconciler:
         for order in book.orders:
             if (order.get("orderid") in holding.legs
                     or str(order.get("symboltoken")) != str(row.instrument_token)
-                    or order.get("transactiontype") != exit_side or _filled(order) <= 0):
+                    or order.get("transactiontype") != exit_side or _filled(order) <= 0
+                    or not _same_product(order)):
                 continue
             stamp = parse_broker_time(order.get("updatetime") or order.get("exchtime"))
             if stamp is not None and stamp < since:
@@ -1005,7 +1063,8 @@ class LiveReconciler:
         if price and row.average_fill_price:
             sign = 1.0 if row.side == "BUY" else -1.0
             row.gross_pnl = round((value - row.average_fill_price * quantity) * sign, 2)
-        for store_ in (self._flat_seen, self._triggered, self._cancel_asked):
+        for store_ in (self._flat_seen, self._reduced_seen, self._triggered,
+                       self._cancel_asked):
             store_.pop(row.id, None)
         for store_ in (self._missing, self._ambiguous):
             for key in [k for k in store_ if k[0] == row.id]:
@@ -1091,7 +1150,8 @@ class LiveReconciler:
                       positions: Optional[List[dict]]) -> Optional[dict]:
         for position in positions or []:
             if (str(position.get("symboltoken")) == str(row.instrument_token)
-                    and position.get("exchange") == row.exchange):
+                    and position.get("exchange") == row.exchange
+                    and _same_product(position)):
                 return position
         return None
 

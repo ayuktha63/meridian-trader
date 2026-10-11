@@ -71,6 +71,11 @@ class ExecutionRecord(BaseModel):
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None
     gross_pnl: Optional[float] = None
+    #: Estimated brokerage and statutory charges on the round trip, and what
+    #: is left after them. The contract note is the record; this is the
+    #: figure the daily loss limit is enforced on.
+    charges: Optional[float] = None
+    net_pnl: Optional[float] = None
     closed_at: Optional[float] = None
 
     created_at: float
@@ -97,6 +102,8 @@ class ExecutionPreview(BaseModel):
     #: What a stop-out costs, and the budget it was sized inside.
     risk: Optional[float] = None
     risk_budget: Optional[float] = None
+    #: Estimated brokerage and statutory charges on top of `risk` if stopped.
+    charges: Optional[float] = None
     margin_required: Optional[float] = None
     available_funds: Optional[float] = None
     last_price: Optional[float] = None

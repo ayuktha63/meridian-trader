@@ -33,8 +33,8 @@ from ...schemas.execution import (
     ExecutionPreview, ExecutionRecord, ExecutionStatus, RiskGateResult,
 )
 from ...services.edge import latest_edge
-from ..live_limits import load_ledger
-from ..risk_gate import GateContext, Recommendation, risk_gate
+from ..live_limits import estimated_charges, load_ledger
+from ..risk_gate import GateContext, Recommendation, risk_gate, stop_out_charges
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker
 from .orders import find_order_by_tag, order_tag
 
@@ -54,6 +54,10 @@ class RecommendationNotExecutable(RuntimeError):
 
 
 def _row_to_record(row: LiveExecutionRow) -> ExecutionRecord:
+    charges = net = None
+    if row.gross_pnl is not None:
+        charges = round(estimated_charges(row), 2)
+        net = round(row.gross_pnl - charges, 2)
     return ExecutionRecord(
         id=row.id, recommendation_id=row.recommendation_id, broker=row.broker,
         symbol=row.symbol, side=row.side, exchange=row.exchange,
@@ -68,6 +72,7 @@ def _row_to_record(row: LiveExecutionRow) -> ExecutionRecord:
         stop_order_id=row.stop_order_id, target_order_id=row.target_order_id,
         protection_tier=row.protection_tier or 0, exit_price=row.exit_price,
         exit_reason=row.exit_reason, gross_pnl=row.gross_pnl,
+        charges=charges, net_pnl=net,
         closed_at=row.closed_at, created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -157,6 +162,7 @@ class AngelOneExecutionService:
             target_price=float(ctx.target_price) if ctx.target_price else None,
             order_value=round(entry * quantity, 2) if quantity else None,
             risk=round(abs(entry - stop) * quantity, 2) if quantity else None,
+            charges=round(stop_out_charges(ctx), 2) if quantity else None,
             risk_budget=ctx.risk_budget, margin_required=ctx.margin_required,
             available_funds=ctx.available_funds, last_price=ctx.ltp,
             edge=(ctx.edge or {}).get("reason"),

@@ -17,6 +17,7 @@ from typing import Dict, Optional
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import costs
 from ..db.models import LiveExecutionRow
 from ..schemas.execution import ExecutionStatus as S
 from .angelone.orders import IST
@@ -43,10 +44,30 @@ def sector_of(symbol: str) -> Optional[str]:
     return None
 
 
+def estimated_charges(row: LiveExecutionRow, exit_price: Optional[float] = None,
+                      quantity: Optional[float] = None) -> float:
+    """What the broker and the exchanges take on this execution's round trip
+    — an estimate from the shared cost model (app/costs.py); the contract
+    note is the record. By default: the whole fill, out at its recorded exit."""
+    from ..instruments import get_instrument
+
+    entry = row.average_fill_price or row.requested_price
+    exit_price = row.exit_price if exit_price is None else exit_price
+    quantity = (row.filled_quantity or 0.0) if quantity is None else quantity
+    if not entry or not exit_price or quantity <= 0:
+        return 0.0
+    try:
+        instrument = get_instrument(row.symbol)
+    except KeyError:
+        return 0.0
+    return costs.charges(instrument, entry * quantity, exit_price * quantity)
+
+
 def open_risk(row: LiveExecutionRow) -> float:
-    """Cash this execution loses if its stop is hit from here. Measured from
-    the entry, so a stop ratcheted to breakeven or better risks nothing —
-    and an order still unfilled risks what it would if it filled."""
+    """Cash this execution loses if its stop is hit from here, charges
+    included. Measured from the entry, so a stop ratcheted past breakeven by
+    more than the round trip costs risks nothing — and an order still
+    unfilled risks what it would if it filled."""
     quantity = max((row.filled_quantity or 0.0) - (row.exit_quantity or 0.0), 0.0)
     if (row.filled_quantity or 0.0) <= 0:
         quantity = row.requested_quantity or 0.0
@@ -54,15 +75,18 @@ def open_risk(row: LiveExecutionRow) -> float:
     if not entry or not row.stop_price or quantity <= 0:
         return 0.0
     sign = 1.0 if row.side == "BUY" else -1.0
-    return max((entry - row.stop_price) * sign, 0.0) * quantity
+    at_stop = (entry - row.stop_price) * sign * quantity
+    return max(at_stop + estimated_charges(row, row.stop_price, quantity), 0.0)
 
 
 @dataclass
 class LiveLedger:
     open_positions: int = 0
     trades_today: int = 0
+    #: Net of estimated brokerage and statutory charges: the limit is on what
+    #: the day has cost, not on what the fills alone say.
     realised_today: float = 0.0
-    #: What the open book loses if every stop is hit.
+    #: What the open book loses if every stop is hit, charges included.
     open_risk: float = 0.0
     symbol_exposure: Dict[str, float] = field(default_factory=dict)
     sector_exposure: Dict[str, float] = field(default_factory=dict)
@@ -93,6 +117,6 @@ async def load_ledger(session: AsyncSession, now: Optional[float] = None,
         sent_at = row.submitted_at or row.created_at or 0.0
         if row.broker_order_id and sent_at >= day:
             ledger.trades_today += 1
-        if row.closed_at and row.closed_at >= day:
-            ledger.realised_today += row.gross_pnl or 0.0
+        if row.closed_at and row.closed_at >= day and row.gross_pnl is not None:
+            ledger.realised_today += row.gross_pnl - estimated_charges(row)
     return ledger

@@ -117,8 +117,9 @@ class FakeAngel:
             sign = 1 if o["transactiontype"] == "BUY" else -1
             key = (o["exchange"], o["symboltoken"])
             net[key] = net.get(key, 0) + sign * int(float(o["filledshares"]))
-        return [{"exchange": ex, "symboltoken": tok, "netqty": str(qty),
-                 "ltp": str(self.ltp.get(tok, 0.0))} for (ex, tok), qty in net.items()]
+        return [{"exchange": ex, "symboltoken": tok, "producttype": "INTRADAY",
+                 "netqty": str(qty), "ltp": str(self.ltp.get(tok, 0.0))}
+                for (ex, tok), qty in net.items()]
 
     async def get_quote(self, exchange: str, trading_symbol: str, token: str) -> dict:
         return {"ltp": self.ltp.get(token)}

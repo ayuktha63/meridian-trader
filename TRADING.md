@@ -16,6 +16,14 @@ exact order before anything is sent. See §2a and §3a. Nothing about this is
 automatic, and nothing about it is subtle — a red **LIVE TRADING · REAL
 MONEY** banner replaces the quiet default whenever it's armed.
 
+**"Risk-free" is not on offer, here or anywhere.** What the live path does is
+bound a loss and refuse to trade without evidence: a stop order rests at the
+broker behind every fill, hard limits are checked before any order goes out,
+and an order is refused outright unless a walk-forward test of that market
+has shown an edge after costs (§7). When the honest answer is "no measured
+edge", that is what it says — and that answer is the system working, not
+failing.
+
 ---
 
 ## 1. What you can actually trade
@@ -187,6 +195,48 @@ at every step.
    ```
 3. Restart the backend. The DEMO/LIVE control in the top bar (TradingModeControl)
    shows Angel One's connection status once it can authenticate.
+4. **Set the limits to your account, not to the defaults.** They are in
+   `.env` too (table below), sized for a small account, and they are what
+   stands between a bug — or a bad afternoon — and your balance.
+5. Optional but worth it: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, so a
+   stop that could not be placed reaches your phone and not just the screen.
+6. Run a **walk-forward test** (Backtest tab) on each symbol and timeframe
+   you mean to trade. Without a passing one, Execute Live stays refused.
+
+**The limits.** Read once at startup, never editable from the UI — a limit
+you can raise with a click while you are losing is not a limit. Changing one
+means editing `.env` and restarting, which also drops you back to PAPER.
+Setting one to `0` switches that check off.
+
+| Setting | Default | What it stops |
+|---|---|---|
+| `LIVE_MAX_RISK_PCT_OF_FUNDS` | 1.0 | An order risking more than this share of the cash Angel One reports — whatever balance is typed into Settings |
+| `LIVE_MAX_ORDER_VALUE` | 50,000 | One order bigger than this |
+| `LIVE_MAX_QUANTITY` | 5,000 | A fat-fingered size |
+| `LIVE_MAX_OPEN_POSITIONS` | 2 | A third position (working orders count) |
+| `LIVE_MAX_TRADES_PER_DAY` | 5 | Overtrading |
+| `LIVE_DAILY_LOSS_LIMIT` | 2,000 | A new order that could take the day past this if it and every open stop were hit; reaching it trips the kill switch. Counted **after charges** — see below |
+| `LIVE_MAX_SYMBOL_EXPOSURE` | 50,000 | Too much in one name |
+| `LIVE_MAX_SECTOR_EXPOSURE` | 1,00,000 | Stacking one sector |
+| `LIVE_PRICE_BAND_PCT` | 1.0 | An entry far from the last traded price — a stale recommendation |
+| `LIVE_ENTRY_TIMEOUT_SECONDS` | 300 | An unfilled entry left resting to fill hours later |
+| `LIVE_NO_ENTRY_MINUTES_BEFORE_CLOSE` | 45 | An entry that would be squared off almost at once |
+| `LIVE_SQUAREOFF_MINUTES_BEFORE_CLOSE` | 20 | Leaving the exit to the broker's own square-off |
+| `LIVE_REQUIRE_MEASURED_EDGE` | true | Trading a market with no evidence behind it |
+
+Two rules have no setting, because there is no safe way to switch them off:
+
+- **One live position per instrument.** Angel One nets every order in an
+  instrument into a single position. A second entry in the same name —
+  adding to it, or the other way round — could not be stopped, sized, or
+  even told apart on its own, so it is refused until the first is closed.
+- **The day's loss is counted after charges.** A trade stopped exactly at its
+  stop has lost the distance to it *and* about 0.1% of its turnover in
+  brokerage and statutory charges (§5). Angel One's order book reports fills,
+  not charges, so Meridian estimates them from the same cost model the
+  backtest is charged by — both for what the day has lost and for what the
+  open stops could still lose. The contract note is the record; the limit
+  errs on the side of stopping early.
 
 **Why credentials live in `.env` and not Settings, unlike Zerodha's.**
 Zerodha's keys in this app are read-only market data. Angel One's can place
@@ -205,7 +255,8 @@ new live orders and cancels every entry order still working; protective
 stops are left exactly where they are. It stays on — through a switch to
 PAPER and back, and through a restart — until you clear it yourself. Closing
 open positions is a separate, explicit button beside it (**Flatten N live
-positions**), which asks first.
+positions**), which asks first. The kill switch also trips itself: when the
+daily loss limit is reached, and when a stop order cannot be placed.
 
 **Instrument support is checked, not assumed.** Angel One does not support
 crypto at all — BTCUSD, ETHUSD and every other CoinDCX pair simply cannot be
@@ -215,11 +266,21 @@ real, current contract (exchange, trading symbol, token, lot size, expiry)
 from Angel One's own instrument master before ever showing you an
 **Execute Live** button — never a hard-coded guess.
 
-**One number is deliberately blocked.** The tick-size conversion for the
-currency segment (USDINR, EURINR, GBPINR, JPYINR) doesn't match the known
-real value yet, and rather than guess, live execution on those four
-instruments is refused until that's fixed. Equity, F&O and MCX aren't
-affected.
+**Two segments are deliberately blocked**, because each depends on a number
+nobody has checked against the broker, and a wrong guess is a wrong order:
+
+- **Currency futures** (USDINR, EURINR, GBPINR, JPYINR): the tick-size
+  conversion from Angel One's contract file doesn't match the known real
+  value.
+- **Commodity futures** (MCX gold, silver, crude and the rest): orders are
+  sized in contract units — one lot of crude is 100 — which is what Angel One
+  takes for equity and for index futures. Commodity quantities are widely
+  reported to be taken in *lots* instead. If that is right, an order sized
+  here would be a hundred times too large, so none is sent until a real
+  one-lot order has settled the question.
+
+Cash equity and index futures aren't affected. Both blocks are a line each in
+`backend/app/broker/risk_gate.py`, with the reason beside it.
 
 ---
 
@@ -344,62 +405,113 @@ LIVE mode is confirmed, the kill switch is off, and the instrument is
 actually supported — otherwise it's disabled with the exact reason shown, not
 just greyed out.
 
-Clicking it shows a confirmation modal with the real symbol, side, entry,
-stop, target, quantity and risk — the same numbers the recommendation
-already gave you, never re-typed, never editable from the frontend. Only
-after you click **Confirm & Execute** does anything reach Angel One.
+Clicking it shows a confirmation dialog — and what it shows is not the
+recommendation's numbers but the **server's own preview of the order**: the
+real quantity in shares or lots, the prices rounded to the exchange tick, the
+order value, what a stop-out would cost and the estimated charges on top of
+it, the margin it blocks, and the pre-trade check's verdict. If the order would be refused, the dialog says why
+and **Confirm & Execute** is disabled. What you confirm is exactly what is
+sent; the browser contributes nothing but the click.
 
-**Before the order is sent** the pre-trade gate has to pass every check, and
+**How the order is sized.** Not from the lot figure on the trade panel:
+
+```
+budget    = the smaller of   the recommendation's risk amount (Settings → Risk)
+                             LIVE_MAX_RISK_PCT_OF_FUNDS × cash Angel One reports
+quantity  = budget ÷ (entry − stop),  rounded DOWN to a whole broker lot
+```
+
+So a ₹2,00,000 balance in Settings does nothing for you if the account holds
+₹40,000: the order risks 1% of ₹40,000. If the budget cannot buy one lot the
+order is refused — it is never rounded up.
+
+**Before the order is sent** the pre-trade check has to pass every test, and
 any one of them refuses the order with its reason:
 
-- a walk-forward test of this symbol and timeframe, under 30 days old,
-  showed positive expectancy after costs (Backtest tab → **Walk-forward
-  test**). No measured edge, no live order;
-- the market for the instrument is open, and the entry is within
-  `LIVE_PRICE_BAND_PCT` of Angel One's last traded price;
+- LIVE mode, confirmed, Angel One connected, kill switch off, and this
+  recommendation not already executed;
+- the instrument resolves to a real contract with a plausible tick size, and
+  the stop and target are on the right sides of the entry;
+- the order fits the funds: Angel One's own margin figure where it gives
+  one, the full notional where it does not;
+- the market is open, it is not the last 45 minutes of the session, and the
+  entry is within `LIVE_PRICE_BAND_PCT` of the last traded price — with no
+  price at all, no order;
 - order value, quantity, open positions, trades today, and exposure per
-  symbol and per sector are inside the `LIVE_*` limits in `.env`;
-- today's realised loss is under `LIVE_DAILY_LOSS_LIMIT` — reaching it trips
-  the kill switch the moment the losing trade closes;
-- Angel One's own margin figure for the order fits your available funds.
+  symbol and per sector are inside their limits;
+- nothing is already live in this instrument — no position, no working
+  order (one at a time per instrument, §2a);
+- if this order *and every stop already open* were hit, the day would still
+  be inside `LIVE_DAILY_LOSS_LIMIT`, charges included;
+- a walk-forward test of this symbol and timeframe says there is an edge
+  (§7), and this recommendation is the kind of trade that test took — at or
+  above the confidence and reward:risk it traded.
 
-Those limits are read from `.env` at startup and cannot be changed from the
-UI. Changing one means a restart, which also puts you back in PAPER.
+**After the order is sent** Meridian supervises it — every few seconds, and
+again from scratch after a restart:
 
-**After the order is sent** Meridian keeps watching it — every few seconds,
-and again from scratch after a restart:
-
-- It places a **LIMIT entry at the recommended price**, rounded to the
-  exchange tick. If it has not filled in `LIVE_ENTRY_TIMEOUT_SECONDS` (five
-  minutes by default) it is cancelled as stale.
-- On a fill it places a **stop order at Angel One** for the filled quantity
-  (SL-M, or a stop-limit where SL-M is refused), and a target limit order
-  beside it. When one fills the other is cancelled. The result card says
-  **"Stop resting at Angel One"** — or, in red, that it is not.
-- **If the stop cannot be placed the position is closed at market, the kill
+- The entry is a **LIMIT at the recommended price**. Not filled in
+  `LIVE_ENTRY_TIMEOUT_SECONDS` (five minutes), it is cancelled as stale. A
+  partial fill keeps what filled and cancels the rest.
+- On a fill, a **stop order is placed at Angel One** for the filled quantity
+  — SL-M, or a stop-limit where SL-M is refused — and a target limit beside
+  it. When one fills the other is cancelled. The result card says **"Stop
+  resting at Angel One"**, or in red that it is not.
+- **If no stop can be placed, the position is closed at market, the kill
   switch trips, and a critical alert is raised.** A live position is never
   left open without a stop at the broker.
 - As the trade runs, the protection ladder moves that real stop — only ever
-  tighter.
+  tighter (§ *The protection ladder*).
 - If Angel One will not rest a target beside the stop (it may want extra
-  margin), the stop stays and the target is taken by Meridian when price
-  reaches it — which needs Meridian running.
-- If you close the position yourself in Angel One's app, Meridian notices
-  and cancels its own stop so it cannot open a new position later.
-- **UNKNOWN** still means a submission timed out. Meridian now looks for
-  that exact order by its tag and adopts it if it exists; until that is
-  settled a second click is refused.
+  margin for a second exit order), the stop stays and Meridian takes the
+  target itself when price gets there — which needs Meridian running.
+- Twenty minutes before the session ends, whatever is still open is closed.
+  Orders are intraday (MIS): the broker would square them off anyway, later
+  and on its terms.
+- What is held is **counted from the fills** every pass, not assumed: a
+  target that fills for part of the position shrinks the stop to what is
+  left, and if both exits ever fill, the excess is bought straight back.
+- If you close the position yourself in Angel One's app, Meridian sees the
+  order that did it, records the exit, and cancels its own stop so it cannot
+  open a new position later. It will **not** cancel a stop just because the
+  positions screen came back empty — it needs an order that explains it.
+- If you sell **part** of it yourself, the stop and the target are cut down
+  to what Angel One still shows. Left at the full size, the stop would sell
+  shares that are no longer there and leave you short.
+- **No order is ever placed for a position Angel One does not show.** In the
+  first seconds after a fill the positions screen can lag the order book, and
+  the stop does not wait for it. After that, if the broker says nothing is
+  held, Meridian places nothing and changes nothing until the two agree —
+  and says so. (This is also what makes an upgrade safe: a fill recorded by
+  an older version, long since squared off, is closed out in the records
+  rather than given a stop.)
+- A position that cannot be checked at all raises a critical alert rather
+  than a line in a log.
+- **UNKNOWN** still means a submission timed out. Meridian looks for that
+  exact order by the tag it carries and adopts it if it exists; until that
+  is settled a second click is refused.
 
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to have warnings and critical
-alerts sent to your phone. Every order, stop, close, mode change and refused
-order is in the audit log at `/api/audit`.
+Every order, stop, stop move, close, mode change and refused order is in the
+audit log at `/api/audit`.
 
-**None of this has yet been run against a real Angel One account.** It is
-tested against a simulated broker. Make the first live order the smallest
-one the exchange allows, on a liquid stock, and watch Angel One's own app
-while it goes: confirm the stop appears there, at the right price, for the
-right quantity. Orders are intraday (MIS); Angel One squares them off before
-the close.
+**What can still go wrong, plainly:**
+
+- **None of this has been run against a real Angel One account.** It is
+  tested against a simulated broker, thoroughly, and the simulator is not
+  the broker. The order parameters, the status words Angel One uses, whether
+  it echoes the order tag, and how it reports an intraday position are all
+  taken from its documentation, not from watching it. Make the first live
+  order the smallest the exchange allows, on a liquid stock, and watch Angel
+  One's own app while it goes: confirm the stop appears there, at the right
+  price, for the right quantity.
+- **A stop is not a guarantee of price.** Once triggered it is a market
+  order. On a gap it fills where the market is, which can be well past the
+  level — the loss was *sized* at 1R, not capped at it.
+- **Supervision needs the program running.** The stop at the broker protects
+  you if Meridian dies. The ladder, a software-watched target, and the
+  square-off before the close do not happen while it is down — the broker's
+  own square-off is then the backstop. On restart it picks up where the
+  broker says things stand.
 
 ### After the trade
 
@@ -485,22 +597,29 @@ The card also tracks the **peak** and the **worst** point of the trade from
 ticks rather than bar closes. A position that ran to -0.9R before working was
 nearly a loss, and the journal should record that rather than only the outcome.
 
+**On an Angel One live position the ladder moves the real order.** With
+auto-protect on, each rung modifies the stop resting at the broker — the
+trigger price, and for a stop-limit the limit with it. A move is only ever
+tighter and never through the market, and if Angel One refuses the change the
+previous stop simply stays where it was.
+
 ### ⚠ The one thing that can go badly wrong
 
-**Meridian moves its own tracked stop. It cannot move yours.** For Kite and
-CoinDCX there is no broker order connection, deliberately. **For Angel One
-live positions the situation is the same today, but for a different
-reason**: the connection exists, but the backend does not yet place, modify,
-or track a broker-side stop or target order at all — that's real, planned,
-explicitly not-yet-built work (see §2a and the project's own engineering
-notes). An Angel One live position is exactly as unmanaged by Meridian as a
-manually-placed Kite one until that lands.
+**For a position you placed by hand — in Kite, in CoinDCX, or in Angel One's
+own app — Meridian moves its own tracked stop. It cannot move yours.** There
+is no order connection to Kite or CoinDCX, deliberately, and a position
+Meridian did not open is not one it will touch.
 
 When the tracked stop and your broker's stop drift apart, the card turns red
 and says so, because a screen reading **SAFE** while the original stop is still
 resting in the market is more dangerous than no tool at all — you have stopped
 watching a trade that is still fully exposed. Confirm each move with the
 "I've moved it in my broker" button, and only after you actually have.
+
+**A position opened with Execute Live is the exception**: its stop is a real
+order at Angel One, placed and moved by Meridian (§3a). The equivalent
+failure there is narrower — Meridian not running — and the stop already at
+the broker is what covers it.
 
 ### Account limits — the circuit breaker
 
@@ -523,6 +642,14 @@ when a winner breaks the streak.
 Open risk is measured **from your entry, clamped at zero**: a position with its
 stop at breakeven contributes nothing, because it cannot lose. Unrealised
 profit is not capital and is never counted as risk.
+
+**Live orders are different: there the limits are not advice.** The bar above
+is computed from the positions you log and from the demo account, and it can
+only decline to help. Real orders sent through Angel One are checked against
+their own ledger — what is actually open at the broker, what was traded
+today, what today has cost after charges — and an order outside a limit is
+refused before it is sent (§2a has the list). That day begins at midnight
+IST, not UTC.
 
 ---
 
@@ -550,6 +677,13 @@ trade the smaller number, or don't trade it.
 
 That tension is the single most common way retail accounts die: the position
 that "only risks 1%" is one the account cannot actually carry.
+
+**For an Angel One live order, both halves of that are enforced for you.**
+The quantity is recomputed on the server from the risk budget and the
+broker's real lot size, the budget is capped at a share of the cash the
+account actually holds, and the order is checked against the margin Angel One
+says it needs (§3a). The lot figure on the trade panel is still arithmetic on
+the numbers in Settings; the confirmation dialog shows the real one.
 
 ### On risk percentage
 
@@ -583,8 +717,35 @@ costs on the order of ₹50–70 all-in. At ₹2.50 per tick per lot, that is
   month beats sixty marginal ones, and it isn't close.
 
 Meridian shows spread and ATR on the trade panel and flags when the spread is
-large relative to your stop. It does **not** model brokerage — put that in
-yourself before deciding a setup is worth taking.
+large relative to your stop. The trade panel does **not** add brokerage to a
+single recommendation — put that in yourself before deciding a setup is worth
+taking.
+
+**The demo account, the backtest and the live limits do charge it, from one
+model** (`backend/app/costs.py`), so none of them can flatter the others. The
+Angel One confirmation dialog shows the estimated charges beside the loss at
+the stop, and a closed live trade reports its profit or loss both before and
+after them:
+
+| Segment | Per side | Round trip |
+|---|---|---|
+| NSE equity, intraday | 0.053% | **≈ 0.106%** of turnover |
+| Index futures | 0.049% | ≈ 0.097% |
+| Commodity futures | 0.044% | ≈ 0.088% |
+| Currency futures | 0.036% | ≈ 0.072% |
+| Crypto (CoinDCX taker) | 0.050% | ≈ 0.100% |
+
+Plus the spread for each side that crosses it, and slippage on a stop. Those
+figures are brokerage at 0.03% (the flat ₹20 cap is ignored, which overstates
+a large order), STT/CTT, exchange and SEBI charges, stamp duty, and GST on the
+brokerage and exchange charges. They are averages to keep current, not a
+contract note — check them against yours.
+
+Put that against a stop. A ₹2,500 share with a ₹10 stop: the round trip costs
+about ₹2.65 a share, **over a quarter of what the trade risks**, before it has
+moved. That single ratio — cost over stop distance — decides more intraday
+strategies than any indicator, and it is why tight stops on short timeframes
+so rarely survive a backtest that charges honestly.
 
 ---
 
@@ -616,6 +777,79 @@ process when it's inconvenient.
 
 Here is the sequence that finds out without paying for the lesson:
 
+**Stage 0 — Ask the history first. It takes a few minutes.** Backtest tab →
+**Walk-forward test**, on the symbol and timeframe you mean to trade. This is
+not the kind of backtest that tells you what you want to hear:
+
+- It replays the **live engine itself** — the same two functions that
+  produce the call on the trade panel, run once per historical bar — not a
+  faster imitation of it. A test in the repository checks that the replay
+  and the live engine reach the same verdict on the same bar.
+- It trades each signal the way a live order trades: a limit at the signal
+  price that is *missed* if the market does not come back to it, a stop that
+  fills at the open when the market gaps through it, a stop that wins when
+  one bar touches both stop and target, the protection ladder, and — on
+  Indian instruments — a square-off at the end of every session.
+- It charges every cost in §5.
+- It fits its two thresholds (minimum confidence, minimum reward:risk) on
+  one stretch of history and trades them on the **next**, four times over,
+  and reports only the stretches it did not fit on. A stretch is only traded
+  at all if something made money on the one before it.
+- The verdict needs at least 30 of those out-of-sample trades and a 90%
+  interval on expectancy that sits wholly above zero. A positive average on
+  a handful of trades is what luck looks like.
+- **The bar rises with every market you test.** Run it on twenty symbols and
+  one will pass at the 5% level by chance; the gate counts every test from
+  the last 30 days and corrects for them all.
+
+What it cannot replay, and says so in every result: Claude's verdict (the
+deterministic analyst stands in, as it does live whenever Claude is off), your
+own drawings, and the timeframes below the chart's in the multi-timeframe
+read.
+
+**What it said when it was run — 12 October 2026.** Four crypto markets on
+CoinDCX history, 4,000 bars out of sample each (167 days of hourly bars, 42
+days of 15-minute bars), every cost charged. First the engine — the thing
+Execute Live would trade:
+
+| Market | Trades | Won | Expectancy | 90% interval | Verdict |
+|---|---|---|---|---|---|
+| BTCUSD 1h | 112 | 31% | **−0.11R** | −0.31R … +0.10R | No measured edge |
+| ETHUSD 1h | 51 | 39% | **+0.22R** | −0.14R … +0.58R | No measured edge — the interval spans zero |
+| SOLUSD 1h | 86 | 29% | **−0.14R** | −0.36R … +0.10R | No measured edge |
+| BTCUSD 15m | 9 | 11% | −0.64R | — | Too few trades to say anything |
+
+Then two things to read that against:
+
+- **Entries chosen at random**, same bars, same exits, same costs, about 800
+  trades a market: −0.16R, −0.10R, −0.18R and −0.27R. That is roughly what
+  the costs alone come to — and on Bitcoin and Solana the engine's result is
+  not distinguishable from it.
+- **The five named plays** (Plays tab), walk-forward on the same four
+  markets: twenty tests, none passed. The best was +0.09R on 65 trades, with
+  an interval from −0.36R to +0.59R.
+
+Twenty-four tests, no measured edge in any. One positive average out of
+four, on 51 trades, with an interval that reaches well below zero, is what
+luck looks like — and it is exactly the result the multiple-test correction
+exists to stop you trading.
+
+Read it for what it is. It is six months of four crypto pairs with the
+deterministic analyst — not Indian equities or F&O, which need a broker
+connection for their history and were not tested, and not Claude's verdicts.
+It does not say nothing here can work. It says **nothing here has been shown
+to**, and that on these markets the signals as they stand do not beat their
+own costs. The live gate was built to refuse on that answer, and it does.
+
+Run it yourself before believing either this table or a better one: Backtest
+tab → **Walk-forward test**. The first pass over a market takes three or four
+minutes, because it really does run the engine once per bar.
+
+If the verdict is "no measured edge", stop here. That is the cheapest this
+lesson will ever be, and changing the instrument or the timeframe and testing
+again is free — as long as you remember that every extra test raises the bar.
+Execute Live is refused without a passing test; that is deliberate.
+
 **Stage 1 — Paper trade, 4 to 6 weeks.** No real money. Take every signal the
 process says to take, log every one, mark every outcome. You need **40+ trades**
 before the numbers mean anything; below that you are reading noise. The point
@@ -629,7 +863,9 @@ run stage 1 again.
 
 **Stage 3 — Minimum size, 2 to 3 months.** One lot. The goal is not profit; it
 is finding out what changes when the money is real. It always changes
-something.
+something. If the demo account has taken ten or more trades on that market and
+lost, the gate refuses the live order whatever the backtest said: when the two
+disagree, the backtest is the one that is wrong.
 
 **Stage 4 — Scale slowly.** Increase risk % only after a profitable quarter at
 the current size, and only in small steps. Cut size immediately during a
@@ -651,22 +887,29 @@ Stated plainly so there's no confusion:
 
 - It **cannot place, modify, or cancel an order on Kite or CoinDCX.** No
   broker order API is wired to either, deliberately.
-- **On Angel One it can place an entry order, but only that, and only when
-  you've explicitly armed LIVE mode and confirmed the exact order shown.**
-  It cannot modify or cancel that order once submitted, cannot place a
-  stop-loss or target order alongside it, and cannot manage the position
-  after entry — see §2a/§3a. Nothing here happens without you clicking
-  Confirm & Execute on a screen showing the real numbers.
+- **On Angel One it trades only what you confirm, one order at a time, and
+  one position per instrument.** It places the entry you approved and then
+  manages that position — stop, target, ladder, square-off, flatten — but it
+  never opens a position on its own: there is no live auto-trader, and the
+  demo account's auto-trading never touches the broker. It trades **intraday only** and cannot carry a
+  position overnight; it cannot trade options, currency or commodity
+  futures (both blocked until a number each depends on is verified, §2a) or
+  crypto; and none of it has been run against a real account yet (§3a).
 - It **cannot predict price.** It weighs evidence and reports a probability,
   and it is capped at 72% because nothing on a liquid market reliably wins more
   often than that.
 - It **has no news, no fundamentals, no order book, no positioning data.** It
   sees candles and what you drew.
-- Its **backtest is not a forecast.** It replays one deterministic strategy over
-  the history a data provider gives you, with pessimistic fill assumptions.
-  Past results are the weakest kind of evidence about the future.
-- It **does not know your margin, your open positions, or your account.** The
-  suggested lot size is arithmetic on the numbers you typed into Settings.
+- Its **backtest is not a forecast.** It replays the live engine over the
+  history a data provider gives you — a few thousand bars at most — with
+  pessimistic fills and real costs. A passing walk-forward says the edge was
+  there, recently, after costs; it does not say it will be there tomorrow,
+  which is why the evidence expires after 30 days.
+- It **cannot make a losing strategy win.** Stops, limits and a kill switch
+  bound what a bad idea can cost. They do not turn it into a good one.
+- **Outside an Angel One live order, it does not know your margin, your open
+  positions, or your account.** The lot size on the trade panel is arithmetic
+  on the numbers you typed into Settings.
 
 ---
 

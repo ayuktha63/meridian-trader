@@ -52,6 +52,14 @@ def per_side_rate(instrument: Instrument) -> float:
     return (INDIA_BROKERAGE_RATE + exchange + sebi) * (1.0 + GST) + transaction_tax + stamp
 
 
+def charges(instrument: Instrument, entry_value: float, exit_value: float) -> float:
+    """Brokerage and statutory charges on a round trip of this size, in the
+    account's currency. No spread and no slippage — a real fill already has
+    both in its price. This is what the live limits subtract from a gross
+    profit or loss; Angel One's order book reports fills, not charges."""
+    return (abs(entry_value) + abs(exit_value)) * per_side_rate(instrument)
+
+
 def round_trip_cost(instrument: Instrument, entry: float, exit_price: float,
                     stopped: bool = False, entry_passive: bool = False,
                     exit_passive: bool = False) -> float:

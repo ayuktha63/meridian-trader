@@ -174,6 +174,20 @@ def test_untrusted_cds_tick_conversion_blocks_execution(client, fake, monkeypatc
     assert "tick" in body["error_message"].lower()
 
 
+def test_commodity_orders_wait_until_their_quantity_unit_is_verified(client, fake, monkeypatch):
+    """Sized here in contract units: one lot of crude is 100. If Angel One
+    reads a commodity quantity as lots, that order is a hundred lots."""
+    _instrument(monkeypatch, AngelInstrumentMatch(
+        symbol="MCXCRUDE", exchange="MCX", trading_symbol="CRUDEOIL26OCTFUT",
+        token="430106", lot_size=100, tick_size=1.0, instrument_type="FUTCOM"))
+    body = execute(client, _run(_seed_recommendation(
+        symbol="MCXCRUDE", entry=6000.0, stop=5980.0, target=6060.0,
+        shares=100))).json()
+    assert body["status"] == "REJECTED"
+    assert "lots" in body["error_message"]
+    assert fake.placed == []
+
+
 def test_an_implausible_tick_size_is_rejected_on_any_exchange(client, fake, monkeypatch):
     _instrument(monkeypatch, AngelInstrumentMatch(
         symbol="RELIANCE", exchange="NSE", trading_symbol="RELIANCE-EQ",
@@ -276,8 +290,9 @@ def test_prices_round_to_the_tick_the_way_that_cannot_add_risk(client, fake, mon
         2500.0, 2480.0, 2560.0)
     assert fake.placed[0]["price"] == "2500.00"
 
-    sell = execute(client, _run(_seed_recommendation(
-        decision="SELL", entry=2499.96, stop=2520.04, target=2439.96))).json()
+    sell = execute(client, _run(_seed_recommendation(      # another instrument:
+        decision="SELL", symbol="TCS", entry=2499.96,      # one at a time in each
+        stop=2520.04, target=2439.96))).json()
     assert (sell["requested_price"], sell["stop_price"], sell["target_price"]) == (
         2500.0, 2520.0, 2440.0)
 
@@ -293,6 +308,7 @@ def test_preview_shows_the_exact_order_and_places_nothing(client, fake):
     assert (body["quantity"], body["entry_price"], body["stop_price"]) == (100, 250.0, 248.0)
     assert (body["order_value"], body["risk"], body["margin_required"]) == (
         25_000.0, 200.0, 5_000.0)
+    assert body["charges"] == pytest.approx(26.41, abs=0.01), "and what the round trip costs"
     assert body["trading_symbol"] == "RELIANCE-EQ"
     assert fake.placed == []
     assert client.get(f"/api/trades/{rec_id}/execution").status_code == 404, "nothing recorded"
