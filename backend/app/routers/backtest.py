@@ -59,7 +59,8 @@ async def run_walk_forward(
         strategy=WALK_FORWARD_PREFIX + result.strategy, bars=result.bars_tested,
         metrics=result.metrics.model_dump(),
         payload={"request": payload.model_dump(), "notes": result.notes,
-                 "edge": result.edge.model_dump(), "folds": result.folds},
+                 "edge": result.edge.model_dump(), "folds": result.folds,
+                 "next_parameters": result.next_parameters},
     ))
     return result
 

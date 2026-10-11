@@ -66,11 +66,23 @@ class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str = "1h"
     bars: int = 1500
-    strategy: str = "confluence"       # confluence | structure | trend_pullback | mean_reversion | breakout
+    #: "engine" is the live verdict — what the trade panel shows and Execute
+    #: Live sends. The others are the named strategies from the Plays tab
+    #: (trend_continuation, mean_reversion, breakout, smart_money, momentum),
+    #: and "random" is the coin-flip control.
+    strategy: str = "engine"
+    #: Take only setups at or above this confidence (engine) or conviction
+    #: (a named strategy)…
     min_confidence: float = 55.0
+    #: …and with at least this reward:risk in their own plan. The stop and
+    #: target are the strategy's, not derived from this number.
     risk_reward: float = 2.0
+    #: Stop distance in ATRs — the random control only.
     atr_stop_mult: float = 1.5
-    use_ai: bool = False               # replaying with Claude is slow/expensive
+    #: Ratchet the stop up the protection ladder, as live does when
+    #: auto-protect is on.
+    use_ladder: bool = True
+    use_ai: bool = False               # accepted and ignored: replay never calls Claude
     starting_balance: float = 10000.0
     risk_pct: float = 1.0
     #: Charge spread, brokerage, statutory charges and stop slippage. Off only
@@ -98,6 +110,8 @@ class BacktestTrade(BaseModel):
     reason: str = ""
     #: What the round trip cost, in R. `r_multiple` is already net of it.
     cost_r: float = 0.0
+    #: stop | target | eod (intraday square-off) | timeout
+    exit_reason: str = ""
 
 
 class EdgeVerdict(BaseModel):
@@ -110,6 +124,9 @@ class EdgeVerdict(BaseModel):
     #: 90% bootstrap interval on per-trade expectancy, in R.
     ci_low: float = 0.0
     ci_high: float = 0.0
+    #: Share of bootstrap resamples with no edge. What the live gate corrects
+    #: for the number of markets tested.
+    p_value: float = 1.0
     method: str = "holdout"       # holdout | walk_forward
 
 
@@ -150,5 +167,8 @@ class BacktestResult(BaseModel):
     in_sample: Optional[BacktestMetrics] = None
     out_of_sample: Optional[BacktestMetrics] = None
     edge: EdgeVerdict = Field(default_factory=EdgeVerdict)
-    #: Walk-forward only: the parameters chosen for each fold.
+    #: Walk-forward only: the parameters chosen for each fold…
     folds: List[Dict[str, float]] = Field(default_factory=list)
+    #: …and the ones fitted on the most recent stretch, to trade next. A live
+    #: order must clear these to be the kind of trade the test measured.
+    next_parameters: Dict[str, float] = Field(default_factory=dict)

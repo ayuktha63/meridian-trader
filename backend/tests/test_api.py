@@ -170,12 +170,15 @@ def test_journal_roundtrip_and_stats(client):
 
 def test_backtest_endpoint(client):
     body = client.post("/api/backtest/run", json={
-        "symbol": "EURUSD", "timeframe": "1h", "bars": 900,
+        "symbol": "EURUSD", "timeframe": "1h", "bars": 120,
         "min_confidence": 55, "risk_reward": 2.0,
     }).json()
-    assert body["bars_tested"] > 0
+    assert body["strategy"] == "engine"
+    assert body["bars_tested"] == 120
     assert body["metrics"]["trades"] >= 0
     assert body["notes"]
+    assert body["edge"]["method"] == "holdout"
+    assert body["edge"]["passed"] in (True, False)
 
 
 def test_websocket_subscribe_and_stream(client):

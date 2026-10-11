@@ -5,6 +5,14 @@ complete `AnalysisResult`: indicators, structure, patterns, drawing analytics,
 multi-timeframe fusion, a confidence breakdown, an AI verdict, a sized trade
 plan, and the overlays to render it all.
 
+It is built in two layers so the same code can be tested on history. The
+decision itself is two pure functions — `evaluate` (what the price history
+says) and `conclude` (the verdict, fused confidence and plan) — that take
+DataFrames and return values, touching no feed, store, clock or network.
+`run` is those two plus the I/O around them. The backtest calls the same two
+functions bar by bar (`backtest/replay.py`), so a backtest result is evidence
+about the engine that trades, not about a second implementation of it.
+
 The confidence model is computed twice on purpose. The first pass excludes the
 AI component and is what Claude receives — so the analyst sees the raw
 quantitative picture rather than being handed a conclusion to agree with. The
@@ -17,6 +25,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -24,10 +33,12 @@ import pandas as pd
 from .. import runtime_settings
 from ..data.feed import feed
 from ..data.store import store
-from ..instruments import MTF_LADDER, get_instrument, get_timeframe
+from ..instruments import MTF_LADDER, Instrument, get_instrument, get_timeframe
 from ..schemas.analysis import (
-    AnalysisResult, Decision, IndicatorSnapshot, MarketStructure,
+    AIVerdict, AnalysisResult, ConfidenceBreakdown, Decision, IndicatorSnapshot,
+    MarketStructure, MTFReport, TradePlan,
 )
+from ..schemas.strategies import StrategyReport
 from ..schemas.drawings import Drawing
 from ..schemas.positions import Position
 from ..overlays.builder import build_overlays, build_scenario_overlays
@@ -43,6 +54,178 @@ log = logging.getLogger("meridian.engine")
 
 MIN_BARS = 60
 ANALYSIS_BARS = 600
+
+
+@dataclass
+class Evaluation:
+    """Everything the deterministic engine derives from price history —
+    before any analyst, human or model, has an opinion."""
+    snap: IndicatorSnapshot
+    atr: float
+    structure: MarketStructure
+    patterns: list
+    candles: list
+    mtf: MTFReport
+    drawings: list
+    strategies: Optional[StrategyReport]
+    pre_ai: ConfidenceBreakdown
+    provisional_decision: Decision
+    provisional_plan: TradePlan
+    #: Echoed so `conclude` rebuilds a plan with the same inputs.
+    balance: Optional[float] = None
+    risk_pct: Optional[float] = None
+
+
+@dataclass
+class Conclusion:
+    verdict: AIVerdict
+    confidence: ConfidenceBreakdown
+    plan: TradePlan
+    warnings: List[str] = field(default_factory=list)
+
+
+def evaluate(df: pd.DataFrame, frames: Dict[str, pd.DataFrame], instrument: Instrument,
+             timeframe: str, price: float, *, daily: Optional[pd.DataFrame] = None,
+             drawings: Optional[List[Drawing]] = None,
+             spread_pips: Optional[float] = None, balance: Optional[float] = None,
+             risk_pct: Optional[float] = None,
+             with_strategies: bool = True) -> Evaluation:
+    """The engine's read of a market, as a pure function of its inputs.
+
+    No feed, no store, no clock, no network: the same frames give the same
+    answer. That is what lets the backtest replay *this* function bar by bar
+    instead of an approximation of it — `run` below is this plus I/O.
+    """
+    drawings = drawings or []
+    computed = indicators.compute_all(df)
+    snap, computed = indicators.snapshot(df, instrument, computed, daily)
+    atr = snap.atr or float((df["high"] - df["low"]).tail(30).mean()) or 1e-6
+
+    market_structure = structure_engine.analyse(df, instrument, atr)
+    chart_patterns = patterns.detect(df, market_structure.swings, atr)
+    candle_patterns = candlesticks.detect(df)
+    mtf_report = mtf.build_report(frames)
+
+    # The trader's own work.
+    relevant = [d for d in drawings
+                if d.symbol.upper() == instrument.symbol and d.visible]
+    drawing_analytics = drawing_engine.analyse_many(relevant, df, instrument, atr)
+
+    # Named strategies, evaluated side by side. These run independently of
+    # the fused verdict: a market can be hostile to breakouts and generous to
+    # mean reversion at the same moment, and one blended score hides exactly
+    # that.
+    report = (strategies.evaluate(
+        df, price, snap, market_structure, mtf_report, chart_patterns,
+        candle_patterns, instrument, atr, timeframe) if with_strategies else None)
+
+    # Quantitative fusion (pre-AI), and what the engine alone would do.
+    pre_ai = confidence.compute(
+        snap, market_structure, mtf_report, chart_patterns, candle_patterns,
+        price, drawing_analytics, verdict=None, atr=atr)
+    provisional_decision = confidence.decide(pre_ai, mtf_report)
+    provisional_plan = plan_builder.build(
+        provisional_decision, price, snap, market_structure, instrument,
+        drawing_analytics, spread_pips, balance, risk_pct)
+
+    return Evaluation(
+        snap=snap, atr=atr, structure=market_structure, patterns=chart_patterns,
+        candles=candle_patterns, mtf=mtf_report, drawings=drawing_analytics,
+        strategies=report, pre_ai=pre_ai,
+        provisional_decision=provisional_decision,
+        provisional_plan=provisional_plan, balance=balance, risk_pct=risk_pct)
+
+
+def conclude(ev: Evaluation, instrument: Instrument, price: float, *,
+             verdict: Optional[AIVerdict] = None,
+             spread_pips: Optional[float] = None,
+             fallback_reason: Optional[str] = None) -> Conclusion:
+    """Turn an evaluation into the verdict, confidence and plan that are
+    shown, auto-traded and executed. With no `verdict` from Claude the
+    deterministic analyst supplies one — which is always the case in replay.
+    """
+    warnings: List[str] = []
+    snap, atr = ev.snap, ev.atr
+
+    if verdict is None:
+        verdict = rule_analyst.build(
+            ev.provisional_decision, ev.pre_ai, ev.provisional_plan, snap,
+            ev.structure, ev.mtf, ev.patterns, ev.candles, ev.drawings,
+            instrument, fallback_reason,
+        )
+
+    # Final fusion including the AI component.
+    fused = confidence.compute(
+        snap, ev.structure, ev.mtf, ev.patterns, ev.candles, price,
+        ev.drawings, verdict=verdict, atr=atr,
+    )
+
+    # The engine holds a veto: a directional call is only released when the
+    # fused, agreement-weighted evidence also supports it.
+    engine_decision = confidence.decide(fused, ev.mtf)
+    if verdict.decision != Decision.WAIT and engine_decision == Decision.WAIT:
+        warnings.append(
+            "Analyst proposed {} but fused evidence does not clear the threshold "
+            "({}) — downgraded to WAIT".format(verdict.decision.value, fused.reason))
+        verdict.decision = Decision.WAIT
+        verdict.uncertainty = (
+            "Quantitative fusion vetoed this call: {}. ".format(fused.reason)
+            + (verdict.uncertainty or "")
+        ).strip()
+    elif (verdict.decision != Decision.WAIT and engine_decision != Decision.WAIT
+          and verdict.decision != engine_decision):
+        warnings.append(
+            "Analyst and engine disagree on direction — holding at WAIT")
+        verdict.decision = Decision.WAIT
+
+    # Final plan.
+    if verdict.decision == ev.provisional_decision and verdict.decision != Decision.WAIT:
+        final_plan = ev.provisional_plan
+    else:
+        final_plan = plan_builder.build(
+            verdict.decision, price, snap, ev.structure, instrument,
+            ev.drawings, spread_pips, ev.balance, ev.risk_pct,
+        )
+
+    # Prefer the analyst's own levels when they are sane, since they carry the
+    # reasoning; fall back to the structural plan otherwise.
+    if verdict.decision != Decision.WAIT and verdict.entry and verdict.stop_loss:
+        risk = abs(verdict.entry - verdict.stop_loss)
+        sane = 0.4 * atr <= risk <= 5.0 * atr
+        correct_side = (
+            (verdict.decision == Decision.BUY and verdict.stop_loss < verdict.entry)
+            or (verdict.decision == Decision.SELL and verdict.stop_loss > verdict.entry)
+        )
+        if sane and correct_side:
+            final_plan.entry = verdict.entry
+            final_plan.stop_loss = verdict.stop_loss
+            if verdict.take_profit is not None:
+                final_plan.take_profit = verdict.take_profit
+            final_plan.take_profit_2 = verdict.take_profit_2 or final_plan.take_profit_2
+            final_plan.risk_pips = round(instrument.to_pips(risk), 1)
+            if final_plan.take_profit is not None:
+                reward = abs(final_plan.take_profit - final_plan.entry)
+                final_plan.reward_pips = round(instrument.to_pips(reward), 1)
+                final_plan.risk_reward = round(reward / risk, 2) if risk else None
+                final_plan.expected_move_pips = final_plan.reward_pips
+            if final_plan.risk_amount and final_plan.risk_pips:
+                pip_value = instrument.pip_value_per_lot
+                if pip_value > 0:
+                    final_plan.suggested_lots = round(
+                        max(0.01, final_plan.risk_amount /
+                            (final_plan.risk_pips * pip_value)), 2)
+            final_plan.position_notes.append("Levels taken from the analyst's plan")
+        else:
+            warnings.append(
+                "Analyst levels rejected as implausible — using structural plan")
+
+    verdict.entry = final_plan.entry
+    verdict.stop_loss = final_plan.stop_loss
+    verdict.take_profit = final_plan.take_profit
+    verdict.take_profit_2 = final_plan.take_profit_2
+    verdict.risk_reward = final_plan.risk_reward
+    return Conclusion(verdict=verdict, confidence=fused, plan=final_plan,
+                      warnings=warnings)
 
 
 async def _frames_for_mtf(symbol: str) -> Dict[str, pd.DataFrame]:
@@ -99,63 +282,33 @@ async def run(symbol: str, timeframe: str,
     result.price = round(price, instrument.digits)
     result.bar_time = int(df["time"].iloc[-1])
 
-    # ── indicators ───────────────────────────────────────────
+    # ── everything the price history says, before any analyst ─
     daily = store.frame(symbol, "1d", 60)
-    computed = indicators.compute_all(df)
-    snap, computed = indicators.snapshot(
-        df, instrument, computed, daily if len(daily) >= 2 else None)
-    result.indicators = snap
-    atr = snap.atr or float((df["high"] - df["low"]).tail(30).mean()) or 1e-6
-
-    # ── structure, patterns ──────────────────────────────────
-    market_structure = structure_engine.analyse(df, instrument, atr)
-    result.structure = market_structure
-
-    result.patterns = patterns.detect(df, market_structure.swings, atr)
-    result.candlestick_patterns = candlesticks.detect(df)
-
-    # ── multi-timeframe ──────────────────────────────────────
     frames = await _frames_for_mtf(symbol)
     frames.setdefault(timeframe, df)
-    result.mtf = mtf.build_report(frames)
-
-    # ── the trader's own work ────────────────────────────────
-    relevant = [d for d in drawings
-                if d.symbol.upper() == symbol and d.visible]
-    result.drawings = drawing_engine.analyse_many(relevant, df, instrument, atr)
-
-    # ── named strategies, evaluated side by side ─────────────
-    # These run independently of the fused verdict: a market can be hostile to
-    # breakouts and generous to mean reversion at the same moment, and one
-    # blended score hides exactly that.
-    result.strategies = strategies.evaluate(
-        df, price, snap, market_structure, result.mtf, result.patterns,
-        result.candlestick_patterns, instrument, atr, timeframe,
-    )
-
-    # ── quantitative fusion (pre-AI) ─────────────────────────
-    pre_ai = confidence.compute(
-        snap, market_structure, result.mtf, result.patterns,
-        result.candlestick_patterns, price, result.drawings, verdict=None, atr=atr,
-    )
+    spread = quote.spread_pips if quote else None
+    ev = evaluate(df, frames, instrument, timeframe, price,
+                  daily=daily if len(daily) >= 2 else None,
+                  drawings=drawings, spread_pips=spread)
+    snap, atr, market_structure = ev.snap, ev.atr, ev.structure
+    result.indicators = snap
+    result.structure = market_structure
+    result.patterns = ev.patterns
+    result.candlestick_patterns = ev.candles
+    result.mtf = ev.mtf
+    result.drawings = ev.drawings
+    result.strategies = ev.strategies
 
     # ── evidence brief ───────────────────────────────────────
     result.narrative = build_narrative(
         symbol, timeframe, instrument, price, quote, snap, market_structure,
         result.mtf, result.patterns, result.candlestick_patterns,
-        result.drawings, pre_ai, len(df),
+        result.drawings, ev.pre_ai, len(df),
     )
     result.evidence = build_evidence(
         symbol, timeframe, instrument, price, quote, snap, market_structure,
         result.mtf, result.patterns, result.candlestick_patterns,
-        result.drawings, pre_ai,
-    )
-
-    # ── provisional plan (what the engine alone would do) ────
-    provisional_decision = confidence.decide(pre_ai, result.mtf)
-    provisional_plan = plan_builder.build(
-        provisional_decision, price, snap, market_structure, instrument,
-        result.drawings, quote.spread_pips if quote else None,
+        result.drawings, ev.pre_ai,
     )
 
     # ── ask Claude ───────────────────────────────────────────
@@ -168,92 +321,19 @@ async def run(symbol: str, timeframe: str,
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("claude analysis failed: %s", exc)
-
-    if verdict is None:
-        reason = ("Claude disabled or unavailable"
-                  if include_ai else "AI analysis not requested")
-        verdict = rule_analyst.build(
-            provisional_decision, pre_ai, provisional_plan, snap, market_structure,
-            result.mtf, result.patterns, result.candlestick_patterns,
-            result.drawings, instrument, reason,
-        )
-        if include_ai:
+        if verdict is None:
             result.warnings.append(
                 "Claude unavailable — deterministic confluence engine produced this verdict")
 
-    # ── final fusion including the AI component ──────────────
-    result.confidence = confidence.compute(
-        snap, market_structure, result.mtf, result.patterns,
-        result.candlestick_patterns, price, result.drawings, verdict=verdict, atr=atr,
-    )
-
-    # The engine holds a veto: a directional call is only released when the
-    # fused, agreement-weighted evidence also supports it.
-    engine_decision = confidence.decide(result.confidence, result.mtf)
-    if verdict.decision != Decision.WAIT and engine_decision == Decision.WAIT:
-        result.warnings.append(
-            "Analyst proposed {} but fused evidence does not clear the threshold "
-            "({}) — downgraded to WAIT".format(verdict.decision.value,
-                                               result.confidence.reason))
-        verdict.decision = Decision.WAIT
-        verdict.uncertainty = (
-            "Quantitative fusion vetoed this call: {}. ".format(result.confidence.reason)
-            + (verdict.uncertainty or "")
-        ).strip()
-    elif (verdict.decision != Decision.WAIT and engine_decision != Decision.WAIT
-          and verdict.decision != engine_decision):
-        result.warnings.append(
-            "Analyst and engine disagree on direction — holding at WAIT")
-        verdict.decision = Decision.WAIT
-
+    # ── verdict, fused confidence, and the plan that goes with them ──
+    outcome = conclude(
+        ev, instrument, price, verdict=verdict, spread_pips=spread,
+        fallback_reason=("Claude disabled or unavailable"
+                         if include_ai else "AI analysis not requested"))
+    verdict, final_plan = outcome.verdict, outcome.plan
+    result.confidence = outcome.confidence
+    result.warnings.extend(outcome.warnings)
     result.verdict = verdict
-
-    # ── final plan ───────────────────────────────────────────
-    if verdict.decision == provisional_decision and verdict.decision != Decision.WAIT:
-        final_plan = provisional_plan
-    else:
-        final_plan = plan_builder.build(
-            verdict.decision, price, snap, market_structure, instrument,
-            result.drawings, quote.spread_pips if quote else None,
-        )
-
-    # Prefer the analyst's own levels when they are sane, since they carry the
-    # reasoning; fall back to the structural plan otherwise.
-    if verdict.decision != Decision.WAIT and verdict.entry and verdict.stop_loss:
-        risk = abs(verdict.entry - verdict.stop_loss)
-        sane = 0.4 * atr <= risk <= 5.0 * atr
-        correct_side = (
-            (verdict.decision == Decision.BUY and verdict.stop_loss < verdict.entry)
-            or (verdict.decision == Decision.SELL and verdict.stop_loss > verdict.entry)
-        )
-        if sane and correct_side:
-            final_plan.entry = verdict.entry
-            final_plan.stop_loss = verdict.stop_loss
-            if verdict.take_profit is not None:
-                final_plan.take_profit = verdict.take_profit
-            final_plan.take_profit_2 = verdict.take_profit_2 or final_plan.take_profit_2
-            final_plan.risk_pips = round(instrument.to_pips(risk), 1)
-            if final_plan.take_profit is not None:
-                reward = abs(final_plan.take_profit - final_plan.entry)
-                final_plan.reward_pips = round(instrument.to_pips(reward), 1)
-                final_plan.risk_reward = round(reward / risk, 2) if risk else None
-                final_plan.expected_move_pips = final_plan.reward_pips
-            if final_plan.risk_amount and final_plan.risk_pips:
-                pip_value = instrument.pip_value_per_lot
-                if pip_value > 0:
-                    final_plan.suggested_lots = round(
-                        max(0.01, final_plan.risk_amount /
-                            (final_plan.risk_pips * pip_value)), 2)
-            final_plan.position_notes.append("Levels taken from the analyst's plan")
-        else:
-            result.warnings.append(
-                "Analyst levels rejected as implausible — using structural plan")
-
-    verdict.entry = final_plan.entry
-    verdict.stop_loss = final_plan.stop_loss
-    verdict.take_profit = final_plan.take_profit
-    verdict.take_profit_2 = final_plan.take_profit_2
-    verdict.risk_reward = final_plan.risk_reward
     result.plan = final_plan
 
     # ── manage an open position ──────────────────────────────

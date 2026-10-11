@@ -35,7 +35,7 @@ from ..db.models import PaperAccountRow, PaperTradeRow
 from ..instruments import Instrument
 from ..schemas.paper import ExitReason, PaperAccount, PaperStatus, PaperTrade
 
-from ..costs import COMMISSION_RATE, STOP_SLIPPAGE_PIPS  # noqa: E402,F401 - shared with the backtest
+from ..costs import COMMISSION_RATE, STOP_SLIPPAGE_PIPS, per_side_rate  # shared with the backtest
 
 ACCOUNT_ID = "demo"
 
@@ -58,8 +58,12 @@ def fill_price(side: str, entering: bool, bid: float, ask: float,
     return bid if long else ask
 
 
-def commission(notional: float) -> float:
-    return abs(notional) * COMMISSION_RATE
+def commission(notional: float, instrument: Optional[Instrument] = None) -> float:
+    """Charges on one side of a trade. With an instrument, its segment's own
+    brokerage and statutory charges (`app/costs.py`) — the same figure the
+    backtest uses, so the two cannot drift apart."""
+    rate = per_side_rate(instrument) if instrument is not None else COMMISSION_RATE
+    return abs(notional) * rate
 
 
 #: How much notional the account may carry per unit of balance.
@@ -219,7 +223,7 @@ async def open_trade(session: AsyncSession, symbol: str, timeframe: str,
         return None
 
     notional = quantity * entry
-    cost = commission(notional)
+    cost = commission(notional, instrument)
     now = time.time()
 
     row = PaperTradeRow(
@@ -263,7 +267,7 @@ async def close_trade(session: AsyncSession, trade_id: str, bid: float,
         exit_price = (exit_price - slip) if long else (exit_price + slip)
 
     gross = ((exit_price - row.entry) if long else (row.entry - exit_price)) * row.quantity
-    exit_cost = commission(row.quantity * exit_price)
+    exit_cost = commission(row.quantity * exit_price, instrument)
     net = gross - row.entry_cost - exit_cost
 
     risk_unit = abs(row.entry - row.initial_stop) * row.quantity

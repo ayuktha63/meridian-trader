@@ -4,7 +4,6 @@ import pytest
 
 from app.analysis import indicators, plan as plan_builder, structure as structure_engine
 from app.backtest import run_backtest
-from app.data.feed import feed
 from app.schemas.analysis import Decision
 from app.schemas.journal import BacktestRequest
 
@@ -80,45 +79,67 @@ def test_wide_spread_is_flagged(eurusd, uptrend):
 
 @pytest.mark.asyncio
 async def test_backtest_produces_coherent_metrics():
-    await feed.ensure_history("EURUSD", "1h", 1200)
+    # Each bar is a full run of the live engine, so the window is kept small.
     result = await run_backtest(BacktestRequest(
-        symbol="EURUSD", timeframe="1h", bars=1200, min_confidence=50))
+        symbol="EURUSD", timeframe="1h", bars=160, min_confidence=45, risk_reward=1.5))
 
     metrics = result.metrics
-    assert result.bars_tested > 0
+    assert result.strategy == "engine"
+    assert result.bars_tested == 160
     assert metrics.wins + metrics.losses <= metrics.trades
     assert 0.0 <= metrics.win_rate <= 100.0
     assert metrics.max_drawdown >= 0.0
     assert metrics.profit_factor >= 0.0
     assert result.notes
+    assert result.in_sample is not None
+    assert result.out_of_sample is not None
+    assert result.in_sample.trades + result.out_of_sample.trades == metrics.trades
 
     for trade in result.trades:
         assert trade.direction in ("BUY", "SELL")
-        risk = abs(trade.entry - trade.stop_loss)
-        assert risk > 0
+        # Stop and target are the plan's; the entry is where the limit filled,
+        # which a gap can put anywhere at or better than the plan's price.
         if trade.direction == "BUY":
-            assert trade.stop_loss < trade.entry < trade.take_profit
+            assert trade.stop_loss < trade.take_profit
+            assert trade.entry < trade.take_profit
         else:
-            assert trade.take_profit < trade.entry < trade.stop_loss
-        if trade.outcome in ("win", "loss"):
-            assert trade.exit_time is not None and trade.exit_time >= trade.time
-
-
-@pytest.mark.asyncio
-async def test_backtest_exits_never_precede_entries():
-    await feed.ensure_history("GBPUSD", "1h", 900)
-    result = await run_backtest(BacktestRequest(
-        symbol="GBPUSD", timeframe="1h", bars=900, min_confidence=45))
-    for trade in result.trades:
-        if trade.exit_time:
-            assert trade.bars_held >= 0
+            assert trade.take_profit < trade.stop_loss
+            assert trade.take_profit < trade.entry
+        if trade.outcome != "open":
+            assert trade.exit_reason in ("stop", "target", "eod", "timeout")
+            assert trade.exit_time is not None
             # A fill at the bar's open can be stopped within that same bar.
             assert trade.exit_time >= trade.time
+            assert trade.bars_held >= 0
+            assert trade.cost_r > 0
 
 
 @pytest.mark.asyncio
-async def test_backtest_rejects_insufficient_history():
-    result = await run_backtest(BacktestRequest(
-        symbol="EURUSD", timeframe="1w", bars=60))
+async def test_a_second_strategy_on_the_same_market_reuses_the_replay():
+    """One pass of the engine yields its own verdict and every named
+    strategy; running another of them must not pay for the pass again."""
+    import time
+
+    request = BacktestRequest(symbol="EURUSD", timeframe="1h", bars=160,
+                              min_confidence=45, risk_reward=1.0)
+    await run_backtest(request)
+    started = time.perf_counter()
+    for strategy in ("trend_continuation", "mean_reversion", "breakout",
+                     "smart_money", "momentum"):
+        result = await run_backtest(request.model_copy(update={"strategy": strategy}))
+        assert result.strategy == strategy
+        assert result.bars_tested == 160
+    assert time.perf_counter() - started < 3.0
+
+
+@pytest.mark.asyncio
+async def test_backtest_rejects_insufficient_history(monkeypatch):
+    from app.backtest import engine as backtest_engine
+    from conftest import trending_df
+
+    async def short(request):
+        return trending_df(n=120)
+    monkeypatch.setattr(backtest_engine, "_frame", short)
+    result = await run_backtest(BacktestRequest(symbol="EURUSD", timeframe="1w"))
     assert result.metrics.trades == 0
     assert any("history" in note.lower() for note in result.notes)
