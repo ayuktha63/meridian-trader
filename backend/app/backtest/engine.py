@@ -91,6 +91,8 @@ class Prepared:
     signals: Dict[int, BarSignal]
     tf_seconds: int
     intraday: bool
+    #: Whether the venue this is charged as lets a position be opened short.
+    shorting: bool = True
 
     @property
     def n(self) -> int:
@@ -98,7 +100,8 @@ class Prepared:
 
 
 def prepare(df: pd.DataFrame, instrument: Instrument, timeframe: str,
-            signals: Optional[Dict[int, BarSignal]] = None) -> Prepared:
+            signals: Optional[Dict[int, BarSignal]] = None,
+            cost_profile: Optional[str] = None) -> Prepared:
     tf_seconds = get_timeframe(timeframe).seconds
     times = df["time"].to_numpy(dtype=float)
     n = len(times)
@@ -131,7 +134,7 @@ def prepare(df: pd.DataFrame, instrument: Instrument, timeframe: str,
         range20=(df["high"] - df["low"]).rolling(20, min_periods=5).mean().to_numpy(),
         atr14=ind.atr(df, 14).to_numpy(), session_last=session_last,
         entry_ok=entry_ok, signals=signals or {}, tf_seconds=tf_seconds,
-        intraday=intraday)
+        intraday=intraday, shorting=costs.can_short(instrument, cost_profile))
 
 
 # ── which trade, if any ───────────────────────────────────────
@@ -142,7 +145,7 @@ def _setup_for(request: BacktestRequest, prep: Prepared, i: int,
         atr = prep.atr14[i]
         if rng.random() > 0.08 or np.isnan(atr) or atr <= 0:
             return None
-        long = rng.random() < 0.5
+        long = rng.random() < 0.5 or not prep.shorting
         entry = float(prep.close[i])
         distance = float(atr * request.atr_stop_mult)
         sign = 1.0 if long else -1.0
@@ -157,6 +160,8 @@ def _setup_for(request: BacktestRequest, prep: Prepared, i: int,
         return None
     if setup.risk_reward + 1e-9 < request.risk_reward:
         return None
+    if setup.direction == "SELL" and not prep.shorting:
+        return None                         # a spot book: nothing to sell short
     return setup
 
 
@@ -180,24 +185,29 @@ class _Open:
 
 def _limit_fill(setup: Setup, bar_open: float, bar_high: float,
                 bar_low: float) -> Optional[float]:
+    # A resting order is filled when the market trades *through* its price.
+    # A bar that only touches it says the price was reached, not that an
+    # order waiting in the queue there was.
     if setup.direction == "BUY":
         if bar_open <= setup.entry:
             return bar_open                 # gapped through: better than asked
-        return setup.entry if bar_low <= setup.entry else None
+        return setup.entry if bar_low < setup.entry else None
     if bar_open >= setup.entry:
         return bar_open
-    return setup.entry if bar_high >= setup.entry else None
+    return setup.entry if bar_high > setup.entry else None
 
 
 def _exit(position: _Open, prep: Prepared, i: int,
           filled_inside: bool) -> Optional[Tuple[float, str]]:
     bar_open, high, low = prep.open[i], prep.high[i], prep.low[i]
+    # The stop triggers on a touch; the target, a resting limit, needs the
+    # market to trade through it (as an entry does).
     if position.long:
         stop_hit, gapped = low <= position.stop, bar_open <= position.stop
-        target_hit = high >= position.target
+        target_hit = high > position.target
     else:
         stop_hit, gapped = high >= position.stop, bar_open >= position.stop
-        target_hit = low <= position.target
+        target_hit = low < position.target
     if stop_hit:                            # pessimistic ordering — stop wins ties
         # Held at the open and the open is already past the stop: it fills
         # where the market is, not where the stop was.
@@ -267,7 +277,9 @@ def _settle(position: _Open, prep: Prepared, i: int, exit_price: float, kind: st
         # square-off and a time-out all cross the spread.
         cost = costs.round_trip_cost(
             instrument, position.entry, exit_price, stopped=kind == "stop",
-            entry_passive=True, exit_passive=kind == "target")
+            entry_passive=True, exit_passive=kind == "target",
+            profile=request.cost_profile,
+            seconds_held=float(prep.time[i] - prep.time[position.index]))
     risk = position.planned_risk
     r_multiple = (move - cost) / risk if risk > 0 else 0.0
     trade = position.trade
@@ -441,7 +453,7 @@ async def _prepare(request: BacktestRequest, df: pd.DataFrame) -> Prepared:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
     instrument = get_instrument(symbol)
     if request.strategy == RANDOM:
-        return prepare(df, instrument, timeframe)
+        return prepare(df, instrument, timeframe, cost_profile=request.cost_profile)
     higher = await _higher_frames(request)
     start = _first_tested(len(df), request.bars)
     # A pass over a few thousand bars is tens of seconds of pandas. Off the
@@ -450,7 +462,7 @@ async def _prepare(request: BacktestRequest, df: pd.DataFrame) -> Prepared:
         replay.signals, symbol, timeframe, df, higher, instrument,
         range(start, len(df)), balance=request.starting_balance,
         risk_pct=request.risk_pct)
-    return prepare(df, instrument, timeframe, signals)
+    return prepare(df, instrument, timeframe, signals, request.cost_profile)
 
 
 def _empty(request: BacktestRequest) -> BacktestResult:
@@ -467,6 +479,18 @@ def _unknown_strategy(request: BacktestRequest, result: BacktestResult) -> bool:
         request.strategy, ", ".join(STRATEGIES)))
     result.edge = EdgeVerdict(reason="Unknown strategy.")
     return True
+
+
+def _venue_notes(request: BacktestRequest, instrument: Instrument) -> List[str]:
+    """What this run was charged as, and what that venue does not allow."""
+    assumed = costs.describe(instrument, request.cost_profile)
+    notes = ["Charged as {}: {:.3f}% a side taken, {:.3f}% resting ({}).".format(
+        assumed["profile"], 100 * assumed["taker_per_side"],
+        100 * assumed["maker_per_side"], assumed["source"])]
+    if not costs.can_short(instrument, request.cost_profile):
+        notes.append("Long only: this is a spot book, and a short cannot be opened "
+                     "on one. SELL signals were not traded.")
+    return notes
 
 
 def _replay_notes(request: BacktestRequest) -> List[str]:
@@ -527,6 +551,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         "both stop and target the stop is assumed to fill first.".format(
             result.bars_tested, time.perf_counter() - started))
     result.notes += _replay_notes(request)
+    result.notes += _venue_notes(request, instrument)
     if prep.intraday:
         result.notes.append(
             "Traded intraday, as live orders are: open positions are squared off at "
@@ -662,5 +687,6 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         "here is out-of-sample and net of costs.".format(
             folds, time.perf_counter() - started, len(WF_GRID)))
     result.notes += _replay_notes(request)
+    result.notes += _venue_notes(request, instrument)
     _not_evidence(result)
     return result

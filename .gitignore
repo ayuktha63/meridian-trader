@@ -20,3 +20,5 @@ coverage/
 node_modules_stamp
 backend/data/settings.json
 backend/data/kite_instruments.json
+# research snapshots and run artifacts: reproducible from the records, large
+backend/data/research/

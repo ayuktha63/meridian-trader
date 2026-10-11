@@ -126,6 +126,8 @@ class FakeCoinDCX:
         self.newest = 1_790_000_000_000 - 1_790_000_000_000 % self.step_ms
         self.oldest = self.newest - (listed - 1) * self.step_ms
         self.calls = []
+        #: Bar times the venue simply does not have — an outage.
+        self.missing = set()
 
     async def get(self, url, params=None):
         self.calls.append(dict(params))
@@ -135,7 +137,8 @@ class FakeCoinDCX:
         if "startTime" in params and "endTime" in params:
             end = params["endTime"] - params["endTime"] % self.step_ms
         times = [end - i * self.step_ms for i in range(limit)]
-        times = [t for t in times if t >= max(self.oldest, params.get("startTime", 0))]
+        times = [t for t in times if t >= max(self.oldest, params.get("startTime", 0))
+                 and t not in self.missing]
         body = [{"time": t, "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 3}
                 for t in times]                     # newest first, like the API
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
@@ -166,7 +169,27 @@ def test_coindcx_history_stops_at_the_start_of_the_listing(monkeypatch):
     provider, api = _coindcx(monkeypatch, listed=1300)
     rows = run(provider.history("BTCUSD", "1h", 5000))
     assert len(rows) == 1300
-    assert len(api.calls) == 2
+    assert len(api.calls) == 4, "two pages of bars, then two empty windows"
+
+
+def test_coindcx_history_walks_past_a_hole_in_the_venues_own_data(monkeypatch):
+    """An outage leaves a window with fewer than a full page. That used to be
+    read as the start of the listing, and a market with eight years of
+    history came back with two."""
+    provider, api = _coindcx(monkeypatch, listed=50_000)
+    hole = [api.newest - i * api.step_ms for i in range(1500, 1530)]
+    api.missing = set(hole)
+    rows = run(provider.deep_history("BTCUSD", "1h", 4000))
+    times = [r[0] * 1000 for r in rows]
+    assert len(rows) == 4000
+    assert times[0] < min(hole), "it kept going on the far side"
+    assert not set(times) & api.missing
+
+
+def test_coindcx_chart_history_is_capped_but_research_history_is_not(monkeypatch):
+    provider, _ = _coindcx(monkeypatch, listed=50_000)
+    assert len(run(provider.history("BTCUSD", "1h", 20_000))) == coindcx_module.MAX_HISTORY
+    assert len(run(provider.deep_history("BTCUSD", "1h", 20_000))) == 20_000
 
 
 def test_coindcx_derived_timeframes_get_the_depth_they_need(monkeypatch):

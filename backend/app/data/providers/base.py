@@ -66,5 +66,11 @@ class MarketDataProvider(abc.ABC):
     async def stream(self, symbols: Sequence[str], handler: TickHandler) -> None:
         ...
 
+    async def deep_history(self, symbol: str, timeframe: str, bars: int) -> List[List[float]]:
+        """History for a research snapshot: as far back as the venue goes, up
+        to `bars`. `history` is capped at what a chart or a quick backtest
+        needs; a provider that can page further overrides this."""
+        return await self.history(symbol, timeframe, bars)
+
     async def close(self) -> None:
         return None

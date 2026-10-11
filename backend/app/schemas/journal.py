@@ -88,6 +88,8 @@ class BacktestRequest(BaseModel):
     #: Charge spread, brokerage, statutory charges and stop slippage. Off only
     #: to see how much of a result the costs were.
     include_costs: bool = True
+    #: Which venue's charges (`costs.PROFILES`). None is the instrument's own.
+    cost_profile: Optional[str] = None
     #: Share of the bars, at the end, held out as the out-of-sample segment.
     oos_fraction: float = 0.3
     seed: int = 7

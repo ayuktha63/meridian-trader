@@ -82,6 +82,9 @@ INTERVALS: Dict[str, str] = dict(NATIVE_INTERVALS)
 PAGE = 1000
 MAX_HISTORY = 6000
 PAGE_PAUSE_SECONDS = 0.15
+#: A research snapshot may walk back much further: the hourly books go back
+#: to 2018, about seventy thousand bars.
+DEEP_HISTORY = 150_000
 
 #: One ticker call serves every subscribed symbol, so polling faster than this
 #: buys nothing but rate-limit risk.
@@ -111,6 +114,13 @@ class CoinDCXProvider(MarketDataProvider):
     # ── history ───────────────────────────────────────────────
 
     async def history(self, symbol: str, timeframe: str, bars: int) -> List[List[float]]:
+        return await self._history(symbol, timeframe, bars, MAX_HISTORY)
+
+    async def deep_history(self, symbol: str, timeframe: str, bars: int) -> List[List[float]]:
+        return await self._history(symbol, timeframe, bars, DEEP_HISTORY)
+
+    async def _history(self, symbol: str, timeframe: str, bars: int,
+                       cap: int) -> List[List[float]]:
         timeframe = timeframe.lower()
         entry = PAIRS.get(symbol.upper())
         if not entry:
@@ -118,7 +128,7 @@ class CoinDCXProvider(MarketDataProvider):
 
         if timeframe in DERIVED_INTERVALS:
             source, factor = DERIVED_INTERVALS[timeframe]
-            fine = await self.history(symbol, source, min(bars * factor, MAX_HISTORY))
+            fine = await self._history(symbol, source, min(bars * factor, cap), cap)
             if not fine:
                 return []
             return _resample(fine, get_timeframe(timeframe).seconds)[-bars:]
@@ -135,8 +145,9 @@ class CoinDCXProvider(MarketDataProvider):
         # the live API). A walk-forward test needs several thousand bars, so
         # walk back a page at a time.
         rows: dict = {}
-        wanted = min(max(bars, 100), MAX_HISTORY)
+        wanted = min(max(bars, 100), cap)
         window: dict = {}
+        empty = 0
         while len(rows) < wanted:
             try:
                 resp = await self._client.get(
@@ -149,7 +160,7 @@ class CoinDCXProvider(MarketDataProvider):
             except Exception as exc:  # noqa: BLE001
                 log.warning("coindcx history failed for %s %s: %s", symbol, timeframe, exc)
                 break
-            if not isinstance(chunk, list) or not chunk:
+            if not isinstance(chunk, list) or (not chunk and not window):
                 break
             before = len(rows)
             for c in chunk:
@@ -157,10 +168,14 @@ class CoinDCXProvider(MarketDataProvider):
                     rows[float(c["time"]) / 1000.0] = [
                         float(c["time"]) / 1000.0, float(c["open"]), float(c["high"]),
                         float(c["low"]), float(c["close"]), float(c.get("volume") or 0.0)]
-            if len(rows) == before or len(chunk) < min(wanted - before, PAGE):
-                break                       # nothing older, or the start of the listing
-            oldest_ms = int(min(rows) * 1000)
-            window = {"endTime": oldest_ms - 1, "startTime": oldest_ms - PAGE * step_ms}
+            # A short page is not the start of the listing — the venue's own
+            # history has holes where it was down. Only windows with nothing
+            # in them at all, twice running, mean there is nothing older.
+            empty = empty + 1 if len(rows) == before else 0
+            if empty >= 2:
+                break
+            covered_ms = window["startTime"] if window else int(min(rows) * 1000)
+            window = {"endTime": covered_ms - 1, "startTime": covered_ms - PAGE * step_ms}
             await asyncio.sleep(PAGE_PAUSE_SECONDS)
 
         # Newest-first from the API; the store wants oldest-first.

@@ -66,9 +66,9 @@ def trade(frame, signals, instrument=BTC, timeframe="1h", **request):
     """Run the order lifecycle over hand-written candles and signals."""
     params = dict(symbol=instrument.symbol, timeframe=timeframe, strategy="engine",
                   min_confidence=0.0, risk_reward=0.0, include_costs=False,
-                  use_ladder=False)
+                  use_ladder=False, cost_profile="crypto_perp")
     params.update(request)
-    prep = bt.prepare(frame, instrument, timeframe, signals)
+    prep = bt.prepare(frame, instrument, timeframe, signals, params["cost_profile"])
     trades, _ = bt._simulate(prep, instrument, BacktestRequest(**params), 0, len(frame))
     return trades
 
@@ -103,6 +103,30 @@ def test_a_limit_entry_fills_at_its_price_or_better():
 
     short = trade(bars([FLAT, (99, 100.5, 98, 99), FLAT]), {0: sell()})
     assert [t.entry for t in short] == [100.0]
+
+
+def test_a_bar_that_only_touches_a_resting_order_does_not_fill_it():
+    """Reaching the price is not being filled at it: an order resting there
+    is behind everyone who got there first. The market has to trade through."""
+    touched = bars([FLAT, (101, 102, 100.0, 101), FLAT])
+    assert trade(touched, {0: buy()}) == []
+    assert trade(bars([FLAT, (99, 100.0, 98, 99), FLAT]), {0: sell()}) == []
+
+    # The same for the target, which is a resting order too.
+    held = bars([FLAT, (100, 100.5, 99.8, 100), (100, 110.0, 99.9, 109), (109, 109.5, 108, 109)])
+    still_open, = trade(held, {0: buy()})
+    assert still_open.outcome == "open", "110 was printed, not traded through"
+    through = bars([FLAT, (100, 100.5, 99.8, 100), (100, 110.5, 99.9, 109), FLAT])
+    done, = trade(through, {0: buy()})
+    assert (done.exit_reason, done.exit_price) == ("target", 110.0)
+
+
+def test_a_stop_triggers_on_a_touch():
+    """The other way round for a stop: it becomes a market order the moment
+    its price prints, and gets no benefit of the doubt."""
+    frame = bars([FLAT, (100, 100.5, 99.8, 100), (100, 101, 95.0, 96), FLAT])
+    done, = trade(frame, {0: buy()})
+    assert (done.exit_reason, done.exit_price) == ("stop", 95.0)
 
 
 def test_a_signal_cannot_fill_on_the_bar_that_produced_it():
@@ -251,7 +275,12 @@ def test_paper_trading_and_the_backtest_charge_from_one_model():
         1_000_000.0 * costs.per_side_rate(RELIANCE))
     # Indian segments carry statutory charges and GST on top of brokerage.
     assert costs.per_side_rate(RELIANCE) > costs.INDIA_BROKERAGE_RATE * (1 + costs.GST)
-    assert costs.per_side_rate(BTC) == costs.COMMISSION_RATE
+    # Crypto is charged as the venue it is quoted from — CoinDCX spot — unless
+    # a run names the perpetual, where a resting order is cheaper than a taken one.
+    assert costs.per_side_rate(BTC) == pytest.approx(0.0020 * 1.18)
+    assert costs.per_side_rate(BTC, profile="crypto_perp") == pytest.approx(0.0005 * 1.18)
+    assert costs.per_side_rate(BTC, passive=True, profile="crypto_perp") == pytest.approx(
+        0.0002 * 1.18)
     # An equity round trip should land near 0.1% of turnover: an order of
     # magnitude off either way means a rate was mistyped.
     assert 0.0008 < 2 * costs.per_side_rate(RELIANCE) < 0.0014
@@ -266,6 +295,48 @@ def test_a_resting_order_pays_no_spread_and_a_stop_pays_slippage():
                                  exit_passive=True) == pytest.approx(both_cross - 2 * half)
     assert costs.round_trip_cost(RELIANCE, 2500.0, 2480.0, stopped=True) > \
         costs.round_trip_cost(RELIANCE, 2500.0, 2480.0)
+
+
+def test_costs_belong_to_a_venue_and_a_result_can_name_it():
+    spot = costs.round_trip_cost(BTC, 60_000.0, 60_600.0)
+    perp = costs.round_trip_cost(BTC, 60_000.0, 60_600.0, profile="crypto_perp")
+    assert spot > 3 * perp, "the same bitcoin, a different book"
+    assert costs.describe(BTC)["profile"] == "crypto_spot"
+    assert costs.describe(BTC, "crypto_perp")["funding_per_8h"] == 0.0001
+    assert costs.describe(RELIANCE)["profile"] == "india:stock"
+    with pytest.raises(KeyError):
+        costs.round_trip_cost(BTC, 60_000.0, 60_600.0, profile="made_up")
+
+
+def test_holding_a_perpetual_costs_financing_and_a_stop_slips_with_price():
+    flat = costs.round_trip_cost(BTC, 60_000.0, 60_000.0, profile="crypto_perp")
+    a_day = costs.round_trip_cost(BTC, 60_000.0, 60_000.0, profile="crypto_perp",
+                                  seconds_held=86_400.0)
+    assert a_day - flat == pytest.approx(60_000.0 * 0.0001 * 3), "three funding periods"
+    assert costs.carry_cost(BTC, 60_000.0, 86_400.0) == 0.0, "spot has no funding"
+    assert costs.carry_cost(RELIANCE, 2500.0, 86_400.0) == 0.0
+    stopped = costs.round_trip_cost(BTC, 60_000.0, 59_000.0, stopped=True, profile="crypto_perp")
+    plain = costs.round_trip_cost(BTC, 60_000.0, 59_000.0, profile="crypto_perp")
+    assert stopped - plain == pytest.approx(59_000.0 * 0.0002 + BTC.from_pips(0.5))
+
+
+def test_a_backtest_is_charged_by_the_profile_it_names():
+    frame = bars([FLAT, (100, 100.5, 99.8, 100), (100, 110.5, 99.9, 109), FLAT])
+    spot, = trade(frame, {0: buy()}, include_costs=True, cost_profile="crypto_spot")
+    perp, = trade(frame, {0: buy()}, include_costs=True, cost_profile="crypto_perp")
+    assert spot.cost_r > perp.cost_r > 0
+    assert spot.r_multiple < perp.r_multiple < 2.0
+
+
+def test_no_short_is_opened_on_a_spot_book():
+    """You can only sell what you hold. A backtest that shorts bitcoin on a
+    spot exchange is measuring trades nobody could have placed."""
+    frame = bars([FLAT, (99, 100.5, 98, 99), (99, 99.5, 89, 90), FLAT])
+    assert len(trade(frame, {0: sell()}, cost_profile="crypto_perp")) == 1
+    assert trade(frame, {0: sell()}, cost_profile="crypto_spot") == []
+    assert len(trade(frame, {0: sell(entry=2500, stop=2520, target=2460)}, instrument=RELIANCE,
+                     cost_profile=None)) <= 1, "an exchange product traded intraday can be"
+    assert costs.can_short(RELIANCE) and not costs.can_short(BTC)
 
 
 # ── the replay is the live engine, with nothing from the future ──
