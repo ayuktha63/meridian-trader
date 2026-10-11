@@ -1,9 +1,13 @@
 .PHONY: setup backend frontend dev desktop test lint clean docker
 
-PY ?= python3
+# The newest Python available, 3.11 or later preferred. On 3.11+ the pinned
+# requirements.lock is installed (the set CI tests); older Pythons, which several
+# of those releases no longer support, resolve requirements.txt instead.
+PY ?= $(shell command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3)
 VENV := backend/.venv
 PYBIN := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
+REQS := $(shell $(PY) -c "import sys; print('requirements.lock' if sys.version_info >= (3, 11) else 'requirements.txt')")
 
 setup: $(VENV) node_modules_stamp
 	@echo ""
@@ -15,7 +19,7 @@ setup: $(VENV) node_modules_stamp
 $(VENV):
 	$(PY) -m venv $(VENV)
 	$(PIP) install --upgrade pip wheel setuptools
-	$(PIP) install -r backend/requirements.txt
+	$(PIP) install -r backend/$(REQS)
 
 node_modules_stamp:
 	cd frontend && npm install

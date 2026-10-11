@@ -44,7 +44,7 @@ class BinanceProvider(MarketDataProvider):
         if not pair or not interval:
             return []
         rows: List[List[float]] = []
-        remaining = min(bars, 3000)
+        remaining = min(bars, 6000)
         end_time = None
         while remaining > 0:
             limit = min(1000, remaining)

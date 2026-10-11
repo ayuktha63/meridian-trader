@@ -35,6 +35,9 @@ class MarketFeed:
         self._subscribers: Set[asyncio.Queue] = set()
         self._watch_counts: Dict[Tuple[str, str], int] = defaultdict(int)
         self._hydrate_locks: Dict[Tuple[str, str], asyncio.Lock] = {}
+        #: Series whose provider returned less than was asked for — as deep
+        #: as that source goes.
+        self._depth_reached: Set[Tuple[str, str]] = set()
         self._last_quote_publish: Dict[str, float] = {}
         self._day_open: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -82,6 +85,7 @@ class MarketFeed:
         self.quotes.clear()
         self._day_open.clear()
         self._hydrate_locks.clear()
+        self._depth_reached.clear()
         await self.start()
 
     async def stop(self) -> None:
@@ -134,16 +138,25 @@ class MarketFeed:
         lock = self._hydrate_locks.setdefault(key, asyncio.Lock())
         async with lock:
             series = store.series(symbol, timeframe)
-            wanted = bars or settings.history_bars
-            if len(series) >= min(wanted, 200):
+            wanted = min(bars or settings.history_bars, series.maxlen)
+            have = len(series)
+            # A chart is content with a couple of hundred bars. A caller that
+            # names a depth — a backtest — gets it, once: if the provider has
+            # already shown it cannot go that deep, asking again on every
+            # call would only hammer it for the same answer.
+            enough = have >= min(wanted, 200)
+            deeper = bars is not None and have < wanted and key not in self._depth_reached
+            if enough and not deeper:
                 return
             provider = resolve_provider(symbol, self.providers or build_providers())
             rows = await provider.history(symbol, timeframe, wanted)
-            if not rows and provider.name != "synthetic":
+            if not rows and provider.name != "synthetic" and not enough:
                 log.info("%s returned no history for %s %s; using synthetic",
                          provider.name, symbol, timeframe)
                 rows = await self.providers["synthetic"].history(symbol, timeframe, wanted)
-            if rows:
+            if len(rows) < wanted:
+                self._depth_reached.add(key)
+            if len(rows) > have:
                 series.replace(rows)
                 self._seed_quote(symbol, series.last_close or 0.0)
 

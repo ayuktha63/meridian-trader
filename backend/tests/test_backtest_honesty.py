@@ -467,10 +467,27 @@ def test_walk_forward_finds_no_edge_in_random_entries(monkeypatch):
     assert len(result.folds) == 4
     assert result.edge.method == "walk_forward"
     assert result.edge.passed is False
-    assert result.metrics.trades > 100
-    assert result.metrics.expectancy < 0
-    assert set(result.next_parameters) == {"min_confidence", "min_risk_reward"}
-    assert all(t.index >= 0 for t in result.trades)
+    for fold in result.folds:
+        # A stretch is only traded on thresholds that made money just before
+        # it. "The least bad" is not a reason to trade.
+        if fold["test_trades"]:
+            assert fold["train_expectancy"] > 0
+            assert fold["min_confidence"] > 0
+        else:
+            assert fold["train_expectancy"] == 0
+    assert set(result.next_parameters) <= {"min_confidence", "min_risk_reward"}
+
+
+def test_walk_forward_sits_out_when_nothing_worked_before(monkeypatch):
+    """Every grid point lost on the training stretch: the next stretch is
+    not traded, and there are no thresholds to take live."""
+    _fake_frame(monkeypatch, random_walk(n=3400, seed=21, vol=0.002))
+    monkeypatch.setattr(bt, "_best_parameters", lambda *args, **kwargs: (None, 0.0))
+    result = run(walk_forward(BacktestRequest(
+        symbol="RELIANCE", timeframe="1h", strategy="random", bars=3000)))
+    assert result.metrics.trades == 0
+    assert result.next_parameters == {}
+    assert any("no thresholds to trade with" in note for note in result.notes)
 
 
 def test_walk_forward_only_reports_bars_it_did_not_fit_on(monkeypatch):
@@ -498,8 +515,11 @@ async def _wipe_evidence():
         await session.execute(delete(PaperTradeRow))
 
 
+TRADE_NEXT = {"min_confidence": 50.0, "min_risk_reward": 1.5}
+
+
 async def _record(symbol="RELIANCE", timeframe="1h", strategy="engine", passed=True,
-                  p_value=0.01, age_days=0.0, parameters=None, reason="measured"):
+                  p_value=0.01, age_days=0.0, parameters=TRADE_NEXT, reason="measured"):
     async with session_scope() as session:
         session.add(BacktestRow(
             symbol=symbol, timeframe=timeframe, strategy="walk_forward:" + strategy,
@@ -548,6 +568,13 @@ def test_only_a_walk_forward_of_the_live_engine_counts(evidence):
     assert edge["passed"] is True
     assert (edge["min_confidence"], edge["min_risk_reward"]) == (60.0, 2.0)
     assert run(_edge(timeframe="15m"))["passed"] is False, "another timeframe is another test"
+
+
+def test_a_past_edge_with_nothing_working_now_is_not_enough(evidence):
+    run(_record(parameters={}))
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert "most recent stretch" in edge["reason"]
 
 
 def test_evidence_goes_stale(evidence):

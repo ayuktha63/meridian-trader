@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from ..config import settings
 from .models import Base
@@ -21,6 +22,14 @@ def _build_engine(url: str) -> AsyncEngine:
     kwargs = {"echo": False, "future": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+        # No pooling for SQLite: every session opens its own connection and
+        # closes it. An aiosqlite connection is a thread that answers to the
+        # event loop it was opened under; kept in a pool, it gets handed to
+        # code running under a different loop — every test helper that calls
+        # asyncio.run does that — and a close awaited there can wait for
+        # ever. Opening a SQLite file costs microseconds, so there is nothing
+        # to pool for.
+        kwargs["poolclass"] = NullPool
     else:
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20

@@ -113,6 +113,15 @@ async def latest_edge(session: AsyncSession, symbol: str, timeframe: str,
                 p_values[(symbol, timeframe)], len(latest), ALPHA / len(latest)))
         return edge
 
+    # ── is it working now ─────────────────────────────────────
+    if "min_confidence" not in edge:
+        edge["passed"] = False
+        edge["reason"] = (
+            "The walk-forward test passed over its whole span, but nothing made "
+            "money on its most recent stretch — there are no thresholds to trade "
+            "with right now. Run it again when the market has moved on.")
+        return edge
+
     # ── does the demo account agree ───────────────────────────
     count, mean_r = await _paper_record(session, symbol, timeframe)
     edge["paper_trades"], edge["paper_expectancy"] = count, round(mean_r, 3)

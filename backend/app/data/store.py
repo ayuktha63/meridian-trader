@@ -21,12 +21,13 @@ COLUMNS = ("time", "open", "high", "low", "close", "volume")
 def bar_open_time(ts: float, tf_seconds: int) -> int:
     """Floor a timestamp to its bar-open boundary.
 
-    Weekly bars are anchored to Monday 00:00 UTC (epoch was a Thursday, so
-    the 3-day offset matters).
+    Weekly bars are anchored to Monday 00:00 UTC. The epoch was a Thursday,
+    so the Monday before it is three days back — the offset was four, which
+    quietly started every week on a Sunday.
     """
     ts = int(ts)
     if tf_seconds == 604800:
-        return ((ts + 345_600) // 604_800) * 604_800 - 345_600
+        return ((ts + 259_200) // 604_800) * 604_800 - 259_200
     return (ts // tf_seconds) * tf_seconds
 
 

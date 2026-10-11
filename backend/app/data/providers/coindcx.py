@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Sequence
 import httpx
 
 from ...instruments import get_timeframe
-from .base import MarketDataProvider, ProviderTick, TickHandler
+from .base import MarketDataProvider, ProviderTick, TickHandler, resample_rows
 
 log = logging.getLogger("meridian.coindcx")
 
@@ -77,6 +77,12 @@ DERIVED_INTERVALS: Dict[str, tuple] = {
 
 INTERVALS: Dict[str, str] = dict(NATIVE_INTERVALS)
 
+#: Candles per request (the API refuses more), how far back a history request
+#: may walk, and a pause between pages so a deep backtest is not a burst.
+PAGE = 1000
+MAX_HISTORY = 6000
+PAGE_PAUSE_SECONDS = 0.15
+
 #: One ticker call serves every subscribed symbol, so polling faster than this
 #: buys nothing but rate-limit risk.
 POLL_SECONDS = 1.0
@@ -112,7 +118,7 @@ class CoinDCXProvider(MarketDataProvider):
 
         if timeframe in DERIVED_INTERVALS:
             source, factor = DERIVED_INTERVALS[timeframe]
-            fine = await self.history(symbol, source, min(bars * factor, 1000))
+            fine = await self.history(symbol, source, min(bars * factor, MAX_HISTORY))
             if not fine:
                 return []
             return _resample(fine, get_timeframe(timeframe).seconds)[-bars:]
@@ -121,31 +127,44 @@ class CoinDCXProvider(MarketDataProvider):
         if not interval:
             return []
         pair = entry[0]
+        step_ms = get_timeframe(timeframe).seconds * 1000
 
-        try:
-            resp = await self._client.get(
-                PUBLIC + "/market_data/candles",
-                params={"pair": pair, "interval": interval,
-                        "limit": min(max(bars, 100), 1000)},
-            )
-            resp.raise_for_status()
-            chunk = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("coindcx history failed for %s %s: %s", symbol, timeframe, exc)
-            return []
+        # One request returns at most PAGE candles, the latest ones. Older
+        # pages need *both* ends of a window — `endTime` on its own is
+        # silently ignored and returns the latest page again (probed against
+        # the live API). A walk-forward test needs several thousand bars, so
+        # walk back a page at a time.
+        rows: dict = {}
+        wanted = min(max(bars, 100), MAX_HISTORY)
+        window: dict = {}
+        while len(rows) < wanted:
+            try:
+                resp = await self._client.get(
+                    PUBLIC + "/market_data/candles",
+                    params={"pair": pair, "interval": interval,
+                            "limit": min(wanted - len(rows), PAGE), **window},
+                )
+                resp.raise_for_status()
+                chunk = resp.json()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("coindcx history failed for %s %s: %s", symbol, timeframe, exc)
+                break
+            if not isinstance(chunk, list) or not chunk:
+                break
+            before = len(rows)
+            for c in chunk:
+                if c.get("time") is not None:
+                    rows[float(c["time"]) / 1000.0] = [
+                        float(c["time"]) / 1000.0, float(c["open"]), float(c["high"]),
+                        float(c["low"]), float(c["close"]), float(c.get("volume") or 0.0)]
+            if len(rows) == before or len(chunk) < min(wanted - before, PAGE):
+                break                       # nothing older, or the start of the listing
+            oldest_ms = int(min(rows) * 1000)
+            window = {"endTime": oldest_ms - 1, "startTime": oldest_ms - PAGE * step_ms}
+            await asyncio.sleep(PAGE_PAUSE_SECONDS)
 
-        if not isinstance(chunk, list) or not chunk:
-            return []
-
-        rows = [
-            [float(c["time"]) / 1000.0, float(c["open"]), float(c["high"]),
-             float(c["low"]), float(c["close"]), float(c.get("volume") or 0.0)]
-            for c in chunk
-            if c.get("time") is not None
-        ]
         # Newest-first from the API; the store wants oldest-first.
-        rows.sort(key=lambda r: r[0])
-        return rows
+        return [rows[key] for key in sorted(rows)][-wanted:]
 
     # ── quotes ────────────────────────────────────────────────
 
@@ -210,32 +229,5 @@ def _to_float(value) -> Optional[float]:
 
 
 def _resample(rows: List[List[float]], tf_seconds: int) -> List[List[float]]:
-    """Aggregate finer candles into coarser buckets.
-
-    Rows are [time, open, high, low, close, volume] ascending. Bucket start is
-    floor-aligned to the target timeframe so a 4h bar always begins on a 4h
-    boundary rather than on whatever the first row happened to be.
-    """
-    if not rows or tf_seconds <= 0:
-        return rows
-
-    out: List[List[float]] = []
-    bucket_start = None
-    current: Optional[List[float]] = None
-
-    for time_s, open_p, high, low, close, volume in rows:
-        start = int(time_s // tf_seconds) * tf_seconds
-        if bucket_start is None or start != bucket_start:
-            if current is not None:
-                out.append(current)
-            bucket_start = start
-            current = [float(start), open_p, high, low, close, volume]
-            continue
-        current[2] = max(current[2], high)
-        current[3] = min(current[3], low)
-        current[4] = close
-        current[5] += volume
-
-    if current is not None:
-        out.append(current)
-    return out
+    """Aggregate finer candles into coarser buckets (see `base.resample_rows`)."""
+    return resample_rows(rows, tf_seconds)

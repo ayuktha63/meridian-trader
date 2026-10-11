@@ -16,6 +16,13 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 > and a live order only ever goes out after you explicitly confirm the exact trade on screen.
 > Nothing executes silently.
 
+> **What "safe" means here, and what it does not.** No setting makes trading risk-free, and
+> nothing in this repository produces profit on its own. What the live path does is *bound*
+> the loss: every fill gets a stop order resting at the broker, every order is checked against
+> hard limits before it is sent, and a live order is refused outright unless a walk-forward
+> test of that market has shown an edge after costs. If the honest answer is "no measured
+> edge", the system says so and will not trade it.
+
 > **Trading with it?** Read **[TRADING.md](TRADING.md)** — what you can legally trade from
 > India, how to connect Zerodha or Angel One, how a signal becomes an order (manual or live),
 > what it costs, and the honest path from paper trading to real size.
@@ -38,12 +45,12 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 | **Scenario paths** | Each engaged strategy draws its thesis forward on the chart, with the invalidation leg alongside it |
 | **Futures & options** | Any call expressed as a listed contract: futures cash risk, or an ITM/ATM/OTM option ladder with premium, delta, theta as %/day, break-even and the stop converted into premium |
 | **Risk management** | A protection ladder that ratchets the stop to breakeven then into profit as a trade runs, plus account-level guardrails — daily loss, losing streak, open risk, trade count |
-| **Demo auto-trading** | A $10,000 simulated account that can act on the platform's own BUY/SELL signals automatically — real spreads and commission modelled, full trade history, no real money ever involved |
-| **Live execution (Angel One)** | Optional, off by default. Submits a real order to your Angel One account only after you explicitly confirm the exact trade shown on screen — see [TRADING.md §2a/§3a](TRADING.md) for the full flow and its current limits |
+| **Demo auto-trading** | A $10,000 simulated account that can act on the platform's own BUY/SELL signals automatically — spread, brokerage and statutory charges modelled, full trade history, no real money ever involved |
+| **Live execution (Angel One)** | Optional, off by default. Submits a real order only after you confirm the exact order the server will send. On a fill it rests a stop and a target at the broker, moves the stop up the protection ladder, closes the position before the session ends, and flattens it if a stop cannot be placed. Hard limits, a persistent kill switch, an audit log and phone alerts — see [TRADING.md §2a/§3a](TRADING.md) |
 | **AI** | Claude receives a structured evidence brief and returns strict JSON: decision, confidence, entry, SL, TP, R:R, probability, bull/bear points, summary |
 | **Overlays** | The AI's levels are drawn back onto the chart — entry, SL, TP, profit/risk zones, order blocks, FVGs, liquidity pools, projected path arrows |
 | **Journal** | Every recommendation persisted with full evidence snapshot, then marked win/loss and scored |
-| **Backtest** | Replay history through the same engine: win rate, profit factor, max drawdown, avg R, Sharpe, expectancy |
+| **Backtest** | Replays the *live* engine — the same two functions the trade panel runs — bar by bar, trades it the way a live order trades, and charges every cost. Walk-forward testing with a bootstrap verdict; a live order needs a passing one |
 
 ---
 
@@ -53,7 +60,7 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 
 | Need | Version | Check with |
 | --- | --- | --- |
-| Python | 3.9 or newer | `python3 --version` |
+| Python | 3.9 or newer (3.11+ if you have it) | `python3 --version` |
 | Node.js | 18 or newer | `node --version` |
 | make | any | `make --version` |
 
@@ -93,6 +100,10 @@ That is the whole install. `make dev` prints the UI address in its own banner:
 
 The API port is fixed at 8000 and does not fall forward — if it is taken, see
 [Troubleshooting](#troubleshooting).
+
+The API listens on this machine only (`127.0.0.1`) and answers nothing else —
+not the LAN, not a tunnel, not a web page open in your own browser. To use it
+from another machine see [Reaching it from another machine](#reaching-it-from-another-machine).
 
 ### Every time after that
 
@@ -142,8 +153,8 @@ make desktop     # Electron shell wrapping the same UI
 ### Other commands
 
 ```bash
-make test        # 190+ backend tests (pytest)
-make lint        # frontend typecheck (tsc --noEmit)
+make test        # 330+ backend tests (pytest) — offline, about 25 seconds
+make lint        # backend lint (ruff) and frontend typecheck (tsc --noEmit)
 make clean       # remove venv, node_modules, build output
 ```
 
@@ -169,6 +180,9 @@ make clean       # remove venv, node_modules, build output
 | "Cannot reach the analysis engine" | API not running, or died | Check the `make dev` terminal for a traceback; `make backend` alone shows its logs clearly |
 | Browser shows a *different* app | You opened 5173 but Vite moved to 5174 | Use the URL from the banner |
 | `Address already in use` on 8000 | An old API is still alive | `pkill -f "app.serve"`, then `make dev` |
+| `403` — "only answers requests from this machine" | You are calling the API from another machine, through a proxy or tunnel, or from a page that is not this app | Set `APP_ACCESS_TOKEN` — see [Reaching it from another machine](#reaching-it-from-another-machine) |
+| "Refusing to listen on '0.0.0.0' without APP_ACCESS_TOKEN" | `API_HOST` is a network address and no token is set | Set the token, or leave `API_HOST` at `127.0.0.1` |
+| A backtest takes a minute | It runs the full live analysis once per bar | Expected the first time on a market; other strategies and re-runs on it are instant |
 | `make: command not found` | No build tools | macOS: `xcode-select --install` |
 | `make setup` fails on `python3 -m venv` | Python missing or too old | Install Python 3.9+ and re-run |
 | Chart shows **SIM**, not **LIVE** | That symbol has no keyless source | Expected for NSE/MCX symbols — they need Zerodha (see [TRADING.md](TRADING.md)). Crypto should always read LIVE |
@@ -188,12 +202,39 @@ Open the **gear icon** in the top bar. No env editing, no restarts:
 
 Settings persist to `backend/data/settings.json` (0600, gitignored) and apply immediately.
 
-**Angel One is the one exception, deliberately.** Its credentials (`ANGEL_API_KEY`,
-`ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`, `ANGEL_TOTP_SECRET`) are boot-time environment
-variables only — never accepted through Settings, never returned by any API response, not
-even masked, because they can place a real order. What *is* in the app: the **DEMO / LIVE**
-indicator and Angel One connection status in the top bar, and the confirmation dialog that
-gates every live order. See [TRADING.md §2a](TRADING.md) for setup.
+**Three things are not in the app, deliberately — they live in `.env` and need a restart.**
+
+* **Angel One credentials** (`ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`,
+  `ANGEL_TOTP_SECRET`) — never accepted through Settings, never returned by any API response,
+  not even masked, because they can place a real order.
+* **The live risk limits** (`LIVE_MAX_ORDER_VALUE`, `LIVE_DAILY_LOSS_LIMIT`, …). A limit that
+  can be raised with a click while you are losing is not a limit. Changing one means editing
+  `.env` and restarting — which also drops you back to `PAPER`.
+* **The access token** (`APP_ACCESS_TOKEN`), below.
+
+What *is* in the app: the **DEMO / LIVE** indicator and Angel One connection status in the top
+bar, the emergency stop and *Flatten* controls beside it, and the confirmation dialog that
+gates every live order. See [TRADING.md §2a](TRADING.md) for setup, and `.env.example` for
+every setting with its default.
+
+### Reaching it from another machine
+
+Out of the box the API serves this machine and nothing else. That is not only the bind
+address: a request is served without a token only if its peer is loopback, every hop a proxy
+reports is loopback, its `Host` header names this machine, and — for anything that changes
+state, and for the websocket — its `Origin` is this app's own UI. Binding to `127.0.0.1`
+alone still leaves a local API open to a tunnel on the same machine and to any web page you
+visit, two of whose targets here take no request body at all.
+
+To serve another machine, set both of these in `.env`:
+
+```
+API_HOST=0.0.0.0
+APP_ACCESS_TOKEN=<a long random value>      # python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+The server refuses to start on a network address without the token. The UI asks for it once
+and keeps it in that browser. There is one token and one user: this is not a login system.
 
 ### Zero-config by design
 
@@ -248,9 +289,31 @@ analysis that changes with them.
 │  ai/narrative.py ─► ai/prompts.py ─► ai/claude_client.py ─► strict JSON verdict   │
 │                                    │                    └─► ai/fallback.py        │
 │                                    ▼                                              │
-│  overlays/builder.py ─► journal (Postgres/SQLite) ─► backtest/engine.py           │
+│  overlays/builder.py ─► journal (Postgres/SQLite)                                 │
+│                                                                                   │
+│  backtest/replay.py  ── calls analysis/engine.evaluate + conclude at every bar    │
+│  backtest/engine.py  ── trades those signals the way a live order trades          │
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### The live path
+
+```
+  recommendation ──► PreTradeRiskGate ──► LIMIT entry ──► LiveReconciler (every few seconds)
+   (stored, server-   mode · confirmation   tagged, written    follow the entry · stop at the
+    side; the UI      kill switch · tick    down before the    broker for every share held ·
+    sends only a      grid · size from      broker is called   target · ladder · square-off
+    confirmation)     risk budget · funds                      before the close · count what
+                      and margin · hours                       is held from the fills
+                      price band · limits
+                      measured edge
+```
+
+`analysis/engine.py` is two pure functions — `evaluate` (what the price history says) and
+`conclude` (verdict, fused confidence, plan) — plus `run`, which is those two and the I/O around
+them. The backtest calls the same two functions, so a backtest result is evidence about the
+engine that trades rather than about a second implementation of it. A test puts a market in the
+store and checks that the replay and `engine.run` agree bar for bar.
 
 ### Confidence model
 
@@ -276,7 +339,13 @@ the conflict threshold — see `backend/app/analysis/confidence.py`.
 ```
 backend/app
 ├── main.py               FastAPI app, lifespan, feed bootstrap
+├── serve.py              `python -m app.serve` — checks the bind address, then uvicorn
+├── security.py           who may call the API: local-only, or the access token
 ├── config.py             settings (env-driven, safe defaults)
+├── costs.py              spread, brokerage, statutory charges, slippage — one model
+│                         for paper trading and the backtest
+├── alerts.py · notify.py operator alerts, and the optional Telegram channel
+├── audit.py              append-only log of everything that touched real money
 ├── instruments.py        instrument reference data (pip size, lots, venues)
 ├── stocks.py             the NSE F&O stock universe
 ├── data/                 providers (coindcx, binance, zerodha, angelone,
@@ -287,22 +356,26 @@ backend/app
 │                         risk (protection ladder), guardrails
 ├── ai/                   prompts, narrative brief, Claude client, fallback analyst
 ├── overlays/             analysis → chart overlay primitives
-├── backtest/             replay engine + performance metrics
+├── backtest/             replay (the live engine, bar by bar), engine (the
+│                         order's life, walk-forward, the edge verdict), metrics
 ├── broker/               live-execution layer
 │   ├── angelone/         auth (TOTP session), client (SmartAPI wrapper),
-│   │                     instruments (scrip-master resolution), execution
-│   │                     (recommendation → order orchestration)
-│   ├── risk_gate.py      PreTradeRiskGate — mode/confirmation/connection/
-│   │                     kill-switch/instrument/quantity/funds/risk checks
-│   └── trading_mode.py   PAPER/LIVE flag + kill switch, restart-safe
-├── services/              paper (demo auto-trade account), journal, positions
+│   │                     instruments (scrip-master resolution), orders (tags,
+│   │                     tick rounding), execution (recommendation → entry),
+│   │                     reconciler (everything after the entry is sent)
+│   ├── risk_gate.py      PreTradeRiskGate — derives the order and decides it
+│   ├── live_limits.py    the live account's own ledger, for the hard limits
+│   └── trading_mode.py   PAPER/LIVE (forgets on restart) + kill switch (does not)
+├── services/              paper (demo auto-trade account), journal, positions,
+│                         edge (the evidence a live order needs)
 ├── schemas/              Pydantic request/response models
 ├── db/                   SQLAlchemy models + async session
 └── routers/              market, drawings, analysis, journal, backtest,
                           positions, paper, broker_angel, execution, settings, ws
 
-backend/tests             pytest suite — analytical core, paper trading,
-                          Angel One safety/instrument resolution, execution
+backend/tests             pytest suite — analytical core, paper trading, access
+                          control, Angel One safety, execution, the supervisor
+                          against an in-memory broker, backtest honesty
 
 frontend/src
 ├── components/chart/     ChartCanvas, DrawingLayer, Shapes, AIOverlay, Toolbar
@@ -326,23 +399,42 @@ frontend/src
 ## Testing
 
 ```bash
-make test          # 190+ pytest cases across the analytical core and execution
-make lint          # frontend typecheck (tsc --noEmit)
+make test          # 330+ pytest cases, offline, about 25 seconds
+make lint          # ruff on the backend, tsc --noEmit on the frontend
 ```
 
 Covered: indicators, market structure, patterns, drawing analytics, confidence
-fusion, backtest metrics, the five strategies, option pricing and expiry
-arithmetic, the protection ladder, the account guardrails, demo auto-trading
-(symbol/timeframe gating, R:R floor), and the Angel One live-execution path
-— PAPER-mode isolation, the pre-trade risk gate's ten checks, instrument
-resolution (including a regression test for a real bug: matching a
-non-tradable index-quote row instead of an actual futures contract),
-broker rejection, ambiguous/timeout handling, and duplicate-order
-protection.
+fusion, the five strategies, option pricing and expiry arithmetic, the
+protection ladder, the account guardrails, demo auto-trading, and:
 
-Tests run against a throwaway SQLite file in the system temp directory, never
-`backend/data/meridian.db` — otherwise fabricated test trades would appear in
-your real journal and account limits.
+* **Access control** — a caller on another machine, a proxied request, a
+  foreign `Host` header (DNS rebinding), a cross-site write and a cross-site
+  websocket are each refused without a token; the token is compared in
+  constant time; the server will not start on a network address without one.
+* **The pre-trade gate** — PAPER-mode isolation, sizing from the risk budget
+  in real shares, tick rounding that cannot add risk, every hard limit, the
+  measured-edge requirement and its thresholds.
+* **The live-order supervisor**, driven one pass at a time against an
+  in-memory Angel One: a stop behind every fill, flatten when none can be
+  placed, one-cancels-the-other, a partly filled target, two exits that both
+  fill, recovery of an order whose submission timed out, a restart mid-order,
+  a position closed by hand, a flat reading nothing explains, the square-off
+  before the close, the kill switch.
+* **Backtest honesty** — a random-entry control that must lose after costs;
+  a limit that is missed when the market does not come back; nothing from
+  the future reaching a decision; and the replay reaching the same verdict
+  as the live engine on the same bar.
+
+The safety rules were also checked the other way round: fifteen of them were
+broken on purpose, one at a time, and in every case a test failed.
+
+Tests never touch the network or your data. They run on the synthetic feed
+against a throwaway directory that is removed afterwards — never
+`backend/data/` — otherwise fabricated test trades would appear in your real
+journal and account limits, and a test run could flip your kill switch.
+
+Continuous integration (`.github/workflows/ci.yml`) runs lint, the test
+suite, the frontend typecheck and a production build on every push.
 
 ---
 
@@ -352,5 +444,12 @@ Forex, metals and crypto trading carries substantial risk of loss. This software
 probabilistic analysis for research and education and makes no claim of accuracy. By default it
 does not place orders or manage capital. The one exception — Angel One live execution — is
 off by default, requires explicit setup and per-trade confirmation, and is documented in full,
-limitations included, in [TRADING.md](TRADING.md). Every recommendation includes its own
-invalidation level precisely because the analysis can be wrong. Size positions accordingly.
+limitations included, in [TRADING.md](TRADING.md).
+
+The live path bounds a loss; it does not prevent one, and it cannot make a strategy profitable.
+A stop is a market order once triggered and can fill well past its level on a gap. The
+supervisor that moves stops and closes positions before the close only runs while this program
+does. And **none of the live path has been run against a real Angel One account yet** — it is
+tested against a simulated broker. Make the first live order the smallest the exchange allows
+and watch the broker's own app while it goes. Every recommendation includes its own invalidation
+level precisely because the analysis can be wrong. Size positions accordingly.

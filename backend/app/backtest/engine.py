@@ -537,8 +537,14 @@ WF_MIN_TRAIN_TRADES = 8
 
 def _best_parameters(prep: Prepared, instrument: Instrument, request: BacktestRequest,
                      start: int, end: int) -> Tuple[Optional[Tuple[float, float]], float]:
-    """The grid point with the best expectancy on bars [start, end)."""
-    best, best_score = None, -np.inf
+    """The grid point with the best expectancy on bars [start, end) — or
+    None when none of them made money there.
+
+    "The least bad" is not a reason to trade. If nothing worked on the
+    stretch just gone, the stretch that follows is sat out, and that
+    sitting-out is part of what gets measured.
+    """
+    best, best_score = None, 0.0
     for conf, rr in WF_GRID:
         candidate = request.model_copy(update={"min_confidence": conf, "risk_reward": rr})
         fitted, _ = _simulate(prep, instrument, candidate, start, end)
@@ -592,12 +598,11 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
     n = prep.n
     step = usable // (folds + 1)
     traded: List[BacktestTrade] = []
-    chosen: Optional[Tuple[float, float]] = None
     for fold in range(folds):
         train_start = first + fold * step
         test_start = train_start + step
         test_end = n if fold == folds - 1 else test_start + step
-        chosen, trades, summary = _trade_fold(
+        _, trades, summary = _trade_fold(
             prep, instrument, request, fold + 1,
             (train_start, test_start), (test_start, test_end))
         traded += trades
@@ -611,14 +616,20 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
     result.out_of_sample = result.metrics
     result.edge = edge_verdict(traded, "walk_forward", request.seed)
 
-    # What to trade next: fitted on the most recent stretch, which is the one
-    # stretch nothing above was measured on with these parameters. A live
-    # order has to clear these to count as the kind of trade that was tested.
+    # What to trade next: fitted on the most recent stretch, exactly as each
+    # fold above was fitted on the stretch before it. A live order has to
+    # clear these to count as the kind of trade that was tested — and if
+    # nothing made money on the most recent stretch there are none, which is
+    # the same "sit this one out" the folds obeyed.
     upcoming, _ = _best_parameters(prep, instrument, request, n - step, n)
-    upcoming = upcoming or chosen
     if upcoming is not None:
         result.next_parameters = {"min_confidence": upcoming[0],
                                   "min_risk_reward": upcoming[1]}
+    else:
+        result.notes.append(
+            "Nothing in the grid made money on the most recent stretch, so there "
+            "are no thresholds to trade with right now — whatever the verdict "
+            "above says about the past.")
 
     result.notes.append(
         "{}-fold walk-forward in {:.1f}s: parameters chosen from a {}-combination grid "
