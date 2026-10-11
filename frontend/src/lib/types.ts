@@ -769,6 +769,9 @@ export interface BacktestTrade {
   bars_held: number
   confidence: number
   reason: string
+  /** What the round trip cost, in R. `r_multiple` is already net of it. */
+  cost_r?: number
+  exit_reason?: 'stop' | 'target' | 'eod' | 'timeout' | ''
 }
 
 export interface BacktestResult {
@@ -786,6 +789,8 @@ export interface BacktestResult {
   out_of_sample?: BacktestMetrics | null
   edge?: EdgeVerdict
   folds?: Record<string, number>[]
+  /** Walk-forward: the thresholds a live order has to clear. */
+  next_parameters?: { min_confidence?: number; min_risk_reward?: number }
 }
 
 /** Is there a measured edge after costs, on data the parameters never saw? */
@@ -796,7 +801,30 @@ export interface EdgeVerdict {
   expectancy: number
   ci_low: number
   ci_high: number
+  p_value?: number
   method: 'holdout' | 'walk_forward'
+}
+
+/** The order Execute Live would send right now, and the gate's verdict on it. */
+export interface ExecutionPreview {
+  allowed: boolean
+  check: string | null
+  reason: string | null
+  symbol: string
+  side: string
+  trading_symbol: string | null
+  exchange: string | null
+  quantity: number | null
+  entry_price: number | null
+  stop_price: number | null
+  target_price: number | null
+  order_value: number | null
+  risk: number | null
+  risk_budget: number | null
+  margin_required: number | null
+  available_funds: number | null
+  last_price: number | null
+  edge: string | null
 }
 
 // ── websocket ───────────────────────────────────────────────

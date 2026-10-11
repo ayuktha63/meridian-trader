@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { fmtPrice } from '../../lib/format'
-import type { AnalysisResult, ExecutionRecord, InstrumentCapability } from '../../lib/types'
+import type {
+  AnalysisResult, ExecutionPreview, ExecutionRecord, InstrumentCapability,
+} from '../../lib/types'
 
 /**
  * The one button that can place a real order. Everything about the trade —
@@ -11,6 +12,11 @@ import type { AnalysisResult, ExecutionRecord, InstrumentCapability } from '../.
  * It stays disabled, with the exact reason shown, until every precondition
  * (LIVE mode, Angel One connected, kill switch off, instrument supported)
  * actually holds — never a generic "unavailable".
+ *
+ * The confirmation dialog shows the server's own preview of the order: the
+ * real quantity, the tick-rounded prices, what it costs in margin, and the
+ * pre-trade gate's verdict. What is confirmed is what is sent; nothing in
+ * the dialog is computed here.
  */
 export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResult }) {
   const [mode, setMode] = useState<'PAPER' | 'LIVE' | null>(null)
@@ -18,6 +24,7 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
   const [angelConnected, setAngelConnected] = useState(false)
   const [capability, setCapability] = useState<InstrumentCapability | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [preview, setPreview] = useState<ExecutionPreview | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<ExecutionRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -59,6 +66,17 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
 
   const canExecute = isActionable && !blockedReason
 
+  const openConfirmation = async () => {
+    setConfirming(true)
+    setPreview(null)
+    setError(null)
+    try {
+      setPreview(await api.previewLive(analysis.id))
+    } catch (exc) {
+      setError(exc instanceof ApiError ? exc.message : 'Could not preview the order.')
+    }
+  }
+
   const submit = async () => {
     setSubmitting(true)
     setError(null)
@@ -84,7 +102,7 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
         className={`btn flex-1 ${canExecute ? 'border-bear/60 text-bear hover:bg-bear/10' : ''}`}
         disabled={!canExecute}
         title={blockedReason ?? 'Submit a real order to Angel One'}
-        onClick={() => setConfirming(true)}
+        onClick={openConfirmation}
       >
         Execute Live
       </button>
@@ -105,18 +123,42 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
                 </h2>
               </div>
               <div className="px-5 py-4 space-y-2 text-xs">
-                <Row label="Symbol" value={analysis.symbol} />
+                <Row label="Symbol"
+                     value={preview?.trading_symbol
+                       ? `${preview.trading_symbol} · ${preview.exchange}` : analysis.symbol} />
                 <Row label="Side" value={analysis.verdict.decision} />
-                <Row label="Entry" value={fmtPrice(analysis.plan.entry, analysis.symbol.length)} />
-                <Row label="Stop" value={fmtPrice(analysis.plan.stop_loss)} />
-                <Row label="Target" value={fmtPrice(analysis.plan.take_profit)} />
-                <Row label="Quantity (est.)"
-                     value={`${analysis.plan.suggested_lots ?? '—'} (broker lot-rounded server-side)`} />
-                <Row label="Risk budget" value={`${analysis.plan.risk_amount ?? '—'}`} />
-                <Row label="R:R" value={`${analysis.plan.risk_reward ?? '—'}`} />
-                <p className="text-2xs text-bear font-semibold pt-2 border-t border-hairline mt-2">
-                  This will place a REAL order on your Angel One account.
-                </p>
+                {!preview && !error && (
+                  <p className="text-2xs text-faint">Checking the order with the server…</p>
+                )}
+                {preview && (
+                  <>
+                    <Row label="Quantity" value={num(preview.quantity, 0)} />
+                    <Row label="Entry (limit)" value={num(preview.entry_price)} />
+                    <Row label="Stop" value={num(preview.stop_price)} />
+                    <Row label="Target" value={num(preview.target_price)} />
+                    <Row label="Order value" value={num(preview.order_value)} />
+                    <Row label="Loss if stopped" value={num(preview.risk)} />
+                    <Row label={preview.margin_required != null ? 'Margin blocked' : 'Available funds'}
+                         value={num(preview.margin_required ?? preview.available_funds)} />
+                    <Row label="R:R" value={`${analysis.plan.risk_reward ?? '—'}`} />
+                    {preview.allowed ? (
+                      <p className="text-2xs text-faint leading-relaxed">
+                        On a fill, a stop order for this quantity is placed at Angel One
+                        at once. If that fails the position is closed at market.
+                      </p>
+                    ) : (
+                      <p className="text-2xs text-warn bg-warn/10 rounded-lg px-2 py-1.5 leading-relaxed">
+                        <span className="font-bold">Refused by the pre-trade check.</span>{' '}
+                        {preview.reason}
+                      </p>
+                    )}
+                  </>
+                )}
+                {preview?.allowed && (
+                  <p className="text-2xs text-bear font-semibold pt-2 border-t border-hairline mt-2">
+                    This will place a REAL order on your Angel One account.
+                  </p>
+                )}
                 {error && <p className="text-2xs text-bear">{error}</p>}
               </div>
               <div className="flex gap-2 px-5 py-3 border-t border-hairline bg-tint/[0.02]">
@@ -125,7 +167,8 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
                   Cancel
                 </button>
                 <button type="button" className="btn btn-primary flex-1 !bg-bear !border-bear"
-                        onClick={submit} disabled={submitting}>
+                        onClick={submit} disabled={submitting || !preview?.allowed}
+                        title={preview && !preview.allowed ? preview.reason ?? undefined : undefined}>
                   {submitting ? 'Submitting…' : 'Confirm & Execute'}
                 </button>
               </div>
@@ -135,6 +178,12 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
       </AnimatePresence>
     </>
   )
+}
+
+function num(value: number | null | undefined, digits = 2): string {
+  return value == null ? '—' : value.toLocaleString('en-IN', {
+    minimumFractionDigits: digits, maximumFractionDigits: digits,
+  })
 }
 
 function Row({ label, value }: { label: string; value: string }) {

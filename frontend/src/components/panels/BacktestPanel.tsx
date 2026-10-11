@@ -5,22 +5,36 @@ import type { BacktestResult } from '../../lib/types'
 import { useStore } from '../../store/useStore'
 import { Sparkline, Spinner, Stat } from '../ui'
 
+/**
+ * `engine` is the live verdict — the call on the trade panel, and the only
+ * thing Execute Live sends. The rest are the named strategies from the Plays
+ * tab. All six are the real code replayed bar by bar, not a faster imitation.
+ */
 const STRATEGIES = [
-  { id: 'confluence', label: 'Confluence',
-    hint: 'The full weighted engine — trend, momentum, volume, structure and patterns' },
-  { id: 'structure', label: 'Structure',
-    hint: 'Break of structure and order-block entries only' },
-  { id: 'trend_pullback', label: 'Pullback',
-    hint: 'Buy dips in an uptrend, sell rallies in a downtrend' },
+  { id: 'engine', label: 'Engine',
+    hint: 'The live verdict: the same call the trade panel shows and Execute Live sends' },
+  { id: 'trend_continuation', label: 'Trend',
+    hint: 'Trend Continuation, from the Plays tab' },
+  { id: 'mean_reversion', label: 'Reversion',
+    hint: 'Mean Reversion, from the Plays tab' },
+  { id: 'breakout', label: 'Breakout',
+    hint: 'Range Breakout, from the Plays tab' },
+  { id: 'smart_money', label: 'Order block',
+    hint: 'Order Block Retest, from the Plays tab' },
+  { id: 'momentum', label: 'Momentum',
+    hint: 'Momentum Expansion, from the Plays tab' },
 ]
+
+/** Rough cost of replaying the engine: one full analysis per bar. */
+const SECONDS_PER_BAR = 0.045
 
 export default function BacktestPanel() {
   const symbol = useStore((s) => s.symbol)
   const timeframe = useStore((s) => s.timeframe)
-  const [strategy, setStrategy] = useState('confluence')
+  const [strategy, setStrategy] = useState('engine')
   const [minConfidence, setMinConfidence] = useState(55)
   const [riskReward, setRiskReward] = useState(2)
-  const [bars, setBars] = useState(1500)
+  const [bars, setBars] = useState(750)
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +60,7 @@ export default function BacktestPanel() {
     setRunning(true)
     setError(null)
     try {
-      setResult(await api.walkForward({ symbol, timeframe, bars: Math.max(bars, 3000), strategy }))
+      setResult(await api.walkForward({ symbol, timeframe, bars: Math.max(bars, 2000), strategy }))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Walk-forward failed')
     } finally {
@@ -56,11 +70,13 @@ export default function BacktestPanel() {
 
   const metrics = result?.metrics
   const edge = result?.edge
+  const forLive = strategy === 'engine'
+  const estimate = Math.max(5, Math.round(bars * SECONDS_PER_BAR / 5) * 5)
 
   return (
     <div className="h-full flex flex-col min-h-0">
       <div className="shrink-0 px-3 py-2.5 border-b border-hairline space-y-2">
-        <div className="flex gap-1">
+        <div className="grid grid-cols-3 gap-1">
           {STRATEGIES.map((item) => (
             <button
               key={item.id}
@@ -68,7 +84,7 @@ export default function BacktestPanel() {
               onClick={() => setStrategy(item.id)}
               title={item.hint}
               aria-pressed={strategy === item.id}
-              className={`chip flex-1 justify-center ${strategy === item.id ? 'chip-active' : ''}`}
+              className={`chip justify-center ${strategy === item.id ? 'chip-active' : ''}`}
             >
               {item.label}
             </button>
@@ -77,9 +93,9 @@ export default function BacktestPanel() {
 
         <Slider label="Min confidence" value={minConfidence} min={30} max={85} step={5}
                 onChange={setMinConfidence} suffix="%" />
-        <Slider label="Reward : risk" value={riskReward} min={1} max={4} step={0.5}
+        <Slider label="Min reward : risk" value={riskReward} min={1} max={4} step={0.5}
                 onChange={setRiskReward} suffix="R" />
-        <Slider label="Bars" value={bars} min={500} max={3000} step={250}
+        <Slider label="Bars" value={bars} min={250} max={3000} step={250}
                 onChange={setBars} />
 
         <button type="button" className="btn btn-primary w-full" onClick={run} disabled={running}
@@ -88,19 +104,25 @@ export default function BacktestPanel() {
           Replay {symbol} {timeframe}
         </button>
         <button type="button" className="btn w-full" onClick={runWalkForward} disabled={running}
-                title="Fit parameters on one stretch of history, trade them on the next, repeat. This is the test Execute Live requires.">
-          Walk-forward test (required for live)
+                title="Fit the thresholds on one stretch of history, trade them on the next, repeat. Only the stretches it did not fit on are scored.">
+          {forLive ? 'Walk-forward test (required for live)' : 'Walk-forward test'}
         </button>
+        <p className="text-[10px] text-faint leading-relaxed">
+          {running
+            ? 'Replaying the live engine bar by bar — this is the slow, honest way.'
+            : `About ${estimate}s the first time on a market; other strategies and re-runs reuse it.`}
+        </p>
         {error && <p className="text-2xs text-bear">{error}</p>}
       </div>
 
       <div className="flex-1 min-h-0 scroll-y px-3 py-3">
         {!result ? (
           <p className="text-2xs text-faint leading-relaxed">
-            Replays the deterministic confluence engine bar by bar over history.
-            Entries fill at the signal bar's close; when a bar spans both stop and
-            target the stop is assumed to fill first, so results lean pessimistic
-            rather than flattering.
+            Replays the live engine itself over history, one full analysis per bar,
+            and trades it the way a live order trades: a limit at the signal price
+            that is missed if the market does not come back, a stop, a target, and
+            every cost. When a bar spans both stop and target the stop fills first.
+            Results are net, and lean pessimistic rather than flattering.
           </p>
         ) : (
           <div className="space-y-3">
@@ -141,6 +163,45 @@ export default function BacktestPanel() {
               </div>
             )}
 
+            {result.in_sample && result.out_of_sample && edge?.method !== 'walk_forward' && (
+              <div className="grid grid-cols-2 gap-2">
+                <Stat label="First 70%" value={`${fmtSigned(result.in_sample.expectancy, 2)}R`}
+                      sub={`${result.in_sample.trades} trades`} />
+                <Stat label="Last 30% (held out)"
+                      value={`${fmtSigned(result.out_of_sample.expectancy, 2)}R`}
+                      tone={result.out_of_sample.expectancy >= 0 ? 'text-bull' : 'text-bear'}
+                      sub={`${result.out_of_sample.trades} trades`} />
+              </div>
+            )}
+
+            {(result.folds?.length ?? 0) > 0 && (
+              <div>
+                <h3 className="panel-title mb-1.5">Walk-forward folds</h3>
+                <div className="space-y-1">
+                  {result.folds!.map((fold) => (
+                    <div key={fold.fold} className="flex items-center gap-2 text-[10px] tnum">
+                      <span className="text-faint">#{fold.fold}</span>
+                      <span className="text-muted">
+                        {fold.min_confidence ? `≥${fold.min_confidence}% · ≥${fold.risk_reward}R` : 'nothing qualified'}
+                      </span>
+                      <span className="flex-1" />
+                      <span className="text-faint">{fold.test_trades} trades</span>
+                      <span className={fold.test_expectancy >= 0 ? 'text-bull' : 'text-bear'}>
+                        {fmtSigned(fold.test_expectancy, 2)}R
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {result.next_parameters?.min_confidence != null && (
+                  <p className="text-[10px] text-faint leading-relaxed mt-1.5">
+                    A live order has to clear what the latest stretch fitted:
+                    confidence ≥ {result.next_parameters.min_confidence}% and
+                    reward:risk ≥ {result.next_parameters.min_risk_reward}.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div>
               <h3 className="panel-title mb-1.5">Last trades</h3>
               <div className="space-y-1">
@@ -152,6 +213,7 @@ export default function BacktestPanel() {
                     </span>
                     <span className="text-muted">{trade.entry}</span>
                     <span className="flex-1" />
+                    <span className="text-faint">{trade.exit_reason || trade.outcome}</span>
                     <span className="text-faint">{trade.confidence.toFixed(0)}%</span>
                     <span className={trade.r_multiple >= 0 ? 'text-bull' : 'text-bear'}>
                       {fmtSigned(trade.r_multiple, 2)}R
@@ -172,9 +234,9 @@ export default function BacktestPanel() {
                   </span>
                 </div>
                 <div className="text-ink/85">{edge.reason}</div>
-                {edge.method !== 'walk_forward' && (
+                {(edge.method !== 'walk_forward' || result.strategy !== 'engine') && (
                   <div className="text-faint">
-                    Execute Live needs a passing walk-forward test, not this one.
+                    Execute Live needs a passing walk-forward test of the Engine, not this one.
                   </div>
                 )}
               </div>

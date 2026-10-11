@@ -1,6 +1,6 @@
 import type {
   AngelStatus, AnalysisResult, BacktestResult, Candle, Drawing, DrawingAnalytics,
-  DrawingType, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
+  DrawingType, ExecutionPreview, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
   MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
   SettingsPayload, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from './types'
@@ -253,6 +253,9 @@ export const api = {
     request<ExecutionRecord>(`/api/trades/${recommendationId}/execute`, {
       method: 'POST', body: JSON.stringify({ confirmed }),
     }),
+  /** Read-only: the exact order and whether the pre-trade gate would allow it. */
+  previewLive: (recommendationId: string) =>
+    request<ExecutionPreview>(`/api/trades/${recommendationId}/preview`),
   getExecution: (recommendationId: string) =>
     request<ExecutionRecord>(`/api/trades/${recommendationId}/execution`),
 
@@ -288,7 +291,6 @@ export const api = {
     strategy?: string
     min_confidence?: number
     risk_reward?: number
-    atr_stop_mult?: number
     starting_balance?: number
     risk_pct?: number
   }) => request<BacktestResult>('/api/backtest/run', {
@@ -296,7 +298,10 @@ export const api = {
     body: JSON.stringify(payload),
   }),
   /** The test the live gate reads: parameters fitted on one stretch, traded on the next. */
-  walkForward: (payload: { symbol: string; timeframe: string; bars?: number; strategy?: string }) =>
+  walkForward: (payload: {
+    symbol: string; timeframe: string; bars?: number; strategy?: string
+    min_confidence?: number; risk_reward?: number
+  }) =>
     request<BacktestResult>('/api/backtest/walk-forward', {
       method: 'POST',
       body: JSON.stringify(payload),
