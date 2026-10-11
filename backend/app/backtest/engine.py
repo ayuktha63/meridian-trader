@@ -392,6 +392,26 @@ async def _frame(request: BacktestRequest) -> Optional[pd.DataFrame]:
     return store.frame(symbol, timeframe, wanted)
 
 
+SIMULATED = "synthetic"
+NOT_EVIDENCE = ("Measured on simulated bars — a test of the software, not of a "
+                "market. Connect the venue that serves {} and run it again.")
+
+
+def _data_source(request: BacktestRequest) -> str:
+    """Where the bars under this test came from."""
+    return feed.source_of(request.symbol, request.timeframe) or "unknown"
+
+
+def _not_evidence(result: BacktestResult) -> None:
+    """A verdict reached on simulated bars is withdrawn, whatever it was."""
+    if result.data_source != SIMULATED:
+        return
+    reason = NOT_EVIDENCE.format(result.symbol)
+    result.edge = result.edge.model_copy(update={"passed": False, "reason": reason})
+    result.next_parameters = {}
+    result.notes.insert(0, "SIMULATED DATA. " + reason)
+
+
 async def _higher_frames(request: BacktestRequest) -> Dict[str, pd.DataFrame]:
     """Stored history for the timeframes above the chart's, for the engine's
     multi-timeframe read. Missing ones are rebuilt from the chart's own bars."""
@@ -405,6 +425,8 @@ async def _higher_frames(request: BacktestRequest) -> Dict[str, pd.DataFrame]:
             await feed.ensure_history(symbol, tf)
         except Exception as exc:  # noqa: BLE001
             log.debug("history for %s %s unavailable: %s", symbol, tf, exc)
+        if feed.source_of(symbol, tf) != feed.source_of(symbol, request.timeframe):
+            continue    # another source's bars: rebuilt from the chart's own instead
         frame = store.frame(symbol, tf, 6000)
         if frame is not None and len(frame) >= replay.MIN_BARS:
             frames[tf] = frame
@@ -470,6 +492,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         return result
     instrument = get_instrument(request.symbol.upper())
     df = await _frame(request)
+    result.data_source = _data_source(request)
     if df is None or len(df) < WARMUP + 50:
         result.notes.append(
             "Not enough history to backtest ({} bars, need {})".format(
@@ -523,6 +546,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         result.notes.append(
             "Only {} trades — too small a sample to draw conclusions from. Widen the "
             "window or lower the confidence threshold.".format(len(trades)))
+    _not_evidence(result)
     return result
 
 
@@ -583,6 +607,7 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         return result
     instrument = get_instrument(request.symbol.upper())
     df = await _frame(request)
+    result.data_source = _data_source(request)
 
     first = _first_tested(0 if df is None else len(df), request.bars)
     usable = 0 if df is None else len(df) - first
@@ -637,4 +662,5 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         "here is out-of-sample and net of costs.".format(
             folds, time.perf_counter() - started, len(WF_GRID)))
     result.notes += _replay_notes(request)
+    _not_evidence(result)
     return result

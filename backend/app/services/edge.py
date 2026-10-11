@@ -34,6 +34,22 @@ MIN_PAPER_TRADES = 10
 
 NOT_MEASURED = ("No measured edge: no walk-forward test of the live engine has been "
                 "run for {} on {}. Run one from the Backtest tab.")
+#: Sources that are not a market. A test run on them is a test of the software.
+NOT_A_MARKET = ("synthetic",)
+SIMULATED = ("No measured edge: the walk-forward test on record for {} {} ran on "
+             "simulated bars, which says nothing about the market. Connect the venue "
+             "that serves it and run the test again.")
+UNSOURCED = ("No measured edge: the walk-forward test on record for {} {} does not "
+             "record what data it ran on, so it cannot be counted. Run it again.")
+
+
+def _source_problem(payload: dict, symbol: str, timeframe: str) -> Optional[str]:
+    source = payload.get("data_source")
+    if not source or source == "unknown":
+        return UNSOURCED.format(symbol, timeframe)
+    if source in NOT_A_MARKET:
+        return SIMULATED.format(symbol, timeframe)
+    return None
 
 
 def holm_survivors(p_values: Dict[Tuple[str, str], float],
@@ -95,9 +111,16 @@ async def latest_edge(session: AsyncSession, symbol: str, timeframe: str,
     edge.setdefault("reason", "No verdict recorded.")
     edge["measured_at"] = mine.created_at
     edge["tests_considered"] = len(latest)
+    edge["data_source"] = payload.get("data_source") or "unknown"
     for key, value in (payload.get("next_parameters") or {}).items():
         edge[key] = value
     if not edge["passed"]:
+        return edge
+
+    # ── was it measured on a market at all ────────────────────
+    problem = _source_problem(payload, symbol, timeframe)
+    if problem:
+        edge["passed"], edge["reason"] = False, problem
         return edge
 
     # ── how many markets were tested to find this one ─────────

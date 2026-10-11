@@ -519,14 +519,16 @@ TRADE_NEXT = {"min_confidence": 50.0, "min_risk_reward": 1.5}
 
 
 async def _record(symbol="RELIANCE", timeframe="1h", strategy="engine", passed=True,
-                  p_value=0.01, age_days=0.0, parameters=TRADE_NEXT, reason="measured"):
+                  p_value=0.01, age_days=0.0, parameters=TRADE_NEXT, reason="measured",
+                  data_source="angelone"):
     async with session_scope() as session:
         session.add(BacktestRow(
             symbol=symbol, timeframe=timeframe, strategy="walk_forward:" + strategy,
             bars=3000, metrics={}, created_at=time.time() - age_days * 86_400,
             payload={"edge": {"passed": passed, "reason": reason, "p_value": p_value,
                               "trades": 80, "method": "walk_forward"},
-                     "next_parameters": parameters or {}}))
+                     "next_parameters": parameters or {},
+                     "data_source": data_source}))
 
 
 async def _paper(count, r_multiple, symbol="RELIANCE", timeframe="1h"):

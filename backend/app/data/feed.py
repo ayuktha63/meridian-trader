@@ -26,6 +26,12 @@ log = logging.getLogger("meridian.feed")
 #: also the resolution of the exit alerts.
 QUOTE_PUBLISH_HZ = 4.0
 
+SYNTHETIC = "synthetic"
+#: A series standing in for an exchange that did not answer is tried again
+#: this often — not on every request, which would hammer a venue that is
+#: already struggling.
+REAL_SOURCE_RETRY_SECONDS = 60.0
+
 
 class MarketFeed:
     def __init__(self) -> None:
@@ -38,6 +44,8 @@ class MarketFeed:
         #: Series whose provider returned less than was asked for — as deep
         #: as that source goes.
         self._depth_reached: Set[Tuple[str, str]] = set()
+        #: When the real source for a series last failed to supply it.
+        self._real_source_failed: Dict[Tuple[str, str], float] = {}
         self._last_quote_publish: Dict[str, float] = {}
         self._day_open: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -86,6 +94,7 @@ class MarketFeed:
         self._day_open.clear()
         self._hydrate_locks.clear()
         self._depth_reached.clear()
+        self._real_source_failed.clear()
         await self.start()
 
     async def stop(self) -> None:
@@ -120,9 +129,12 @@ class MarketFeed:
                 await asyncio.sleep(0)
 
     async def _run_stream(self, provider: MarketDataProvider, symbols: List[str]) -> None:
+        async def handler(tick: ProviderTick) -> None:
+            await self._on_tick(tick, provider.name)
+
         while self._running:
             try:
-                await provider.stream(symbols, self._on_tick)
+                await provider.stream(symbols, handler)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -146,19 +158,37 @@ class MarketFeed:
             # call would only hammer it for the same answer.
             enough = have >= min(wanted, 200)
             deeper = bars is not None and have < wanted and key not in self._depth_reached
-            if enough and not deeper:
-                return
             provider = resolve_provider(symbol, self.providers or build_providers())
+            # Bars from the simulator standing in for a venue that did not
+            # answer: good enough to draw, never good enough to keep.
+            stand_in = have > 0 and series.source == SYNTHETIC and provider.name != SYNTHETIC
+            retry = stand_in and (time.time() - self._real_source_failed.get(key, 0.0)
+                                  >= REAL_SOURCE_RETRY_SECONDS)
+            if enough and not deeper and not retry:
+                return
+            if stand_in and not retry:
+                return
             rows = await provider.history(symbol, timeframe, wanted)
-            if not rows and provider.name != "synthetic" and not enough:
-                log.info("%s returned no history for %s %s; using synthetic",
-                         provider.name, symbol, timeframe)
-                rows = await self.providers["synthetic"].history(symbol, timeframe, wanted)
-            if len(rows) < wanted:
+            if rows:
+                self._real_source_failed.pop(key, None)
+                if len(rows) < wanted:
+                    self._depth_reached.add(key)
+                if len(rows) > have or stand_in:
+                    series.replace(rows, source=provider.name)
+                    self._seed_quote(symbol, series.last_close or 0.0)
+                return
+            if provider.name == SYNTHETIC:
                 self._depth_reached.add(key)
-            if len(rows) > have:
-                series.replace(rows)
-                self._seed_quote(symbol, series.last_close or 0.0)
+                return
+            self._real_source_failed[key] = time.time()
+            if have == 0:
+                # Nothing to show at all. Simulated bars keep the chart alive,
+                # labelled as what they are; real quotes are not folded into
+                # them, and the venue is asked again shortly.
+                log.warning("%s returned no history for %s %s — showing SIMULATED "
+                            "bars until it does", provider.name, symbol, timeframe)
+                rows = await self.providers[SYNTHETIC].history(symbol, timeframe, wanted)
+                series.replace(rows, source=SYNTHETIC)
 
     def _seed_quote(self, symbol: str, price: float) -> None:
         if symbol in self.quotes or price <= 0:
@@ -173,7 +203,7 @@ class MarketFeed:
 
     # ── tick handling ─────────────────────────────────────────
 
-    async def _on_tick(self, tick: ProviderTick) -> None:
+    async def _on_tick(self, tick: ProviderTick, source: Optional[str] = None) -> None:
         symbol = tick.symbol.upper()
         inst = get_instrument(symbol)
 
@@ -184,6 +214,8 @@ class MarketFeed:
             series = store.series(symbol, tf)
             if len(series) == 0:
                 continue
+            if source is not None and series.source not in (None, source):
+                continue        # one venue's quote is never folded into another's bars
             opened_new, bar = series.apply_price(tick.time, tick.price, tick.volume)
             payload = {
                 "time": int(bar[0]), "open": bar[1], "high": bar[2],
@@ -194,12 +226,14 @@ class MarketFeed:
                 if opened_new:
                     closed_bars.append((tf, payload))
 
-        day_open = self._day_open_price(symbol)
+        day_series = store.series(symbol, "1d")
+        same_venue = len(day_series) > 0 and (
+            source is None or day_series.source in (None, source))
+        day_open = self._day_open_price(symbol) if same_venue else 0.0
         change_abs = tick.price - day_open if day_open else 0.0
         change_pct = (change_abs / day_open * 100.0) if day_open else 0.0
-        day_series = store.series(symbol, "1d")
-        day_high = day_series.rows(1)[0][2] if len(day_series) else tick.price
-        day_low = day_series.rows(1)[0][3] if len(day_series) else tick.price
+        day_high = day_series.rows(1)[0][2] if same_venue else tick.price
+        day_low = day_series.rows(1)[0][3] if same_venue else tick.price
 
         quote = QuoteSnapshot(
             symbol=symbol,
@@ -288,9 +322,18 @@ class MarketFeed:
         return series.last_close
 
     def provider_for(self, symbol: str) -> str:
+        """The provider that *should* serve this symbol."""
         if not self.providers:
             return "synthetic"
         return resolve_provider(symbol, self.providers).name
+
+    def source_of(self, symbol: str, timeframe: str) -> Optional[str]:
+        """Where the bars held for this series actually came from, or None if
+        nothing has been loaded. Not always `provider_for`: an exchange that
+        did not answer leaves simulated bars standing in for it."""
+        if not store.has(symbol, timeframe):
+            return None
+        return store.series(symbol, timeframe).source
 
     def status(self) -> Dict[str, Any]:
         return {

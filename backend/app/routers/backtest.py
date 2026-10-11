@@ -36,7 +36,7 @@ async def run(
         bars=result.bars_tested,
         metrics=result.metrics.model_dump(),
         payload={"request": payload.model_dump(), "notes": result.notes,
-                 "edge": result.edge.model_dump()},
+                 "edge": result.edge.model_dump(), "data_source": result.data_source},
     ))
     return result
 
@@ -60,7 +60,8 @@ async def run_walk_forward(
         metrics=result.metrics.model_dump(),
         payload={"request": payload.model_dump(), "notes": result.notes,
                  "edge": result.edge.model_dump(), "folds": result.folds,
-                 "next_parameters": result.next_parameters},
+                 "next_parameters": result.next_parameters,
+                 "data_source": result.data_source},
     ))
     return result
 

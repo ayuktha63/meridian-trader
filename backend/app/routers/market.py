@@ -69,7 +69,9 @@ async def get_candles(
         symbol=symbol.upper(),
         timeframe=timeframe.lower(),
         candles=[Candle(**row) for row in rows],
-        provider=feed.provider_for(symbol),
+        # Where these bars came from — which is the simulator when the venue
+        # that should serve the symbol did not answer.
+        provider=feed.source_of(symbol, timeframe) or feed.provider_for(symbol),
         partial_bar=Candle(**rows[-1]),
     )
 

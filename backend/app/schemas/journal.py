@@ -172,3 +172,6 @@ class BacktestResult(BaseModel):
     #: …and the ones fitted on the most recent stretch, to trade next. A live
     #: order must clear these to be the kind of trade the test measured.
     next_parameters: Dict[str, float] = Field(default_factory=dict)
+    #: Where the bars came from: a venue's name, or "synthetic" for the
+    #: simulator — whose results are never evidence about a market.
+    data_source: str = "unknown"

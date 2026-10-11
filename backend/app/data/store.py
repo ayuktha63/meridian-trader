@@ -32,7 +32,7 @@ def bar_open_time(ts: float, tf_seconds: int) -> int:
 
 
 class CandleSeries:
-    __slots__ = ("symbol", "timeframe", "tf_seconds", "maxlen", "_rows",
+    __slots__ = ("symbol", "timeframe", "tf_seconds", "maxlen", "source", "_rows",
                  "_version", "_frame", "_frame_version", "_lock")
 
     def __init__(self, symbol: str, timeframe: str, maxlen: int = 6000) -> None:
@@ -40,6 +40,9 @@ class CandleSeries:
         self.timeframe = timeframe
         self.tf_seconds = get_timeframe(timeframe).seconds
         self.maxlen = maxlen
+        #: The provider these bars came from — "synthetic" for the simulator.
+        #: None until something has loaded the series.
+        self.source: Optional[str] = None
         self._rows: List[List[float]] = []
         self._version = 0
         self._frame: Optional[pd.DataFrame] = None
@@ -48,8 +51,9 @@ class CandleSeries:
 
     # ── mutation ──────────────────────────────────────────────
 
-    def replace(self, rows: List[List[float]]) -> None:
+    def replace(self, rows: List[List[float]], source: Optional[str] = None) -> None:
         with self._lock:
+            self.source = source if rows else None
             rows = sorted(rows, key=lambda r: r[0])
             deduped: List[List[float]] = []
             for row in rows:
