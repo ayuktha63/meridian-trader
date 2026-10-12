@@ -793,6 +793,26 @@ export interface BacktestResult {
   folds?: Record<string, number>[]
   /** Walk-forward: the thresholds a live order has to clear. */
   next_parameters?: { min_confidence?: number; min_risk_reward?: number }
+  /** Where the bars came from: a venue's name, or "synthetic" — never evidence. */
+  data_source?: string
+}
+
+/** Where the live engine stands on one market, and why (research/eligibility.py). */
+export interface Eligibility {
+  symbol: string
+  timeframe: string
+  strategy: string
+  strategy_version: string
+  /** Whether the evidence check in front of a live order would pass right now. */
+  live_allowed: boolean
+  approved: boolean
+  reason: string | null
+  state: 'INELIGIBLE' | 'INSUFFICIENT EVIDENCE' | 'RESEARCH APPROVED'
+    | 'PAPER VALIDATION' | 'ELIGIBLE FOR HUMAN REVIEW'
+  reasons: string[]
+  rules_version: string
+  experiment_id: string | null
+  paper_trades: number
 }
 
 /** Is there a measured edge after costs, on data the parameters never saw? */

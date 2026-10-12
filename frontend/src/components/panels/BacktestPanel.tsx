@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { fmtNumber, fmtSigned } from '../../lib/format'
-import type { BacktestResult } from '../../lib/types'
+import type { BacktestResult, Eligibility } from '../../lib/types'
 import { useStore } from '../../store/useStore'
 import { Sparkline, Spinner, Stat } from '../ui'
 
@@ -39,6 +39,18 @@ export default function BacktestPanel() {
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [eligibility, setEligibility] = useState<Eligibility | null>(null)
+
+  // Where the live engine stands on this market — re-read after every run,
+  // since a run is what changes it. A server too old to have the endpoint
+  // simply shows nothing.
+  useEffect(() => {
+    let current = true
+    api.eligibility(symbol, timeframe)
+      .then((state) => { if (current) setEligibility(state) })
+      .catch(() => { if (current) setEligibility(null) })
+    return () => { current = false }
+  }, [symbol, timeframe, result])
 
   const run = async () => {
     setRunning(true)
@@ -229,6 +241,15 @@ export default function BacktestPanel() {
               </div>
             </div>
 
+            {result.data_source === 'synthetic' && (
+              <div className="rounded-lg border border-bear/50 bg-bear/10 px-2.5 py-2 text-2xs
+                              leading-relaxed text-bear">
+                <span className="font-bold uppercase tracking-wide">Simulated data.</span>{' '}
+                These bars are generated, not traded. The numbers below test the software,
+                not a market, and count for nothing.
+              </div>
+            )}
+
             {edge && (
               <div className={`rounded-lg border px-2.5 py-2 text-2xs leading-relaxed ${
                 edge.passed ? 'border-bull/50 bg-bull/10 text-bull'
@@ -245,6 +266,26 @@ export default function BacktestPanel() {
                     Execute Live needs a passing walk-forward test of the Engine, not this one.
                   </div>
                 )}
+              </div>
+            )}
+
+            {eligibility && (
+              <div className="rounded-lg border border-hairline px-2.5 py-2 text-2xs leading-relaxed">
+                <div className="font-bold uppercase tracking-wide text-ink/85">
+                  Live eligibility · {symbol} {timeframe}
+                </div>
+                <div className={eligibility.live_allowed ? 'text-bull font-semibold'
+                  : 'text-warn font-semibold'}>
+                  {eligibility.state}{eligibility.approved ? ' · approved' : ''}
+                </div>
+                {eligibility.reasons.slice(0, 4).map((reason) => (
+                  <p key={reason} className="text-faint">· {reason}</p>
+                ))}
+                <p className="text-faint">
+                  No state trades by itself: a live order also needs a person's approval
+                  on record and every pre-trade check.
+                  {eligibility.experiment_id ? ` Evidence: ${eligibility.experiment_id}.` : ''}
+                </p>
               </div>
             )}
 

@@ -6,7 +6,7 @@ continuously fuses that with indicators, market structure, Smart Money Concepts,
 trend, volume and volatility — then asks Claude to reason over the evidence and return a
 **BUY / SELL / WAIT** recommendation with confidence, entry, stop, targets and explicit reasoning.
 
-> **By default this is not a trading bot.** Every output is analysis and probability, never a
+> **By default this is not a trading bot.** Every output is analysis and a confidence score, never a
 > guarantee. When evidence conflicts, the analyst is required to say `WAIT`.
 
 > **Two exceptions, both opt-in and both clearly labelled on screen.** A built-in demo account
@@ -23,12 +23,14 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 > test of that market has shown an edge after costs. If the honest answer is "no measured
 > edge", the system says so and will not trade it.
 >
-> **That is the answer it currently gives.** Run on 12 October 2026 against six months of
-> real BTC, ETH and SOL history, neither the engine nor any of the five named plays showed an
-> edge after costs — twenty-four walk-forward tests, none passed, and on two of the three
-> hourly markets the engine was indistinguishable from entries chosen at random. The numbers
-> are in [TRADING.md §7](TRADING.md#7-so--will-this-make-money). Indian equities and F&O need
-> a broker connection for their history and have not been tested.
+> **That is the answer it currently gives.** On 12 October 2026 the engine, its five named
+> plays and five simpler strategies were tested on nine crypto markets with up to eight years
+> of history. Nothing has a demonstrated edge, nothing on hourly bars survives its costs, and
+> the confidence figure shown beside a signal does not tell winners from losers. One idea —
+> slow trend-following on 4-hour bars — came close, was rejected by a protocol fixed in
+> advance, and is being watched on new data. The full account, with every experiment
+> reproducible, is in [docs/research/REPORT.md](docs/research/REPORT.md). Indian equities and
+> F&O need a broker connection for their history and have not been tested.
 
 > **Trading with it?** Read **[TRADING.md](TRADING.md)** — what you can legally trade from
 > India, how to connect Zerodha or Angel One, how a signal becomes an order (manual or live),
@@ -160,7 +162,7 @@ make desktop     # Electron shell wrapping the same UI
 ### Other commands
 
 ```bash
-make test        # 360+ backend tests (pytest) — offline, about 25 seconds
+make test        # 520+ backend tests (pytest) — offline, about 40 seconds
 make lint        # backend lint (ruff) and frontend typecheck (tsc --noEmit)
 make clean       # remove venv, node_modules, build output
 ```
@@ -357,8 +359,9 @@ backend/app
 ├── serve.py              `python -m app.serve` — checks the bind address, then uvicorn
 ├── security.py           who may call the API: local-only, or the access token
 ├── config.py             settings (env-driven, safe defaults)
-├── costs.py              spread, brokerage, statutory charges, slippage — one model
-│                         for paper trading and the backtest
+├── costs.py              spread, fees, statutory charges, slippage, financing — one
+│                         model, filed under named venue profiles
+├── observability.py      JSON logs, /api/ready, /metrics
 ├── alerts.py · notify.py operator alerts, and the optional Telegram channel
 ├── audit.py              append-only log of everything that touched real money
 ├── instruments.py        instrument reference data (pip size, lots, venues)
@@ -373,6 +376,12 @@ backend/app
 ├── overlays/             analysis → chart overlay primitives
 ├── backtest/             replay (the live engine, bar by bar), engine (the
 │                         order's life, walk-forward, the edge verdict), metrics
+├── research/             nothing here can place an order —
+│                         datasets (hashed history snapshots), quality, versions
+│                         (code fingerprints), stats, simulator, strategies and
+│                         audit (candidates, checked for look-ahead), study (the
+│                         protocol), engine_evidence, eligibility, approvals,
+│                         forward (watching on new bars), registry, run (CLI)
 ├── broker/               live-execution layer
 │   ├── angelone/         auth (TOTP session), client (SmartAPI wrapper),
 │   │                     instruments (scrip-master resolution), orders (tags,
@@ -411,10 +420,48 @@ frontend/src
 
 ---
 
+## Research
+
+Whether a strategy has an edge is a question with a procedure, and the procedure is in
+`backend/app/research/`. Nothing in it can place an order.
+
+```bash
+cd backend
+.venv/bin/python -m app.research.run snapshot BTCUSD ETHUSD   # history, frozen and hashed
+.venv/bin/python -m app.research.run datasets                 # what is in the store
+.venv/bin/python -m app.research.run engine BTCUSD 1h         # walk-forward the live engine
+.venv/bin/python -m app.research.run study                    # the candidate study
+.venv/bin/python -m app.research.run forward --refresh        # frozen candidates, on new bars
+.venv/bin/python -m app.research.run experiments              # everything on record
+```
+
+* **Data is a snapshot**, cleaned by recorded rules and named by the hash of its contents. A
+  snapshot edited on disk is refused. None is ever taken from the simulator.
+* **Every run is an experiment record** — the snapshot, fingerprints of the code that decided,
+  simulated and priced the trades, every assumption, the number of configurations tried, the
+  verdict — stored in the database and as a file, and hashed.
+* **A study is fixed before it is run:** hypotheses, parameter grids, thresholds, and three
+  stretches of history cut by date, the last of which is opened once and only for what
+  survives the first two.
+* **Eligibility** (`/api/research/eligibility`) has five states and none of them trades. The
+  last, ELIGIBLE FOR HUMAN REVIEW, means a person may now approve it; the live gate needs that
+  approval on record too.
+
+Reports: [what was found](docs/research/REPORT.md) ·
+[the repository as it was](docs/research/BASELINE.md) ·
+[each strategy and its result](docs/research/STRATEGIES.md) ·
+[what was learned from other projects](docs/research/REFERENCES.md).
+
+Operations: `LOG_FORMAT=json` for one JSON object per log line, `GET /api/ready` for a
+readiness answer (200 or 503, with the reason), `GET /metrics` for Prometheus — both behind
+the same access rule as everything else.
+
+---
+
 ## Testing
 
 ```bash
-make test          # 360+ pytest cases, offline, about 25 seconds
+make test          # 520+ pytest cases, offline, about 40 seconds
 make lint          # ruff on the backend, tsc --noEmit on the frontend
 ```
 

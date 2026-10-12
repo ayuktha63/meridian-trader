@@ -22,3 +22,5 @@ backend/data/settings.json
 backend/data/kite_instruments.json
 # research snapshots and run artifacts: reproducible from the records, large
 backend/data/research/
+# runtime state, not source: whether the kill switch is on
+backend/data/kill_switch.json

@@ -140,6 +140,17 @@ when you specifically need rupee settlement.
 Meridian encodes these spreads per instrument, so the cost model and the
 sizing already reflect them.
 
+**The spread is the small part. The fee is the large one.** CoinDCX's spot
+fee is reported at 0.20% a side at the base tier — some sources say 0.10%,
+some 0.50% for small INR volumes — plus 18% GST, and 1% TDS is withheld on
+every sale. That is close to **half a percent a round trip before the
+market has moved**, on the USDT books too. Meridian used to charge crypto
+0.05% a side, which is the fee on the exchange's *futures*; it now charges
+these books as the spot books they are (§5), and no hourly strategy tested
+survives it (§7). Check the figure against your own statement — it could
+not be read from CoinDCX's fee page directly — and treat any intraday crypto
+signal accordingly.
+
 ### Zerodha — for everything Indian
 
 1. **Get a Kite Connect app.** Sign in at
@@ -201,7 +212,12 @@ at every step.
 5. Optional but worth it: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, so a
    stop that could not be placed reaches your phone and not just the screen.
 6. Run a **walk-forward test** (Backtest tab) on each symbol and timeframe
-   you mean to trade. Without a passing one, Execute Live stays refused.
+   you mean to trade. Without a passing one, Execute Live stays refused —
+   and a passing one is no longer enough by itself (§3a, *What the evidence
+   has to be*).
+7. When you have placed one minimum-size order and watched it end to end in
+   Angel One's own app, set `LIVE_BROKER_VALIDATED=true`. Until then nothing
+   becomes eligible for live review: the order path itself is unverified.
 
 **The limits.** Read once at startup, never editable from the UI — a limit
 you can raise with a click while you are losing is not a limit. Changing one
@@ -443,9 +459,36 @@ any one of them refuses the order with its reason:
   order (one at a time per instrument, §2a);
 - if this order *and every stop already open* were hit, the day would still
   be inside `LIVE_DAILY_LOSS_LIMIT`, charges included;
-- a walk-forward test of this symbol and timeframe says there is an edge
-  (§7), and this recommendation is the kind of trade that test took — at or
-  above the confidence and reward:risk it traded.
+- the evidence for this symbol and timeframe is in order, and a person has
+  approved it (below) — and this recommendation is the kind of trade that
+  was tested: at or above the confidence and reward:risk it traded.
+
+**What the evidence has to be.** A passing walk-forward test used to be the
+whole of it. It is now the first of several, and each of them refuses on
+its own:
+
+- the test is on record as an experiment whose hash still matches, less
+  than 30 days old, with at least 30 out-of-sample trades and an interval
+  above zero;
+- it ran on a **real venue's data** that passed its quality checks — never
+  on simulated bars, which is what a symbol with no venue connected shows;
+- it was run by **the code that is running now**. Change the engine, the
+  execution model or the cost model and the test is about something that no
+  longer exists;
+- it was charged as the venue this market trades on;
+- it did better than its own trades moved to **random bars**, and does not
+  hang on one parameter setting;
+- it is not the seventh attempt at the same question in a month;
+- **twenty closed paper trades** on this market agree with it;
+- the broker path has been validated (`LIVE_BROKER_VALIDATED`).
+
+When all of that holds, the state is **ELIGIBLE FOR HUMAN REVIEW** — and the
+order is still refused. A person has to record an approval
+(`POST /api/research/approvals`, with a name and an explicit confirmation)
+for that version of the code on that market. Edit the engine afterwards and
+the approval is for code that no longer runs. The Backtest panel shows the
+current state and every reason for it; so does
+`/api/research/eligibility?symbol=…&timeframe=…`.
 
 **After the order is sent** Meridian supervises it — every few seconds, and
 again from scratch after a restart:
@@ -733,7 +776,8 @@ after them:
 | Index futures | 0.049% | ≈ 0.097% |
 | Commodity futures | 0.044% | ≈ 0.088% |
 | Currency futures | 0.036% | ≈ 0.072% |
-| Crypto (CoinDCX taker) | 0.050% | ≈ 0.100% |
+| Crypto, CoinDCX **spot** — the default for these books | 0.236% | **≈ 0.47%** |
+| Crypto, CoinDCX USDT **perpetual** — only when a test asks for it | 0.059% taken, 0.024% resting | ≈ 0.08% – 0.12%, plus 0.01% funding per 8 hours held |
 
 Plus the spread for each side that crosses it, and slippage on a stop. Those
 figures are brokerage at 0.03% (the flat ₹20 cap is ignored, which overstates
@@ -841,9 +885,40 @@ It does not say nothing here can work. It says **nothing here has been shown
 to**, and that on these markets the signals as they stand do not beat their
 own costs. The live gate was built to refuse on that answer, and it does.
 
+**A correction to that table, made the same day.** Those runs charged 0.05%
+a side — the futures fee — and simulated short sales on books that cannot be
+shorted. They reproduce exactly from frozen data, so they are a true account
+of what was measured; it was the wrong venue. Charged as the spot books they
+are, long only:
+
+| Market | As above | As the spot book |
+|---|---|---|
+| BTCUSD 1h | −0.11R on 112 trades | **−0.73R on 16** — interval wholly below zero |
+| ETHUSD 1h | +0.22R on 51 | **−0.48R on 35** — interval wholly below zero |
+| SOLUSD 1h | −0.14R on 86 | **−0.11R on 31** |
+
+The one positive number is gone. And the confidence figure beside every
+signal turned out to say nothing: across 778 setups, about three in ten won
+whether it read 50 or 70.
+
+**A wider search, also 12 October 2026.** Five simpler ideas — trend
+following, momentum, fading a range, buying dips, breaking out of a squeeze
+— on nine coins with up to eight years of hourly history, 198 configurations
+declared before any was run, and the last two years of history set aside
+unseen. Everything on hourly bars lost to its costs. Nothing passed. One
+idea came close: a slow trend-follower on 4-hour bars (+0.25R to +0.37R on
+600 to 1,000 trades, profitable on eight coins of nine), which cleared every
+bar but the one that discounts a result for the number of things tried. It
+was rejected, the unseen history was left unseen, and it is now being
+watched on new bars instead. The whole account is in
+[docs/research/REPORT.md](docs/research/REPORT.md).
+
 Run it yourself before believing either this table or a better one: Backtest
 tab → **Walk-forward test**. The first pass over a market takes three or four
-minutes, because it really does run the engine once per bar.
+minutes, because it really does run the engine once per bar. It now fetches
+its own snapshot of history and records the run as an experiment, so the
+same test can be repeated on the same bars; `python -m app.research.run
+experiments` lists them.
 
 If the verdict is "no measured edge", stop here. That is the cheapest this
 lesson will ever be, and changing the instrument or the timeframe and testing
@@ -895,9 +970,11 @@ Stated plainly so there's no confusion:
   position overnight; it cannot trade options, currency or commodity
   futures (both blocked until a number each depends on is verified, §2a) or
   crypto; and none of it has been run against a real account yet (§3a).
-- It **cannot predict price.** It weighs evidence and reports a probability,
-  and it is capped at 72% because nothing on a liquid market reliably wins more
-  often than that.
+- It **cannot predict price.** It weighs evidence and reports a confidence
+  *score*, capped at 72. That number is a weighted count of indicators that
+  agree. It is not a probability, and it has been measured: over 778 setups
+  on three markets, about 30% won whether the score was under 50 or over 70.
+  Do not size a trade by it.
 - It **has no news, no fundamentals, no order book, no positioning data.** It
   sees candles and what you drew.
 - Its **backtest is not a forecast.** It replays the live engine over the

@@ -1,6 +1,6 @@
 import type {
   AngelStatus, AnalysisResult, BacktestResult, Candle, Drawing, DrawingAnalytics,
-  DrawingType, ExecutionPreview, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
+  DrawingType, Eligibility, ExecutionPreview, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
   LiveTradingOverview, MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
   SettingsPayload, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from './types'
@@ -311,4 +311,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  /** Where the live engine stands on this market: a state, and every reason for it. */
+  eligibility: (symbol: string, timeframe: string) =>
+    request<Eligibility>(
+      `/api/research/eligibility?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`),
 }

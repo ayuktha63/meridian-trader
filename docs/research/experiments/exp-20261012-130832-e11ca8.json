@@ -1,0 +1,928 @@
+{
+  "assumptions": {
+    "execution": [
+      "A decision at a bar's close acts at the next bar's open, as a market order.",
+      "A protective stop triggers on a touch and fills at the open on a gap.",
+      "A target is a resting order and fills only when the market trades through it.",
+      "When one bar reaches both stop and target, the stop is taken.",
+      "One position per market at a time; a signal that arrives during one is not taken.",
+      "A position open at the end of a window is closed at that window's last close.",
+      "Signals are computed on the spot book's bars; the perpetual profile assumes the perpetual tracks them \u2014 basis is not modelled.",
+      "No partial fills, no latency beyond the one-bar delay, no market impact: sizes are assumed small against the book."
+    ]
+  },
+  "code": {
+    "costs": "costs@a0265176d91e",
+    "engine": "engine@c6f62452c4f8",
+    "execution": "exec@d94b9b60229a",
+    "git": {
+      "commit": "22d04f9aab2900147a599f8315525874a521f945",
+      "dirty": true
+    },
+    "research": "research@e1c89e70a1d9"
+  },
+  "cost_profile": "crypto_perp,crypto_spot",
+  "created_at": 1791810512.7201338,
+  "datasets": [
+    {
+      "bars": 68748,
+      "dataset_id": "9f9940dfde940ddb",
+      "derived_from": null,
+      "first": 1543838400.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "9f9940dfde940ddbf7a629c4bed490a1da284bfe6430275d085b833270647d6e",
+      "symbol": "ADAUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 67938,
+      "dataset_id": "4bc755976096f8ce",
+      "derived_from": null,
+      "first": 1546815600.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "4bc755976096f8cec0d36c41e80763639bad1984e1572bd9f6eb0e7f6dc74919",
+      "symbol": "BNBUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 71220,
+      "dataset_id": "e948e57c0e10685d",
+      "derived_from": null,
+      "first": 1535043600.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "e948e57c0e10685d01ff95cfd99760a4a70b581d7a9ec44411c5d5173d27a22b",
+      "symbol": "BTCUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 63640,
+      "dataset_id": "efc567c492850536",
+      "derived_from": null,
+      "first": 1562328000.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "efc567c49285053631b82ac45582124738edb1552f04817c1a90d718396e9b37",
+      "symbol": "DOGEUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 70522,
+      "dataset_id": "d95c01eefe3ab56f",
+      "derived_from": null,
+      "first": 1537506000.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "d95c01eefe3ab56fc0175793289646d3e28deea62fcc0fd640233f7a6d9914b7",
+      "symbol": "ETHUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 67700,
+      "dataset_id": "da894c6a2b46ade8",
+      "derived_from": null,
+      "first": 1547632800.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "da894c6a2b46ade8caa1ac4bdd0ab502162ad8b43d6cd0bcb0bf84e37b1c0ad4",
+      "symbol": "LINKUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 68748,
+      "dataset_id": "0a29c47bc340973b",
+      "derived_from": null,
+      "first": 1543838400.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "0a29c47bc340973bca7498cfa1332d1fe0097598fb4dda82b4a94b0d6f62c0b2",
+      "symbol": "LTCUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 49587,
+      "dataset_id": "a76b7d9cb5afa84a",
+      "derived_from": null,
+      "first": 1613052000.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "a76b7d9cb5afa84ab7907cd5e3d1c78a18bf97dfddcb230a004654d22d02d67e",
+      "symbol": "SOLUSD",
+      "timeframe": "1h"
+    },
+    {
+      "bars": 68869,
+      "dataset_id": "175f00b99385c745",
+      "derived_from": null,
+      "first": 1543417200.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "175f00b99385c7450c39f376cf62c4d583804e5ab1a9e9647688c7ee2619c5c2",
+      "symbol": "TRXUSD",
+      "timeframe": "1h"
+    }
+  ],
+  "id": "exp-20261012-130832-e11ca8",
+  "kind": "diagnostic",
+  "metrics": {
+    "benchmarks": {
+      "ADAUSD": {
+        "research": {
+          "max_drawdown_pct": 91.84,
+          "return_pct": 945.84
+        },
+        "validation": {
+          "max_drawdown_pct": 55.86,
+          "return_pct": 100.2
+        }
+      },
+      "BNBUSD": {
+        "research": {
+          "max_drawdown_pct": 76.17,
+          "return_pct": 9288.96
+        },
+        "validation": {
+          "max_drawdown_pct": 29.11,
+          "return_pct": 74.82
+        }
+      },
+      "BTCUSD": {
+        "research": {
+          "max_drawdown_pct": 76.63,
+          "return_pct": 839.47
+        },
+        "validation": {
+          "max_drawdown_pct": 28.1,
+          "return_pct": 81.32
+        }
+      },
+      "DOGEUSD": {
+        "research": {
+          "max_drawdown_pct": 92.33,
+          "return_pct": 3456.57
+        },
+        "validation": {
+          "max_drawdown_pct": 69.5,
+          "return_pct": 88.58
+        }
+      },
+      "ETHUSD": {
+        "research": {
+          "max_drawdown_pct": 79.3,
+          "return_pct": 1326.56
+        },
+        "validation": {
+          "max_drawdown_pct": 63.2,
+          "return_pct": 20.42
+        }
+      },
+      "LINKUSD": {
+        "research": {
+          "max_drawdown_pct": 90.18,
+          "return_pct": 2902.73
+        },
+        "validation": {
+          "max_drawdown_pct": 62.65,
+          "return_pct": 48.56
+        }
+      },
+      "LTCUSD": {
+        "research": {
+          "max_drawdown_pct": 88.78,
+          "return_pct": 141.92
+        },
+        "validation": {
+          "max_drawdown_pct": 49.54,
+          "return_pct": 43.69
+        }
+      },
+      "SOLUSD": {
+        "research": {
+          "max_drawdown_pct": 96.27,
+          "return_pct": 1493.59
+        },
+        "validation": {
+          "max_drawdown_pct": 59.77,
+          "return_pct": 42.28
+        }
+      },
+      "TRXUSD": {
+        "research": {
+          "max_drawdown_pct": 78.21,
+          "return_pct": 692.25
+        },
+        "validation": {
+          "max_drawdown_pct": 51.11,
+          "return_pct": 161.01
+        }
+      }
+    },
+    "effective_trials": 15.46,
+    "families": [
+      {
+        "annualised_return_pct": 37.25,
+        "annualised_sharpe": 1.613,
+        "best_trade_r": 16.683,
+        "by_year": {
+          "2018": {
+            "expectancy_r": -0.368,
+            "total_r": -1.47,
+            "trades": 4
+          },
+          "2019": {
+            "expectancy_r": 0.3988,
+            "total_r": 29.51,
+            "trades": 74
+          },
+          "2020": {
+            "expectancy_r": 0.561,
+            "total_r": 64.52,
+            "trades": 115
+          },
+          "2021": {
+            "expectancy_r": 0.5839,
+            "total_r": 75.33,
+            "trades": 129
+          },
+          "2022": {
+            "expectancy_r": -0.1554,
+            "total_r": -12.9,
+            "trades": 83
+          },
+          "2023": {
+            "expectancy_r": 0.317,
+            "total_r": 40.89,
+            "trades": 129
+          },
+          "2024": {
+            "expectancy_r": 0.4101,
+            "total_r": 22.15,
+            "trades": 54
+          }
+        },
+        "calmar": 1.482,
+        "deflated_sharpe_all_trials": 0.905,
+        "deflated_sharpe_effective_trials": 0.9973,
+        "excess_over_random_r": 0.3476,
+        "expectancy_r": 0.3708,
+        "interval": [
+          0.2176,
+          0.529
+        ],
+        "key": "donchian_trend/4h/crypto_spot",
+        "long": {
+          "expectancy_r": 0.3708,
+          "trades": 588,
+          "win_rate": 0.3895
+        },
+        "max_drawdown_r": 25.13,
+        "parameters": {
+          "k": 4.0,
+          "n": 100.0
+        },
+        "random_entries": {
+          "best_r": 0.1193,
+          "draws": 200,
+          "mean_r": 0.0231,
+          "p95_r": 0.0895,
+          "p_value": 0.00498
+        },
+        "share_of_profit_from_best_trade": 0.077,
+        "short": {
+          "expectancy_r": null,
+          "trades": 0,
+          "win_rate": null
+        },
+        "trades": 588,
+        "weekly_sharpe": 0.2086
+      },
+      {
+        "annualised_return_pct": 44.29,
+        "annualised_sharpe": 1.684,
+        "best_trade_r": 16.724,
+        "by_year": {
+          "2018": {
+            "expectancy_r": 1.4943,
+            "total_r": 11.95,
+            "trades": 8
+          },
+          "2019": {
+            "expectancy_r": 0.2378,
+            "total_r": 34.95,
+            "trades": 147
+          },
+          "2020": {
+            "expectancy_r": 0.4838,
+            "total_r": 76.92,
+            "trades": 159
+          },
+          "2021": {
+            "expectancy_r": 0.3419,
+            "total_r": 67.7,
+            "trades": 198
+          },
+          "2022": {
+            "expectancy_r": 0.0157,
+            "total_r": 3.21,
+            "trades": 205
+          },
+          "2023": {
+            "expectancy_r": 0.2332,
+            "total_r": 48.74,
+            "trades": 209
+          },
+          "2024": {
+            "expectancy_r": 0.1661,
+            "total_r": 15.78,
+            "trades": 95
+          }
+        },
+        "calmar": 1.748,
+        "deflated_sharpe_all_trials": 0.8669,
+        "deflated_sharpe_effective_trials": 0.9925,
+        "excess_over_random_r": 0.2572,
+        "expectancy_r": 0.2539,
+        "interval": [
+          0.1461,
+          0.369
+        ],
+        "key": "donchian_trend/4h/crypto_perp",
+        "long": {
+          "expectancy_r": 0.3961,
+          "trades": 588,
+          "win_rate": 0.3963
+        },
+        "max_drawdown_r": 25.34,
+        "parameters": {
+          "k": 4.0,
+          "n": 100.0
+        },
+        "random_entries": {
+          "best_r": 0.0784,
+          "draws": 200,
+          "mean_r": -0.0033,
+          "p95_r": 0.0456,
+          "p_value": 0.00498
+        },
+        "share_of_profit_from_best_trade": 0.065,
+        "short": {
+          "expectancy_r": 0.0609,
+          "trades": 433,
+          "win_rate": 0.3811
+        },
+        "trades": 1021,
+        "weekly_sharpe": 0.206
+      },
+      {
+        "annualised_return_pct": 33.34,
+        "annualised_sharpe": 1.304,
+        "best_trade_r": 30.899,
+        "by_year": {
+          "2019": {
+            "expectancy_r": 0.8115,
+            "total_r": 18.66,
+            "trades": 23
+          },
+          "2020": {
+            "expectancy_r": 1.3089,
+            "total_r": 49.74,
+            "trades": 38
+          },
+          "2021": {
+            "expectancy_r": 1.7966,
+            "total_r": 84.44,
+            "trades": 47
+          },
+          "2022": {
+            "expectancy_r": -0.3648,
+            "total_r": -14.59,
+            "trades": 40
+          },
+          "2023": {
+            "expectancy_r": 0.1552,
+            "total_r": 5.74,
+            "trades": 37
+          },
+          "2024": {
+            "expectancy_r": 1.6467,
+            "total_r": 51.05,
+            "trades": 31
+          }
+        },
+        "calmar": 2.161,
+        "deflated_sharpe_all_trials": 0.697,
+        "deflated_sharpe_effective_trials": 0.9932,
+        "excess_over_random_r": 0.6562,
+        "expectancy_r": 0.903,
+        "interval": [
+          0.4626,
+          1.3486
+        ],
+        "key": "donchian_trend/1d/crypto_spot",
+        "long": {
+          "expectancy_r": 0.903,
+          "trades": 216,
+          "win_rate": 0.4907
+        },
+        "max_drawdown_r": 15.43,
+        "parameters": {
+          "k": 4.0,
+          "n": 20.0
+        },
+        "random_entries": {
+          "best_r": 0.6076,
+          "draws": 200,
+          "mean_r": 0.2467,
+          "p95_r": 0.3804,
+          "p_value": 0.00498
+        },
+        "share_of_profit_from_best_trade": 0.158,
+        "short": {
+          "expectancy_r": null,
+          "trades": 0,
+          "win_rate": null
+        },
+        "trades": 216,
+        "weekly_sharpe": 0.1732
+      },
+      {
+        "annualised_return_pct": 17.92,
+        "annualised_sharpe": 0.989,
+        "best_trade_r": 22.586,
+        "by_year": {
+          "2019": {
+            "expectancy_r": 0.5677,
+            "total_r": 11.92,
+            "trades": 21
+          },
+          "2020": {
+            "expectancy_r": 0.3521,
+            "total_r": 16.9,
+            "trades": 48
+          },
+          "2021": {
+            "expectancy_r": 1.0974,
+            "total_r": 55.97,
+            "trades": 51
+          },
+          "2022": {
+            "expectancy_r": -0.0182,
+            "total_r": -0.8,
+            "trades": 44
+          },
+          "2023": {
+            "expectancy_r": -0.1793,
+            "total_r": -8.78,
+            "trades": 49
+          },
+          "2024": {
+            "expectancy_r": 0.9881,
+            "total_r": 29.64,
+            "trades": 30
+          }
+        },
+        "calmar": 1.086,
+        "deflated_sharpe_all_trials": 0.2289,
+        "deflated_sharpe_effective_trials": 0.8135,
+        "excess_over_random_r": 0.3735,
+        "expectancy_r": 0.4315,
+        "interval": [
+          0.1496,
+          0.736
+        ],
+        "key": "donchian_trend/1d/crypto_perp",
+        "long": {
+          "expectancy_r": 0.7752,
+          "trades": 147,
+          "win_rate": 0.449
+        },
+        "max_drawdown_r": 16.5,
+        "parameters": {
+          "k": 4.0,
+          "n": 55.0
+        },
+        "random_entries": {
+          "best_r": 0.3087,
+          "draws": 200,
+          "mean_r": 0.0579,
+          "p95_r": 0.1791,
+          "p_value": 0.00498
+        },
+        "share_of_profit_from_best_trade": 0.215,
+        "short": {
+          "expectancy_r": -0.0949,
+          "trades": 96,
+          "win_rate": 0.3438
+        },
+        "trades": 243,
+        "weekly_sharpe": 0.1324
+      },
+      {
+        "annualised_return_pct": 9.22,
+        "annualised_sharpe": 0.811,
+        "best_trade_r": 10.044,
+        "by_year": {
+          "2019": {
+            "expectancy_r": -0.1267,
+            "total_r": -1.9,
+            "trades": 15
+          },
+          "2020": {
+            "expectancy_r": 0.6641,
+            "total_r": 33.21,
+            "trades": 50
+          },
+          "2021": {
+            "expectancy_r": -0.0507,
+            "total_r": -2.28,
+            "trades": 45
+          },
+          "2022": {
+            "expectancy_r": 0.1194,
+            "total_r": 6.81,
+            "trades": 57
+          },
+          "2023": {
+            "expectancy_r": 0.2032,
+            "total_r": 14.43,
+            "trades": 71
+          },
+          "2024": {
+            "expectancy_r": 0.1322,
+            "total_r": 3.7,
+            "trades": 28
+          }
+        },
+        "calmar": 0.981,
+        "deflated_sharpe_all_trials": 0.124,
+        "deflated_sharpe_effective_trials": 0.5617,
+        "excess_over_random_r": 0.1684,
+        "expectancy_r": 0.2029,
+        "interval": [
+          0.0377,
+          0.3804
+        ],
+        "key": "vol_expansion/1d/crypto_perp",
+        "long": {
+          "expectancy_r": 0.4122,
+          "trades": 142,
+          "win_rate": 0.4718
+        },
+        "max_drawdown_r": 9.4,
+        "parameters": {
+          "k": 3.0,
+          "pct": 0.3
+        },
+        "random_entries": {
+          "best_r": 0.2684,
+          "draws": 200,
+          "mean_r": 0.0345,
+          "p95_r": 0.1403,
+          "p_value": 0.01493
+        },
+        "share_of_profit_from_best_trade": 0.186,
+        "short": {
+          "expectancy_r": -0.0368,
+          "trades": 124,
+          "win_rate": 0.3629
+        },
+        "trades": 266,
+        "weekly_sharpe": 0.1081
+      },
+      {
+        "annualised_return_pct": 140.94,
+        "annualised_sharpe": 0.834,
+        "best_trade_r": 348.644,
+        "by_year": {
+          "2018": {
+            "expectancy_r": -1.2585,
+            "total_r": -1.26,
+            "trades": 1
+          },
+          "2019": {
+            "expectancy_r": 0.8372,
+            "total_r": 88.74,
+            "trades": 106
+          },
+          "2020": {
+            "expectancy_r": 0.2911,
+            "total_r": 29.99,
+            "trades": 103
+          },
+          "2021": {
+            "expectancy_r": 4.4179,
+            "total_r": 640.6,
+            "trades": 145
+          },
+          "2022": {
+            "expectancy_r": -0.2177,
+            "total_r": -46.81,
+            "trades": 215
+          },
+          "2023": {
+            "expectancy_r": -0.2405,
+            "total_r": -52.43,
+            "trades": 218
+          },
+          "2024": {
+            "expectancy_r": 1.4325,
+            "total_r": 166.18,
+            "trades": 116
+          }
+        },
+        "calmar": 1.307,
+        "deflated_sharpe_all_trials": 0.0396,
+        "deflated_sharpe_effective_trials": 0.682,
+        "excess_over_random_r": 0.7925,
+        "expectancy_r": 0.9126,
+        "interval": [
+          0.2532,
+          1.7887
+        ],
+        "key": "ts_momentum/4h/crypto_spot",
+        "long": {
+          "expectancy_r": 0.9126,
+          "trades": 904,
+          "win_rate": 0.2135
+        },
+        "max_drawdown_r": 107.86,
+        "parameters": {
+          "k": 3.0,
+          "lookback": 336.0
+        },
+        "random_entries": {
+          "best_r": 2.166,
+          "draws": 200,
+          "mean_r": 0.1201,
+          "p95_r": 0.3941,
+          "p_value": 0.01493
+        },
+        "share_of_profit_from_best_trade": 0.423,
+        "short": {
+          "expectancy_r": null,
+          "trades": 0,
+          "win_rate": null
+        },
+        "trades": 904,
+        "weekly_sharpe": 0.1134
+      },
+      {
+        "annualised_return_pct": 92.57,
+        "annualised_sharpe": 0.604,
+        "best_trade_r": 348.565,
+        "by_year": {
+          "2018": {
+            "expectancy_r": 0.0879,
+            "total_r": 0.09,
+            "trades": 1
+          },
+          "2019": {
+            "expectancy_r": 0.4342,
+            "total_r": 54.27,
+            "trades": 125
+          },
+          "2020": {
+            "expectancy_r": -0.0967,
+            "total_r": -12.0,
+            "trades": 124
+          },
+          "2021": {
+            "expectancy_r": 2.9346,
+            "total_r": 490.07,
+            "trades": 167
+          },
+          "2022": {
+            "expectancy_r": -0.0391,
+            "total_r": -9.18,
+            "trades": 235
+          },
+          "2023": {
+            "expectancy_r": -0.0344,
+            "total_r": -8.54,
+            "trades": 248
+          },
+          "2024": {
+            "expectancy_r": 0.2105,
+            "total_r": 27.15,
+            "trades": 129
+          }
+        },
+        "calmar": 1.687,
+        "deflated_sharpe_all_trials": 0.0018,
+        "deflated_sharpe_effective_trials": 0.2262,
+        "excess_over_random_r": 0.4908,
+        "expectancy_r": 0.5266,
+        "interval": [
+          0.0341,
+          1.1996
+        ],
+        "key": "ts_momentum/4h/crypto_perp",
+        "long": {
+          "expectancy_r": 1.0148,
+          "trades": 547,
+          "win_rate": 0.2468
+        },
+        "max_drawdown_r": 54.86,
+        "parameters": {
+          "k": 3.0,
+          "lookback": 336.0
+        },
+        "random_entries": {
+          "best_r": 0.4702,
+          "draws": 200,
+          "mean_r": 0.0358,
+          "p95_r": 0.1827,
+          "p_value": 0.00498
+        },
+        "share_of_profit_from_best_trade": 0.643,
+        "short": {
+          "expectancy_r": -0.0274,
+          "trades": 482,
+          "win_rate": 0.249
+        },
+        "trades": 1029,
+        "weekly_sharpe": 0.0816
+      },
+      {
+        "annualised_return_pct": 135.58,
+        "annualised_sharpe": 0.486,
+        "best_trade_r": 670.642,
+        "by_year": {
+          "2019": {
+            "expectancy_r": 0.8113,
+            "total_r": 19.47,
+            "trades": 24
+          },
+          "2020": {
+            "expectancy_r": -0.255,
+            "total_r": -16.57,
+            "trades": 65
+          },
+          "2021": {
+            "expectancy_r": 16.7046,
+            "total_r": 735.0,
+            "trades": 44
+          },
+          "2022": {
+            "expectancy_r": -0.2121,
+            "total_r": -20.15,
+            "trades": 95
+          },
+          "2023": {
+            "expectancy_r": -0.1471,
+            "total_r": -12.94,
+            "trades": 88
+          },
+          "2024": {
+            "expectancy_r": 2.0105,
+            "total_r": 88.46,
+            "trades": 44
+          }
+        },
+        "calmar": 3.645,
+        "deflated_sharpe_all_trials": 0.0001,
+        "deflated_sharpe_effective_trials": 0.0841,
+        "excess_over_random_r": 1.9666,
+        "expectancy_r": 2.2035,
+        "interval": [
+          0.0842,
+          5.9694
+        ],
+        "key": "ts_momentum/1d/crypto_perp",
+        "long": {
+          "expectancy_r": 4.5451,
+          "trades": 182,
+          "win_rate": 0.2857
+        },
+        "max_drawdown_r": 37.2,
+        "parameters": {
+          "k": 3.0,
+          "lookback": 72.0
+        },
+        "random_entries": {
+          "best_r": 7.1927,
+          "draws": 200,
+          "mean_r": 0.2369,
+          "p95_r": 0.6825,
+          "p_value": 0.02488
+        },
+        "share_of_profit_from_best_trade": 0.845,
+        "short": {
+          "expectancy_r": -0.1907,
+          "trades": 178,
+          "win_rate": 0.2978
+        },
+        "trades": 360,
+        "weekly_sharpe": 0.0671
+      },
+      {
+        "annualised_return_pct": 146.29,
+        "annualised_sharpe": 0.524,
+        "best_trade_r": 669.923,
+        "by_year": {
+          "2019": {
+            "expectancy_r": 0.7776,
+            "total_r": 16.33,
+            "trades": 21
+          },
+          "2020": {
+            "expectancy_r": 0.0819,
+            "total_r": 3.85,
+            "trades": 47
+          },
+          "2021": {
+            "expectancy_r": 19.4354,
+            "total_r": 777.42,
+            "trades": 40
+          },
+          "2022": {
+            "expectancy_r": -0.3809,
+            "total_r": -31.99,
+            "trades": 84
+          },
+          "2023": {
+            "expectancy_r": -0.1301,
+            "total_r": -9.63,
+            "trades": 74
+          },
+          "2024": {
+            "expectancy_r": 2.6304,
+            "total_r": 99.96,
+            "trades": 38
+          }
+        },
+        "calmar": 3.343,
+        "deflated_sharpe_all_trials": 0.0001,
+        "deflated_sharpe_effective_trials": 0.102,
+        "excess_over_random_r": 2.2618,
+        "expectancy_r": 2.8156,
+        "interval": [
+          0.2454,
+          7.1588
+        ],
+        "key": "ts_momentum/1d/crypto_spot",
+        "long": {
+          "expectancy_r": 2.8156,
+          "trades": 304,
+          "win_rate": 0.2533
+        },
+        "max_drawdown_r": 43.76,
+        "parameters": {
+          "k": 3.0,
+          "lookback": 72.0
+        },
+        "random_entries": {
+          "best_r": 7.6578,
+          "draws": 200,
+          "mean_r": 0.5538,
+          "p95_r": 1.541,
+          "p_value": 0.03483
+        },
+        "share_of_profit_from_best_trade": 0.783,
+        "short": {
+          "expectancy_r": null,
+          "trades": 0,
+          "win_rate": null
+        },
+        "trades": 304,
+        "weekly_sharpe": 0.0723
+      }
+    ],
+    "trials": 198
+  },
+  "seeds": {
+    "bootstrap": 7,
+    "random_entries": 7
+  },
+  "sha256": "f69359737ff7b3e3516e0fedd5f344c4f5b2d9598213273aa2d8b4145ee5940d",
+  "stage": "research",
+  "strategy": {
+    "name": "candidates",
+    "parameters": {},
+    "version": "research@e1c89e70a1d9"
+  },
+  "symbol": "UNIVERSE",
+  "timeframe": "1h,4h,1d",
+  "trials": 0,
+  "venue": "coindcx",
+  "verdict": {
+    "reasons": [
+      "A closer look at the research stretch. It changes no verdict and opens no later stretch."
+    ],
+    "state": "NOT A VERDICT"
+  },
+  "window": {
+    "until": 1719792000.0
+  }
+}
