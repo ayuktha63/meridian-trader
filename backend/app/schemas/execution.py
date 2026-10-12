@@ -8,7 +8,7 @@ but this phase only ever produces a subset of it — see the docstring on
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -78,8 +78,32 @@ class ExecutionRecord(BaseModel):
     net_pnl: Optional[float] = None
     closed_at: Optional[float] = None
 
+    #: Live mark-to-market for a still-open position — current price in,
+    #: estimated round-trip charges out. None for anything not currently
+    #: open, and None if a live price isn't available right now; never a
+    #: stand-in for `net_pnl`, which is the realised figure once closed.
+    last_price: Optional[float] = None
+    unrealised_pnl: Optional[float] = None
+
     created_at: float
     updated_at: float
+
+
+class LiveTradingOverview(BaseModel):
+    """Everything the live-trading screen needs in one call: the real
+    wallet, today's ledger (the same one the risk gate enforces against),
+    and the executions split into what's open versus what's history."""
+
+    balance: float
+    balance_source: str
+    currency: str
+
+    open_risk: float
+    realised_today: float
+    trades_today: int
+
+    open_positions: List[ExecutionRecord]
+    history: List[ExecutionRecord]
 
 
 class ExecutionPreview(BaseModel):

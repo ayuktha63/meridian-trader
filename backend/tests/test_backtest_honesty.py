@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app import costs
 from app.backtest import edge_verdict, run_backtest, walk_forward
@@ -16,11 +16,12 @@ from app.backtest import engine as bt
 from app.backtest import replay
 from app.backtest.replay import BarSignal, FrameBuilder, Setup
 from app.config import settings
-from app.db.models import BacktestRow, PaperTradeRow
+from app.db.models import BacktestRow, ExperimentRow, PaperTradeRow, StrategyApprovalRow
 from app.db.session import session_scope
 from app.instruments import get_instrument
 from app.main import app
 from app.schemas.journal import BacktestRequest, BacktestTrade
+from app.research import approvals, registry, versions
 from app.services.edge import holm_survivors, latest_edge
 
 RELIANCE = get_instrument("RELIANCE")
@@ -582,24 +583,60 @@ def test_too_little_history_is_said_so(monkeypatch):
 
 async def _wipe_evidence():
     async with session_scope() as session:
-        await session.execute(delete(BacktestRow))
-        await session.execute(delete(PaperTradeRow))
+        for table in (BacktestRow, PaperTradeRow, ExperimentRow, StrategyApprovalRow):
+            await session.execute(delete(table))
 
 
 TRADE_NEXT = {"min_confidence": 50.0, "min_risk_reward": 1.5}
+CHECKS = {"random_entries": {"p_value": 0.01, "draws": 200}, "grid_positive": 0.8,
+          "max_drawdown_r": 6.0}
 
 
 async def _record(symbol="RELIANCE", timeframe="1h", strategy="engine", passed=True,
                   p_value=0.01, age_days=0.0, parameters=TRADE_NEXT, reason="measured",
-                  data_source="angelone"):
+                  data_source="angelone", expectancy=0.3, checks=CHECKS, code=None,
+                  cost_profile="india:stock", quality_passed=True, with_experiment=True):
+    """A walk-forward on record, as `research/engine_evidence.py` writes one:
+    the row the gate reads and the experiment it points at."""
+    created = time.time() - age_days * 86_400
     async with session_scope() as session:
+        experiment_id = None
+        if with_experiment:
+            experiment = await registry.save(session, registry.build(
+                kind="engine_walk_forward", stage="walk_forward", strategy=strategy,
+                symbol=symbol, timeframe=timeframe, venue=data_source,
+                cost_profile=cost_profile, verdict="PASSED" if passed else "NO MEASURED EDGE",
+                datasets=[], window={}, parameters={}, assumptions={}, metrics={},
+                reasons=[reason], now=created))
+            experiment_id = experiment["id"]
         session.add(BacktestRow(
             symbol=symbol, timeframe=timeframe, strategy="walk_forward:" + strategy,
-            bars=3000, metrics={}, created_at=time.time() - age_days * 86_400,
+            bars=3000, metrics={}, created_at=created,
             payload={"edge": {"passed": passed, "reason": reason, "p_value": p_value,
-                              "trades": 80, "method": "walk_forward"},
+                              "trades": 80, "method": "walk_forward",
+                              "expectancy": expectancy, "ci_low": expectancy - 0.2,
+                              "ci_high": expectancy + 0.2},
                      "next_parameters": parameters or {},
-                     "data_source": data_source}))
+                     "data_source": data_source, "quality_passed": quality_passed,
+                     "experiment_id": experiment_id, "cost_profile": cost_profile,
+                     "code": versions.current() if code is None else code,
+                     "checks": checks}))
+
+
+async def _approve(symbol="RELIANCE", timeframe="1h", version=None):
+    async with session_scope() as session:
+        await approvals.approve(
+            session, strategy="engine", symbol=symbol, timeframe=timeframe,
+            strategy_version=version or versions.strategy_version("engine"),
+            experiment_id="exp-test", approved_by="the trader")
+
+
+def _cleared(symbol="RELIANCE", timeframe="1h", **record):
+    """Everything a live order needs: a passing test on record, enough paper
+    trades that agree with it, and a person's approval."""
+    run(_record(symbol=symbol, timeframe=timeframe, **record))
+    run(_paper(25, +0.4, symbol=symbol, timeframe=timeframe))
+    run(_approve(symbol, timeframe))
 
 
 async def _paper(count, r_multiple, symbol="RELIANCE", timeframe="1h"):
@@ -616,7 +653,10 @@ async def _edge(symbol="RELIANCE", timeframe="1h"):
 
 
 @pytest.fixture
-def evidence():
+def evidence(monkeypatch):
+    """A clean slate, with the broker path declared validated — the tests
+    that are about that switch turn it back off."""
+    monkeypatch.setattr(settings, "live_broker_validated", True)
     run(_wipe_evidence())
     yield
     run(_wipe_evidence())
@@ -635,8 +675,8 @@ def test_only_a_walk_forward_of_the_live_engine_counts(evidence):
     edge = run(_edge())
     assert edge["passed"] is False
     assert edge["reason"] == "No measured edge: …"
-    run(_record(strategy="engine", parameters={"min_confidence": 60.0,
-                                               "min_risk_reward": 2.0}))
+    _cleared(strategy="engine", parameters={"min_confidence": 60.0,
+                                            "min_risk_reward": 2.0})
     edge = run(_edge())                                # the newest one decides
     assert edge["passed"] is True
     assert (edge["min_confidence"], edge["min_risk_reward"]) == (60.0, 2.0)
@@ -658,7 +698,7 @@ def test_evidence_goes_stale(evidence):
 
 
 def test_a_pass_among_many_tests_has_to_be_stronger(evidence):
-    run(_record(p_value=0.03))
+    _cleared(p_value=0.03)
     assert run(_edge())["passed"] is True, "alone, 0.03 clears 5%"
     for symbol in ("TCS", "INFY", "SBIN", "ITC"):
         run(_record(symbol=symbol, passed=False, p_value=0.6))
@@ -671,7 +711,7 @@ def test_a_pass_among_many_tests_has_to_be_stronger(evidence):
     assert run(_edge())["passed"] is True
     # Tests older than the window are not part of the family.
     run(_wipe_evidence())
-    run(_record(p_value=0.03))
+    _cleared(p_value=0.03)
     for symbol in ("TCS", "INFY", "SBIN", "ITC"):
         run(_record(symbol=symbol, passed=False, p_value=0.6, age_days=40))
     assert run(_edge())["passed"] is True
@@ -679,18 +719,159 @@ def test_a_pass_among_many_tests_has_to_be_stronger(evidence):
 
 def test_paper_trading_can_overrule_the_backtest(evidence):
     run(_record())
-    run(_paper(5, -0.5))
-    assert run(_edge())["passed"] is True, "five trades say nothing either way"
-    run(_paper(7, -0.5))
+    run(_approve())
+    run(_paper(12, -0.5))
     edge = run(_edge())
     assert edge["passed"] is False
     assert "Paper trading disagrees" in edge["reason"]
     assert edge["paper_trades"] == 12
 
+    # Winning on paper, but nowhere near what the backtest promised.
     run(_wipe_evidence())
+    run(_record(expectancy=0.6))
+    run(_approve())
+    run(_paper(25, +0.1))
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert "Paper trading disagrees" in edge["reason"]
+    assert edge["eligibility"]["state"] == "INELIGIBLE"
+
+
+def test_a_backtest_alone_is_not_enough_it_has_to_be_paper_traded(evidence):
+    """The history says yes. That used to be the whole of it."""
     run(_record())
-    run(_paper(12, +0.4))
+    run(_approve())
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert edge["eligibility"]["state"] == "RESEARCH APPROVED"
+    assert "not been paper traded" in edge["reason"]
+
+    run(_paper(5, +0.4))
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert edge["eligibility"]["state"] == "PAPER VALIDATION"
+    assert "5 of 20 paper trades" in edge["reason"]
+
+    run(_paper(20, +0.4))
     assert run(_edge())["passed"] is True
+
+
+def test_no_test_result_approves_itself(evidence):
+    """Everything automatic has passed. It is eligible for review — which is
+    not the same as approved, and nothing is sent until a person says so."""
+    run(_record())
+    run(_paper(25, +0.4))
+    edge = run(_edge())
+    assert edge["eligibility"]["state"] == "ELIGIBLE FOR HUMAN REVIEW"
+    assert edge["passed"] is False and edge["approved"] is False
+    assert "A person has to approve" in edge["reason"]
+
+    run(_approve())
+    edge = run(_edge())
+    assert edge["passed"] is True and edge["approved"] is True
+    assert edge["approval"]["approved_by"] == "the trader"
+
+
+def test_an_approval_is_for_one_version_of_the_code_on_one_market(evidence):
+    run(_record())
+    run(_paper(25, +0.4))
+    run(_approve(version="engine@000000000000"))        # given for code that has changed since
+    assert run(_edge())["passed"] is False
+    run(_approve(symbol="TCS"))
+    assert run(_edge())["passed"] is False, "another market's approval is not this one's"
+    run(_approve())
+    assert run(_edge())["passed"] is True
+
+    async def revoke_all():
+        async with session_scope() as session:
+            for row in await approvals.listing(session):
+                await approvals.revoke(session, row["id"])
+    run(revoke_all())
+    assert run(_edge())["passed"] is False, "and it can be withdrawn"
+
+
+def test_evidence_about_code_that_has_changed_does_not_count(evidence):
+    """The engine was edited after the test. The test is about the old one."""
+    stale = dict(versions.current(), engine="engine@aaaaaaaaaaaa")
+    _cleared(code=stale)
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert edge["eligibility"]["state"] == "INELIGIBLE"
+    assert "has changed since this was tested" in edge["reason"]
+
+    run(_wipe_evidence())
+    _cleared(code=dict(versions.current(), costs="costs@bbbbbbbbbbbb"))
+    assert "cost model has changed" in run(_edge())["reason"]
+
+
+def test_a_result_for_another_venue_does_not_count(evidence):
+    _cleared(cost_profile="crypto_perp")
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert "different venue" in edge["reason"]
+
+
+def test_a_test_that_did_not_beat_random_entries_does_not_count(evidence):
+    _cleared(checks=dict(CHECKS, random_entries={"p_value": 0.4}))
+    assert "No better than entries at random bars" in run(_edge())["reason"]
+    run(_wipe_evidence())
+    _cleared(checks=dict(CHECKS, random_entries=None))
+    assert "not been compared with entries at random bars" in run(_edge())["reason"]
+    run(_wipe_evidence())
+    _cleared(checks=dict(CHECKS, grid_positive=0.2))
+    assert "depends on one setting" in run(_edge())["reason"]
+    run(_wipe_evidence())
+    _cleared(checks=dict(CHECKS, max_drawdown_r=31.0))
+    assert "deepest drawdown" in run(_edge())["reason"]
+
+
+def test_a_test_from_before_experiments_were_recorded_does_not_count(evidence):
+    _cleared(with_experiment=False)
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert edge["eligibility"]["state"] == "INSUFFICIENT EVIDENCE"
+
+
+def test_an_experiment_record_edited_afterwards_does_not_count(evidence):
+    _cleared()
+
+    async def tamper():
+        async with session_scope() as session:
+            row = (await session.execute(select(ExperimentRow))).scalars().first()
+            row.record = dict(row.record, metrics={"expectancy_r": 9.9})
+    run(tamper())
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert "no longer matches its hash" in edge["reason"]
+
+
+def test_running_the_same_test_until_it_passes_is_not_a_pass(evidence):
+    for _ in range(6):
+        run(_record(passed=False, p_value=0.6))
+    _cleared()                                             # the seventh try
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert "run 7 times" in edge["reason"]
+
+
+def test_nothing_is_reviewable_until_the_broker_path_has_been_validated(
+        evidence, monkeypatch):
+    monkeypatch.setattr(settings, "live_broker_validated", False)
+    _cleared()
+    edge = run(_edge())
+    assert edge["passed"] is False
+    assert edge["eligibility"]["state"] == "PAPER VALIDATION"
+    assert "LIVE_BROKER_VALIDATED" in edge["reason"]
+
+
+def test_a_market_with_no_live_path_is_never_reviewable(evidence):
+    _cleared(symbol="BTCUSD", data_source="coindcx", cost_profile="crypto_spot")
+    edge = run(_edge(symbol="BTCUSD"))
+    assert edge["passed"] is False
+    assert "no live order path for crypto" in edge["reason"]
+    run(_wipe_evidence())
+    _cleared(symbol="MCXCRUDE", cost_profile="india:commodity")
+    assert "lots or units is unverified" in run(_edge(symbol="MCXCRUDE"))["reason"]
 
 
 # ── the go-live gate ──────────────────────────────────────────
@@ -738,6 +919,14 @@ def test_live_orders_are_refused_without_a_measured_edge(live):
     assert fake.placed == []
 
     run(_record(passed=True))
+    waiting = _execute(client)
+    assert waiting["status"] == "REJECTED", "a passing backtest alone sends nothing"
+    assert "not been paper traded" in waiting["error_message"]
+    run(_paper(25, +0.4))
+    assert "A person has to approve" in _execute(client)["error_message"]
+    assert fake.placed == []
+
+    run(_approve())
     assert _execute(client)["status"] == "OPEN"
     assert len(fake.placed) == 1
 
@@ -746,7 +935,7 @@ def test_a_measured_edge_covers_only_the_kind_of_trade_that_was_tested(live):
     """The walk-forward traded setups at 65%+ confidence and 2:1 or better.
     That says nothing about a 55% setup, or one that pays 1.5:1."""
     client, fake = live
-    run(_record(parameters={"min_confidence": 65.0, "min_risk_reward": 2.0}))
+    _cleared(parameters={"min_confidence": 65.0, "min_risk_reward": 2.0})
 
     weak = _execute(client, confidence=55.0)
     assert weak["status"] == "REJECTED"

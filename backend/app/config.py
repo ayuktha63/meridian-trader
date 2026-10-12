@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     #: Refuse a live order unless a recent walk-forward test of this symbol
     #: and timeframe showed positive expectancy after costs.
     live_require_measured_edge: bool = True
+    #: Set to true only after one minimum-size order has been placed and
+    #: watched end to end in Angel One's own app (TRADING.md §3a). Until
+    #: then no strategy is eligible for live review, whatever its results:
+    #: the order path itself is unverified.
+    live_broker_validated: bool = False
 
     # ── alert channel (optional) ──────────────────────────────
     #: Critical and warning alerts are also sent here when both are set.

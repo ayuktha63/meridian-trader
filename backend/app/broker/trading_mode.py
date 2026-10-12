@@ -51,6 +51,14 @@ class TradingModeStore:
         self._kill_switch = False
         self._kill_reason: Optional[str] = None
         self._kill_at: Optional[float] = None
+        #: Whether a confirmed signal is allowed to place a real order without
+        #: a human clicking Execute. Same restart policy as `mode` itself —
+        #: in-memory only, never seeded true, so a crash can never come back
+        #: silently placing unattended real orders. Every order it places
+        #: still goes through the exact same `PreTradeRiskGate` a manual
+        #: click would (edge requirement, daily loss, funds, the MCX/CDS
+        #: blocks — all of it); this flag only decides who clicks Execute.
+        self._auto_live = False
         self._load_kill_switch()
 
     # ── kill switch persistence ───────────────────────────────
@@ -114,6 +122,19 @@ class TradingModeStore:
         with self._lock:
             return self._mode == LIVE and not self._kill_switch
 
+    @property
+    def auto_live_enabled(self) -> bool:
+        with self._lock:
+            return self._auto_live
+
+    def can_auto_trade_live(self) -> bool:
+        """The single check the unattended path must call before it ever
+        reaches for `AngelOneExecutionService.execute` — stricter than
+        `can_trade_live` because a human isn't there to notice the flag is
+        stale."""
+        with self._lock:
+            return self._mode == LIVE and not self._kill_switch and self._auto_live
+
     def set_mode(self, mode: str, confirmed: bool = False) -> None:
         mode = mode.upper()
         if mode not in (PAPER, LIVE):
@@ -125,8 +146,34 @@ class TradingModeStore:
         with self._lock:
             self._mode = mode
             self._live_confirmed_at = time.time() if mode == LIVE else None
+            if mode != LIVE:
+                # Leaving LIVE always drops auto-live too — it must never be
+                # the thing still armed when someone thinks they stepped back
+                # to PAPER.
+                self._auto_live = False
             # The kill switch is deliberately untouched here: see the module
             # docstring. Toggling the mode is not a way to clear it.
+
+    def set_auto_live(self, enabled: bool, confirmed: bool = False) -> None:
+        """Arm or disarm unattended live execution. Arming it needs the same
+        explicit confirmation as the LIVE switch itself, for the same reason:
+        this is the one setting that turns a signal into an order with nobody
+        watching."""
+        if enabled and not confirmed:
+            raise PermissionError(
+                "Enabling automatic live trading requires explicit "
+                "confirmation (confirmed=true) — this is not optional.")
+        with self._lock:
+            if enabled and self._mode != LIVE:
+                raise PermissionError(
+                    "Switch trading mode to LIVE before enabling automatic "
+                    "live trading.")
+            if enabled and self._kill_switch:
+                raise PermissionError(
+                    "The kill switch is active — clear it before enabling "
+                    "automatic live trading.")
+            self._auto_live = enabled
+        log.warning("auto-live trading %s", "ENABLED" if enabled else "disabled")
 
     def activate_kill_switch(self, reason: Optional[str] = None) -> None:
         with self._lock:
@@ -134,6 +181,8 @@ class TradingModeStore:
                 self._kill_at = time.time()
             self._kill_switch = True
             self._kill_reason = reason or self._kill_reason or "Activated manually."
+            # The one thing that must never survive an emergency stop.
+            self._auto_live = False
             self._persist_kill_switch()
         log.warning("KILL SWITCH ACTIVE — %s", self._kill_reason)
 
@@ -153,6 +202,7 @@ class TradingModeStore:
                 "kill_switch_reason": self._kill_reason,
                 "kill_switch_activated_at": self._kill_at,
                 "live_confirmed_at": self._live_confirmed_at,
+                "auto_live_enabled": self._auto_live,
             }
 
 

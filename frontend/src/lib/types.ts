@@ -575,6 +575,8 @@ export interface AccountRisk {
   reason: string
   can_open_new: boolean
   balance: number
+  /** "angel_one" once LIVE and connected and the wallet read succeeded; "settings" otherwise. */
+  balance_source: 'angel_one' | 'settings'
   currency: string
   risk_per_trade_pct: number
   realised_today_r: number
@@ -912,6 +914,8 @@ export interface AngelStatus {
   connected: boolean
   session_age_seconds: number | null
   last_error: string | null
+  /** Angel One's real available cash — set only once LIVE, connected, and the read actually succeeded. */
+  available_funds: number | null
 }
 
 export interface TradingModeStatus {
@@ -920,6 +924,8 @@ export interface TradingModeStatus {
   kill_switch_reason?: string | null
   kill_switch_activated_at?: number | null
   live_confirmed_at: number | null
+  /** Unattended live execution armed — always false after a restart, a switch away from LIVE, or a kill-switch trip. */
+  auto_live_enabled: boolean
 }
 
 export interface LiveAlert {
@@ -977,8 +983,22 @@ export interface ExecutionRecord {
   charges?: number | null
   net_pnl?: number | null
   closed_at?: number | null
+  /** Live mark-to-market for a still-open fill — populated only by `/api/trades/live/overview`. */
+  last_price?: number | null
+  unrealised_pnl?: number | null
   created_at: number
   updated_at: number
+}
+
+export interface LiveTradingOverview {
+  balance: number
+  balance_source: 'angel_one' | 'settings'
+  currency: string
+  open_risk: number
+  realised_today: number
+  trades_today: number
+  open_positions: ExecutionRecord[]
+  history: ExecutionRecord[]
 }
 
 // ── screener (best trades right now) ─────────────────────────

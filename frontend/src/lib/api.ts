@@ -1,7 +1,7 @@
 import type {
   AngelStatus, AnalysisResult, BacktestResult, Candle, Drawing, DrawingAnalytics,
   DrawingType, ExecutionPreview, ExecutionRecord, InstrumentCapability, LiveAlert, JournalEntry, JournalStats,
-  MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
+  LiveTradingOverview, MarketClock, Point, Quote, PaperState, Position, PositionSide, ScreenerRow,
   SettingsPayload, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from './types'
 
@@ -233,6 +233,10 @@ export const api = {
     request<TradingModeStatus>('/api/trading/mode', {
       method: 'POST', body: JSON.stringify({ mode, confirmed }),
     }),
+  setAutoLive: (enabled: boolean, confirmed = false) =>
+    request<TradingModeStatus>('/api/trading/auto-live', {
+      method: 'POST', body: JSON.stringify({ enabled, confirmed }),
+    }),
   killSwitch: (activate: boolean) =>
     request<TradingModeStatus>(`/api/trading/kill-switch?activate=${activate}`, {
       method: 'POST',
@@ -242,6 +246,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ confirmed: true }),
     }),
   liveExecutions: () => request<ExecutionRecord[]>('/api/trades/live'),
+  liveOverview: () => request<LiveTradingOverview>('/api/trades/live/overview'),
   alerts: (since = 0) => request<LiveAlert[]>(`/api/alerts?since=${since}`),
   angelStatus: () => request<AngelStatus>('/api/broker/angel/status'),
   angelConnect: () => request<AngelStatus>('/api/broker/angel/connect', { method: 'POST' }),

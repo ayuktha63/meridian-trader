@@ -146,6 +146,54 @@ class BacktestRow(Base):
     created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
 
 
+class ExperimentRow(Base):
+    """One research run, as it was: what it ran on, what code ran it, what
+    it assumed, what it found. Written once and never updated — a result
+    that is revised is a new experiment. `sha256` is the hash of `record`,
+    which is also written to a file beside the datasets."""
+
+    __tablename__ = "research_experiments"
+
+    id: Mapped[str] = mapped_column(String(48), primary_key=True)
+    #: study | engine_walk_forward | candidate | holdout
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    #: research | validation | holdout — which part of history it looked at.
+    stage: Mapped[str] = mapped_column(String(16), default="research")
+    strategy: Mapped[str] = mapped_column(String(48), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(48))
+    #: A market, or UNIVERSE for a result pooled over several.
+    symbol: Mapped[str] = mapped_column(String(24), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8))
+    venue: Mapped[str] = mapped_column(String(24))
+    cost_profile: Mapped[str] = mapped_column(String(24))
+    #: Parameter combinations this run evaluated — what its best result has
+    #: to be deflated by.
+    trials: Mapped[int] = mapped_column(Integer, default=1)
+    verdict: Mapped[str] = mapped_column(String(32), index=True)
+    record: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
+
+
+class StrategyApprovalRow(Base):
+    """A person's decision to let a strategy that has passed every automatic
+    check be traded live on one market. No test result creates one of these,
+    and it is tied to the exact code version it was given for."""
+
+    __tablename__ = "strategy_approvals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    strategy: Mapped[str] = mapped_column(String(48), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(48))
+    symbol: Mapped[str] = mapped_column(String(24), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8))
+    experiment_id: Mapped[str] = mapped_column(String(48))
+    approved_by: Mapped[str] = mapped_column(String(64))
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, default=_now, index=True)
+    revoked_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
 class PaperAccountRow(Base):
     """The demo account the auto-trader runs on.
 

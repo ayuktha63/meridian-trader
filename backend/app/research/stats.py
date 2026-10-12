@@ -11,7 +11,7 @@ Three questions, each with its own tool:
 * *How good is the best of N tries expected to look by luck alone?* The
   deflated Sharpe ratio (Bailey & López de Prado, 2014): the Sharpe the
   winner must beat rises with the number of configurations tried and with
-  how much their results differed.
+  how noisy a Sharpe estimate from that many observations is.
 
 All of it is deterministic given a seed.
 """
@@ -83,6 +83,31 @@ def mean_interval(values: Sequence[float], level: float = 0.90, resamples: int =
                         float(np.quantile(means, 1.0 - tail)), p_value, level, length)
 
 
+def cluster_mean_interval(values: Sequence[float], clusters: Sequence[Hashable],
+                          level: float = 0.90, resamples: int = 5_000,
+                          seed: int = 7) -> MeanEstimate:
+    """An interval on the mean when observations come in groups that move
+    together — trades on nine coins in the same week are one bet nine times,
+    not nine bets. Whole groups are resampled, so whatever they share is
+    resampled with them. `block` reports the number of groups."""
+    x = np.asarray(values, dtype=float)
+    if len(x) == 0:
+        return MeanEstimate(0, 0.0, 0.0, 0.0, 1.0, level, 0)
+    keys, index = np.unique(np.asarray(clusters), return_inverse=True)
+    sums = np.bincount(index, weights=x, minlength=len(keys))
+    counts = np.bincount(index, minlength=len(keys)).astype(float)
+    rng = np.random.default_rng(seed)
+    means = np.empty(resamples)
+    for start in range(0, resamples, _CHUNK):
+        size = min(_CHUNK, resamples - start)
+        picks = rng.integers(0, len(keys), size=(size, len(keys)))
+        means[start:start + size] = sums[picks].sum(axis=1) / counts[picks].sum(axis=1)
+    tail = (1.0 - level) / 2.0
+    p_value = max(float((means <= 0).mean()), 1.0 / resamples)
+    return MeanEstimate(len(x), float(x.mean()), float(np.quantile(means, tail)),
+                        float(np.quantile(means, 1.0 - tail)), p_value, level, len(keys))
+
+
 def sharpe(values: Sequence[float]) -> float:
     """Mean over standard deviation of the series as given — per trade, or
     per period. Not annualised: the caller knows what one observation is."""
@@ -126,12 +151,35 @@ def expected_max_sharpe(trials: int, variance: float) -> float:
 def deflated_sharpe(values: Sequence[float], trials: int,
                     trial_sharpes: Optional[Sequence[float]] = None) -> float:
     """Probability the true Sharpe is above what the best of `trials` tries
-    would show by luck. With one trial this is the probabilistic Sharpe."""
+    would show by luck. With one trial this is the probabilistic Sharpe.
+
+    The bar is the expected best of `trials` Sharpe estimates from
+    strategies with no edge, which needs the variance of such an estimate.
+    By default that is its sampling variance at this sample size, 1/(n-1).
+    The paper estimates it from the spread of the trials' own Sharpes
+    instead, and `trial_sharpes` does that — but only use it when the trials
+    are variations of one idea: across genuinely different strategies, some
+    of which lose for real, that spread is not noise and the bar it sets is
+    not about luck.
+    """
+    n = len(values)
     if trial_sharpes is not None and len(trial_sharpes) > 1:
         variance = float(np.var(np.asarray(trial_sharpes, dtype=float), ddof=1))
     else:
-        variance = 0.0
+        variance = 1.0 / (n - 1) if n > 1 else 0.0
     return probabilistic_sharpe(values, expected_max_sharpe(trials, variance))
+
+
+def per_period(values: Sequence[float], periods: Sequence[int], first: int,
+               last: int) -> np.ndarray:
+    """Totals per period over [first, last], zero where nothing happened.
+    Turns trades on many markets into one series whose observations can be
+    treated as separate — what happens in a week happens to all of them."""
+    out = np.zeros(max(last - first + 1, 0))
+    index = np.asarray(periods, dtype=int) - first
+    keep = (index >= 0) & (index < len(out))
+    np.add.at(out, index[keep], np.asarray(values, dtype=float)[keep])
+    return out
 
 
 def permutation_p_value(observed: float, null: Sequence[float]) -> float:

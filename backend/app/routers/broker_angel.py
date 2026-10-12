@@ -12,6 +12,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 
 from .. import alerts, audit
+from ..broker.account_balance import effective_balance_with_source
 from ..broker.angelone import angel_auth, angel_broker, angel_instruments
 from ..broker.angelone.reconciler import reconciler
 from ..broker.angelone.auth import AngelOneAuthError
@@ -19,8 +20,8 @@ from ..broker.angelone.client import AngelOneOrderError
 from ..broker.trading_mode import LIVE, PAPER, trading_mode
 from ..data.feed import feed
 from ..schemas.broker import (
-    AngelAccount, AngelStatus, FlattenRequest, InstrumentCapability, TradingModeRequest,
-    TradingModeStatus,
+    AngelAccount, AngelStatus, AutoLiveRequest, FlattenRequest, InstrumentCapability,
+    TradingModeRequest, TradingModeStatus,
 )
 
 router = APIRouter(tags=["broker"])
@@ -32,7 +33,13 @@ NOT_CONNECTED = "Not connected to Angel One."
 
 @router.get("/api/broker/angel/status", response_model=AngelStatus)
 async def angel_status() -> AngelStatus:
-    return AngelStatus(**angel_auth.status())
+    status = angel_auth.status()
+    available_funds = None
+    if trading_mode.is_live and status["connected"]:
+        balance, source = await effective_balance_with_source()
+        if source == "angel_one":
+            available_funds = balance
+    return AngelStatus(**status, available_funds=available_funds)
 
 
 @router.post("/api/broker/angel/connect", response_model=AngelStatus)
@@ -117,6 +124,25 @@ async def set_trading_mode(payload: TradingModeRequest) -> TradingModeStatus:
     except PermissionError as exc:
         raise HTTPException(428, str(exc)) from exc
     await audit.record("mode_changed", mode)
+    return TradingModeStatus(**trading_mode.status())
+
+
+@router.post("/api/trading/auto-live", response_model=TradingModeStatus)
+async def set_auto_live(payload: AutoLiveRequest) -> TradingModeStatus:
+    """Arm or disarm unattended live execution.
+
+    This never places an order itself (see module docstring) — it only
+    decides whether `_auto_trade_live_entry` (routers/ws.py) is allowed to
+    call the exact same gated execution path a manual click would. Every
+    safety check in `PreTradeRiskGate` — the measured-edge requirement, the
+    daily loss limit, funds, the MCX/CDS blocks — runs on every attempt
+    regardless of who clicked.
+    """
+    try:
+        trading_mode.set_auto_live(payload.enabled, confirmed=payload.confirmed)
+    except PermissionError as exc:
+        raise HTTPException(428, str(exc)) from exc
+    await audit.record("auto_live_changed", "on" if payload.enabled else "off")
     return TradingModeStatus(**trading_mode.status())
 
 

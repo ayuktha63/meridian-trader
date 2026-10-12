@@ -19,6 +19,11 @@ import { useStore } from '../../store/useStore'
 export default function AutoTradeBar() {
   const paper = useStore((s) => s.paper)
   const setPaper = useStore((s) => s.setPaper)
+  // Shared with `TradingModeControl` — reading from the store rather than
+  // polling independently means a switch there is reflected here the
+  // instant it resolves, with no second or two of lag from a separate poll.
+  const mode = useStore((s) => s.tradingMode)
+  const angel = useStore((s) => s.angelStatus)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
 
@@ -26,10 +31,14 @@ export default function AutoTradeBar() {
   const { account, open_trade: trade } = paper
   const pnl = account.equity - account.starting_balance
   const up = pnl >= 0
+  const isLive = mode?.mode === 'LIVE'
+  const wallet = angel?.available_funds ?? null
 
   const money = (value: number) =>
     `${account.currency === 'INR' ? '₹' : '$'}${Math.abs(value)
       .toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  const walletMoney = (value: number) =>
+    `₹${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
   const toggle = async () => {
     setBusy(true)
@@ -84,24 +93,43 @@ export default function AutoTradeBar() {
 
         <span className="h-4 w-px bg-tint/10" />
 
-        {/* Equity + P&L */}
+        {/* LIVE replaces this readout with the real wallet — showing a demo
+            number next to a REAL MONEY badge is exactly the confusion this
+            fixes. The click-to-expand breakdown behind it is still the paper
+            engine's own stats either way (see module docstring); only the
+            headline figure switches. */}
         <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
-                title="Demo account — click for the full performance breakdown"
+                title={isLive
+                  ? 'Available funds — Angel One (rmsLimit). Click for the demo engine\'s own performance breakdown.'
+                  : 'Demo account — click for the full performance breakdown'}
                 className="flex items-center gap-2 text-left">
-          <span>
-            <span className="block text-[9px] uppercase tracking-wider text-faint leading-none">
-              Demo equity
+          {isLive ? (
+            <span>
+              <span className="block text-[9px] uppercase tracking-wider text-bear/80 leading-none">
+                Wallet (real)
+              </span>
+              <span className="block text-2xs font-semibold tnum text-bear leading-tight">
+                {wallet != null ? walletMoney(wallet) : '—'}
+              </span>
             </span>
-            <span className="block text-2xs font-semibold tnum text-ink leading-tight">
-              {money(account.equity)}
-            </span>
-          </span>
-          <span className={`text-2xs font-semibold tnum ${up ? 'text-bull' : 'text-bear'}`}>
-            {up ? '+' : '−'}{money(pnl)}
-            <span className="text-[9px] ml-1 opacity-80">
-              {fmtSigned(account.return_pct, 2)}%
-            </span>
-          </span>
+          ) : (
+            <>
+              <span>
+                <span className="block text-[9px] uppercase tracking-wider text-faint leading-none">
+                  Demo equity
+                </span>
+                <span className="block text-2xs font-semibold tnum text-ink leading-tight">
+                  {money(account.equity)}
+                </span>
+              </span>
+              <span className={`text-2xs font-semibold tnum ${up ? 'text-bull' : 'text-bear'}`}>
+                {up ? '+' : '−'}{money(pnl)}
+                <span className="text-[9px] ml-1 opacity-80">
+                  {fmtSigned(account.return_pct, 2)}%
+                </span>
+              </span>
+            </>
+          )}
         </button>
 
         {trade && (
@@ -132,6 +160,23 @@ export default function AutoTradeBar() {
                 Reset
               </button>
             </div>
+
+            {isLive && (
+              <div className="flex items-center justify-between rounded-lg px-2 py-1.5 bg-bear/10
+                               border border-bear/30 text-2xs">
+                <span className="text-faint">Wallet (real) — Angel One</span>
+                <span className="font-semibold text-bear">
+                  {wallet != null ? walletMoney(wallet) : '—'}
+                </span>
+              </div>
+            )}
+            {isLive && (
+              <p className="text-[10px] text-bear/90 leading-relaxed">
+                This breakdown below is the always-on demo engine — a separate
+                simulated account that never touches Angel One. It is not your
+                live trade history. Your real wallet is the figure above.
+              </p>
+            )}
 
             <div className="grid grid-cols-3 gap-2">
               <Stat label="Balance" value={money(account.balance)}

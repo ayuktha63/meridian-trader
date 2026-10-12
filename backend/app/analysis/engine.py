@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from .. import runtime_settings
+from ..broker import account_balance
 from ..data.feed import feed
 from ..data.store import store
 from ..instruments import MTF_LADDER, Instrument, get_instrument, get_timeframe
@@ -287,9 +288,13 @@ async def run(symbol: str, timeframe: str,
     frames = await _frames_for_mtf(symbol)
     frames.setdefault(timeframe, df)
     spread = quote.spread_pips if quote else None
+    # LIVE sizes against the real Angel One wallet; DEMO against the Settings
+    # figure. `evaluate`/`conclude` stay pure — this is the one I/O lookup,
+    # resolved once here and threaded through as a plain number.
+    balance = await account_balance.effective_balance()
     ev = evaluate(df, frames, instrument, timeframe, price,
                   daily=daily if len(daily) >= 2 else None,
-                  drawings=drawings, spread_pips=spread)
+                  drawings=drawings, spread_pips=spread, balance=balance)
     snap, atr, market_structure = ev.snap, ev.atr, ev.structure
     result.indicators = snap
     result.structure = market_structure
@@ -382,11 +387,13 @@ async def run(symbol: str, timeframe: str,
 
     if deriv_side and deriv_entry and deriv_stop:
         # The plan only carries a risk budget on a directional call, but the
-        # sizing question is the same either way — so derive it from settings
+        # sizing question is the same either way — so derive it from the
+        # balance `run` resolved (settings in DEMO, the real wallet in LIVE)
         # when the plan has none, rather than showing "—" for lots.
         cfg = runtime_settings.get()
-        risk_budget = final_plan.risk_amount or (
-            cfg.account_balance * cfg.risk_per_trade_pct / 100.0)
+        balance = ev.balance if ev.balance is not None else cfg.account_balance
+        risk_pct = ev.risk_pct if ev.risk_pct is not None else cfg.risk_per_trade_pct
+        risk_budget = final_plan.risk_amount or (balance * risk_pct / 100.0)
         result.derivatives = derivatives.suggest(
             instrument, deriv_side, deriv_entry, deriv_stop, deriv_target,
             atr, get_timeframe(timeframe).seconds, risk_budget,

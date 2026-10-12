@@ -395,6 +395,15 @@ def edge_verdict(trades: List[BacktestTrade], method: str, seed: int = 7) -> Edg
 
 # ── loading a market ──────────────────────────────────────────
 
+@dataclass
+class History:
+    """Bars handed to a test instead of read from the live feed — a research
+    snapshot, so the run can be repeated on exactly the same data."""
+    base: pd.DataFrame
+    higher: Dict[str, pd.DataFrame]
+    source: str
+
+
 async def _frame(request: BacktestRequest) -> Optional[pd.DataFrame]:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
     # Extra history in front of the tested bars, so the first of them is
@@ -409,8 +418,10 @@ NOT_EVIDENCE = ("Measured on simulated bars — a test of the software, not of a
                 "market. Connect the venue that serves {} and run it again.")
 
 
-def _data_source(request: BacktestRequest) -> str:
+def _data_source(request: BacktestRequest, history: Optional[History] = None) -> str:
     """Where the bars under this test came from."""
+    if history is not None:
+        return history.source
     return feed.source_of(request.symbol, request.timeframe) or "unknown"
 
 
@@ -449,12 +460,13 @@ def _first_tested(n: int, bars: int) -> int:
     return max(WARMUP, n - bars)
 
 
-async def _prepare(request: BacktestRequest, df: pd.DataFrame) -> Prepared:
+async def _prepare(request: BacktestRequest, df: pd.DataFrame,
+                   history: Optional[History] = None) -> Prepared:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
     instrument = get_instrument(symbol)
     if request.strategy == RANDOM:
         return prepare(df, instrument, timeframe, cost_profile=request.cost_profile)
-    higher = await _higher_frames(request)
+    higher = history.higher if history is not None else await _higher_frames(request)
     start = _first_tested(len(df), request.bars)
     # A pass over a few thousand bars is tens of seconds of pandas. Off the
     # event loop, or every chart and price tick waits for it.
@@ -510,13 +522,14 @@ def _replay_notes(request: BacktestRequest) -> List[str]:
 
 # ── a single run ──────────────────────────────────────────────
 
-async def run_backtest(request: BacktestRequest) -> BacktestResult:
+async def run_backtest(request: BacktestRequest,
+                       history: Optional[History] = None) -> BacktestResult:
     result = _empty(request)
     if _unknown_strategy(request, result):
         return result
     instrument = get_instrument(request.symbol.upper())
-    df = await _frame(request)
-    result.data_source = _data_source(request)
+    df = history.base if history is not None else await _frame(request)
+    result.data_source = _data_source(request, history)
     if df is None or len(df) < WARMUP + 50:
         result.notes.append(
             "Not enough history to backtest ({} bars, need {})".format(
@@ -524,7 +537,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         return result
 
     started = time.perf_counter()
-    prep = await _prepare(request, df)
+    prep = await _prepare(request, df, history)
     n = prep.n
     first = _first_tested(n, request.bars)
     trades, equity_curve = _simulate(prep, instrument, request, first, n)
@@ -623,7 +636,8 @@ def _trade_fold(prep: Prepared, instrument: Instrument, request: BacktestRequest
     return chosen, trades, summary
 
 
-async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResult:
+async def walk_forward(request: BacktestRequest, folds: int = 4,
+                       history: Optional[History] = None) -> BacktestResult:
     """Choose parameters on one stretch of history, trade them on the next,
     roll forward, repeat. Only the traded stretches are reported, so nothing
     in the result was ever fitted to the bars it was measured on."""
@@ -631,8 +645,8 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
     if _unknown_strategy(request, result):
         return result
     instrument = get_instrument(request.symbol.upper())
-    df = await _frame(request)
-    result.data_source = _data_source(request)
+    df = history.base if history is not None else await _frame(request)
+    result.data_source = _data_source(request, history)
 
     first = _first_tested(0 if df is None else len(df), request.bars)
     usable = 0 if df is None else len(df) - first
@@ -644,7 +658,7 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         return result
 
     started = time.perf_counter()
-    prep = await _prepare(request, df)
+    prep = await _prepare(request, df, history)
     n = prep.n
     step = usable // (folds + 1)
     traded: List[BacktestTrade] = []

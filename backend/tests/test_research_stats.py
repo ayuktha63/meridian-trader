@@ -31,6 +31,26 @@ def test_trades_that_cluster_get_a_wider_interval():
     assert stats.mean_interval(runs).block == stats.block_length(400) == 7
 
 
+def test_trades_that_share_a_week_are_resampled_together():
+    """Nine markets, forty weeks; within a week they all win or all lose.
+    That is forty observations, not three hundred and sixty."""
+    rng = np.random.default_rng(8)
+    weekly = rng.normal(0.05, 1.0, 40)
+    values = np.repeat(weekly, 9) + rng.normal(0.0, 0.1, 360)
+    weeks = np.repeat(np.arange(40), 9)
+    naive = stats.mean_interval(values, block=1)
+    honest = stats.cluster_mean_interval(values, weeks)
+    assert honest.block == 40
+    assert (honest.high - honest.low) > 2.5 * (naive.high - naive.low)
+    assert honest.mean == pytest.approx(values.mean())
+    # Independent observations: clustering changes nothing much.
+    iid = rng.normal(0.1, 1.0, 360)
+    alone = stats.cluster_mean_interval(iid, np.arange(360))
+    assert (alone.high - alone.low) == pytest.approx(
+        stats.mean_interval(iid, block=1).high - stats.mean_interval(iid, block=1).low, rel=0.15)
+    assert stats.cluster_mean_interval([], []).p_value == 1.0
+
+
 def test_the_bootstrap_is_reproducible_and_bounded():
     sample = np.random.default_rng(2).normal(0.3, 1.0, 80)
     first, again = stats.mean_interval(sample, seed=11), stats.mean_interval(sample, seed=11)
@@ -75,7 +95,27 @@ def test_a_search_over_noise_does_not_survive_deflation():
     best = tries[int(np.argmax(sharpes))]
     assert stats.probabilistic_sharpe(best) > 0.95, "taken alone, it would have passed"
     assert stats.deflated_sharpe(best, trials=50, trial_sharpes=sharpes) < 0.80
+    assert stats.deflated_sharpe(best, trials=50) < 0.80, "and by the sampling variance alone"
     assert stats.deflated_sharpe(best, trials=1) == stats.probabilistic_sharpe(best)
+
+
+def test_the_bar_is_about_luck_not_about_how_different_the_tries_were():
+    """Six tries: three that work and three that lose for real. Their Sharpes
+    are far apart because the strategies are — which is not a reason to
+    doubt the ones that work."""
+    rng = np.random.default_rng(9)
+    works = [rng.normal(0.30, 1.0, 300) for _ in range(3)]
+    loses = [rng.normal(-0.40, 1.0, 300) for _ in range(3)]
+    sharpes = [stats.sharpe(t) for t in works + loses]
+    assert stats.deflated_sharpe(works[0], trials=6) > 0.95
+    assert stats.deflated_sharpe(works[0], trials=6, trial_sharpes=sharpes) < 0.5, \
+        "the paper's variance, misapplied to different strategies, would have refused it"
+
+
+def test_trades_become_one_series_per_period():
+    weekly = stats.per_period([1.0, -0.5, 2.0, 0.25], [10, 10, 12, 15], first=9, last=13)
+    assert weekly.tolist() == [0.0, 0.5, 0.0, 2.0, 0.0], "quiet weeks count, later ones do not"
+    assert stats.per_period([], [], first=3, last=5).tolist() == [0.0, 0.0, 0.0]
 
 
 def test_a_real_edge_does_survive_it():

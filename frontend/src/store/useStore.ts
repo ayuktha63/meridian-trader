@@ -3,9 +3,18 @@ import { api } from '../lib/api'
 import { applyTheme, readStoredTheme, type Theme } from '../lib/theme'
 import { stream, type ConnectionStatus } from '../lib/ws'
 import type {
-  AnalysisResult, Candle, Drawing, DrawingType, LiveTick, MarketClock, Point,
-  PaperState, PaperTrade, Quote, SymbolInfo, TimeframeInfo,
+  AngelStatus, AnalysisResult, Candle, Drawing, DrawingType, LiveTick, MarketClock, Point,
+  PaperState, PaperTrade, Quote, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from '../lib/types'
+
+//: Mode and Angel connection state change rarely — this is a background
+//: safety net, not how a switch is meant to reach the UI. The components that
+//: cause a change (TradingModeControl's switch, kill switch, connect) write
+//: the fresh value straight into the store themselves, so every subscriber
+//: — the mode badge, the wallet readout — updates the instant the request
+//: resolves. This poll only catches drift: a restart, a session going stale,
+//: a second tab doing the switching.
+const TRADING_STATUS_POLL_MS = 15_000
 
 export type ToolId = DrawingType | 'cursor'
 
@@ -49,6 +58,11 @@ interface State {
   autoAnalysis: boolean
   includeAi: boolean
 
+  // broker / trading mode — shared so every reader (the mode badge, the
+  // wallet readout) sees a switch the instant it happens, not on its own poll
+  tradingMode: TradingModeStatus | null
+  angelStatus: AngelStatus | null
+
   // connection
   connection: ConnectionStatus
   bootError: string | null
@@ -79,6 +93,8 @@ interface State {
   setActivePanel: (panel: State['activePanel']) => void
   setPaper: (paper: PaperState) => void
   dismissPaperFill: () => void
+  setTradingMode: (mode: TradingModeStatus) => void
+  setAngelStatus: (status: AngelStatus) => void
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   dismissExitAlert: () => void
@@ -123,6 +139,9 @@ export const useStore = create<State>((set, get) => ({
   autoAnalysis: true,
   includeAi: true,
 
+  tradingMode: null,
+  angelStatus: null,
+
   connection: 'connecting',
   bootError: null,
 
@@ -148,6 +167,19 @@ export const useStore = create<State>((set, get) => ({
 
     api.clock().then((clock) => set({ clock })).catch(() => undefined)
     api.quotes().then((quotes) => set({ quotes })).catch(() => undefined)
+
+    const pollTradingStatus = async () => {
+      try {
+        const [tradingMode, angelStatus] = await Promise.all([
+          api.tradingMode(), api.angelStatus(),
+        ])
+        set({ tradingMode, angelStatus })
+      } catch {
+        /* transient — next poll retries */
+      }
+    }
+    void pollTradingStatus()
+    window.setInterval(pollTradingStatus, TRADING_STATUS_POLL_MS)
 
     stream.onStatus((connection) => set({ connection }))
     stream.onMessage((message) => {
@@ -380,6 +412,8 @@ export const useStore = create<State>((set, get) => ({
 
   setPaper: (paper) => set({ paper }),
   dismissPaperFill: () => set({ paperFill: null }),
+  setTradingMode: (tradingMode) => set({ tradingMode }),
+  setAngelStatus: (angelStatus) => set({ angelStatus }),
 
   setTheme: (theme) => {
     applyTheme(theme)

@@ -23,15 +23,18 @@ from ..services import positions as position_repo
 async def _account_risk(session):
     """Account-level limits, priced against live quotes where available."""
     from ..analysis import guardrails
+    from ..broker.account_balance import effective_balance_with_source
     from ..data.feed import feed as market_feed
 
     cfg = runtime_settings.get()
+    balance, balance_source = await effective_balance_with_source()
     open_positions = await position_repo.list_positions(session, None, "open")
     closed = await position_repo.list_positions(session, None, "closed")
     prices = {p.symbol: market_feed.price(p.symbol) for p in open_positions}
     return guardrails.evaluate(
-        open_positions, closed, cfg.account_balance, cfg.risk_per_trade_pct,
+        open_positions, closed, balance, cfg.risk_per_trade_pct,
         cfg.account_currency, {k: v for k, v in prices.items() if v},
+        balance_source=balance_source,
     )
 from ..services import journal as journal_service
 
