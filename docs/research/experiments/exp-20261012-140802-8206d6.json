@@ -1,0 +1,191 @@
+{
+  "assumptions": {
+    "costs": {
+      "funding_per_8h": 0.0,
+      "half_spread": 5e-05,
+      "maker_per_side": 0.00236,
+      "profile": "crypto_spot",
+      "shorting": false,
+      "source": "CoinDCX spot base tier (secondary sources, Oct 2026); excludes 1% TDS",
+      "stop_slippage": 0.0002,
+      "taker_per_side": 0.00236
+    },
+    "execution": [
+      "A decision at a bar's close acts at the next bar's open, as a market order.",
+      "A protective stop triggers on a touch and fills at the open on a gap.",
+      "A target is a resting order and fills only when the market trades through it.",
+      "When one bar reaches both stop and target, the stop is taken.",
+      "One position per market at a time; a signal that arrives during one is not taken.",
+      "A position open at the end of a window is closed at that window's last close.",
+      "Signals are computed on the spot book's bars; the perpetual profile assumes the perpetual tracks them \u2014 basis is not modelled.",
+      "No partial fills, no latency beyond the one-bar delay, no market impact: sizes are assumed small against the book."
+    ]
+  },
+  "code": {
+    "costs": "costs@a0265176d91e",
+    "engine": "engine@c6f62452c4f8",
+    "execution": "exec@d94b9b60229a",
+    "git": {
+      "commit": "b0e73bbed6e5c9cc734d4b92f37ce84ee6d6ae66",
+      "dirty": true
+    },
+    "research": "research@e1c89e70a1d9"
+  },
+  "cost_profile": "crypto_spot",
+  "created_at": 1791814082.4902651,
+  "datasets": [
+    {
+      "bars": 2868,
+      "dataset_id": "d11485a39a248967",
+      "derived_from": "9f9940dfde940ddb",
+      "first": 1543881600.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "d11485a39a2489673333c5296886c2c4620518a2ef5e42086baff86ce2e20c5f",
+      "symbol": "ADAUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2834,
+      "dataset_id": "04c9feaaeb3bc601",
+      "derived_from": "4bc755976096f8ce",
+      "first": 1546819200.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "04c9feaaeb3bc601d312b343ef7f93a82426599df614829a719b54ce4f1e068e",
+      "symbol": "BNBUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2970,
+      "dataset_id": "28fe626a6e4a1a30",
+      "derived_from": "e948e57c0e10685d",
+      "first": 1535068800.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "28fe626a6e4a1a30af7a85c87e73e334b8c8ce47871e49bc054845ac06e2a332",
+      "symbol": "BTCUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2654,
+      "dataset_id": "979c3a2efbabe6b8",
+      "derived_from": "efc567c492850536",
+      "first": 1562371200.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "979c3a2efbabe6b81539b85792493cdfa3f4b8e153da2dfb52127e38d2eb047f",
+      "symbol": "DOGEUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2941,
+      "dataset_id": "892a8ce25967945a",
+      "derived_from": "d95c01eefe3ab56f",
+      "first": 1537574400.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "892a8ce25967945a0493524bfcc20696c231cbd3283f4d9d33eb5b29ca01ecbb",
+      "symbol": "ETHUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2824,
+      "dataset_id": "b15e8362acd199bd",
+      "derived_from": "da894c6a2b46ade8",
+      "first": 1547683200.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "b15e8362acd199bdd262af2f957ec0b81d8f2638b5a33d862626aac18f0c15f3",
+      "symbol": "LINKUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2868,
+      "dataset_id": "29d650ecde1ffc30",
+      "derived_from": "0a29c47bc340973b",
+      "first": 1543881600.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "29d650ecde1ffc309428c1d385791164798a016f662a2fddd197a685bd0112b6",
+      "symbol": "LTCUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2067,
+      "dataset_id": "c7afe3d28baf0b4d",
+      "derived_from": "a76b7d9cb5afa84a",
+      "first": 1613088000.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "c7afe3d28baf0b4d2690df43b974921d4fb9edc223cc8e40faffd00141345149",
+      "symbol": "SOLUSD",
+      "timeframe": "1d"
+    },
+    {
+      "bars": 2873,
+      "dataset_id": "cded11d2acfc00d0",
+      "derived_from": "175f00b99385c745",
+      "first": 1543449600.0,
+      "last": 1791590400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "cded11d2acfc00d03239963b758b582b90d5ec9e2a4d152c28ee153281a9bd2a",
+      "symbol": "TRXUSD",
+      "timeframe": "1d"
+    }
+  ],
+  "id": "exp-20261012-140802-8206d6",
+  "kind": "forward",
+  "metrics": {
+    "bars_since": {
+      "ADAUSD": 0,
+      "BNBUSD": 0,
+      "BTCUSD": 0,
+      "DOGEUSD": 0,
+      "ETHUSD": 0,
+      "LINKUSD": 0,
+      "LTCUSD": 0,
+      "SOLUSD": 0,
+      "TRXUSD": 0
+    },
+    "by_market": {},
+    "pooled": {
+      "trades": 0
+    },
+    "registration": "exp-20261012-140759-da0b7f"
+  },
+  "seeds": {},
+  "sha256": "65f71f86dd7fb6d60b5972a0f6510bcc2bceecf21791e6764eb888773c467284",
+  "stage": "forward",
+  "strategy": {
+    "name": "donchian_trend",
+    "parameters": {
+      "k": 4.0,
+      "n": 20.0
+    },
+    "version": "research@e1c89e70a1d9"
+  },
+  "symbol": "UNIVERSE",
+  "timeframe": "1d",
+  "trials": 0,
+  "venue": "coindcx",
+  "verdict": {
+    "reasons": [
+      "0 forward trades so far; 30 are needed before an interval means anything."
+    ],
+    "state": "INSUFFICIENT EVIDENCE"
+  },
+  "window": {
+    "from": 1791849600.0,
+    "until": 1791814082.4902642
+  }
+}

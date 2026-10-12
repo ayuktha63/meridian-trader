@@ -1,0 +1,227 @@
+{
+  "assumptions": {
+    "costs": {
+      "funding_per_8h": 0.0,
+      "half_spread": 0.005,
+      "maker_per_side": 0.00236,
+      "profile": "crypto_spot",
+      "shorting": false,
+      "source": "CoinDCX spot base tier (secondary sources, Oct 2026); excludes 1% TDS",
+      "stop_slippage": 0.0002,
+      "taker_per_side": 0.00236
+    },
+    "execution": [
+      "Entry is a limit at the signal price, filled only if the next bar trades through it; a stop triggers on a touch and fills at the open on a gap; stop before target when one bar reaches both.",
+      "Not reproduced: Claude's verdict, drawings, and timeframes below the chart's."
+    ]
+  },
+  "code": {
+    "costs": "costs@a0265176d91e",
+    "engine": "engine@c6f62452c4f8",
+    "execution": "exec@d94b9b60229a",
+    "git": {
+      "commit": "22d04f9aab2900147a599f8315525874a521f945",
+      "dirty": true
+    },
+    "research": "research@e1c89e70a1d9"
+  },
+  "cost_profile": "crypto_spot",
+  "created_at": 1791810853.2353542,
+  "datasets": [
+    {
+      "bars": 49587,
+      "dataset_id": "a76b7d9cb5afa84a",
+      "derived_from": null,
+      "first": 1613052000.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "a76b7d9cb5afa84ab7907cd5e3d1c78a18bf97dfddcb230a004654d22d02d67e",
+      "symbol": "SOLUSD",
+      "timeframe": "1h"
+    }
+  ],
+  "id": "exp-20261012-131413-69e967",
+  "kind": "engine_walk_forward",
+  "metrics": {
+    "bars_tested": 3200,
+    "block_interval": {
+      "block": 3,
+      "high": 0.4711,
+      "low": -0.503,
+      "p_value": 0.5989
+    },
+    "ci_high": 0.452,
+    "ci_low": -0.565,
+    "expectancy_r": -0.058,
+    "folds": [
+      {
+        "fold": 1,
+        "min_confidence": 0.0,
+        "risk_reward": 0.0,
+        "test_expectancy": 0.0,
+        "test_trades": 0,
+        "train_expectancy": 0.0
+      },
+      {
+        "fold": 2,
+        "min_confidence": 60.0,
+        "risk_reward": 2.0,
+        "test_expectancy": -0.116,
+        "test_trades": 4,
+        "train_expectancy": 0.299
+      },
+      {
+        "fold": 3,
+        "min_confidence": 0.0,
+        "risk_reward": 0.0,
+        "test_expectancy": 0.0,
+        "test_trades": 0,
+        "train_expectancy": 0.0
+      },
+      {
+        "fold": 4,
+        "min_confidence": 50.0,
+        "risk_reward": 2.0,
+        "test_expectancy": -0.043,
+        "test_trades": 15,
+        "train_expectancy": 0.231
+      }
+    ],
+    "grid": [
+      {
+        "expectancy_r": -0.2835,
+        "min_confidence": 50.0,
+        "risk_reward": 1.5,
+        "trades": 87
+      },
+      {
+        "expectancy_r": -0.039,
+        "min_confidence": 50.0,
+        "risk_reward": 2.0,
+        "trades": 58
+      },
+      {
+        "expectancy_r": 1.0868,
+        "min_confidence": 50.0,
+        "risk_reward": 3.0,
+        "trades": 4
+      },
+      {
+        "expectancy_r": -0.2387,
+        "min_confidence": 60.0,
+        "risk_reward": 1.5,
+        "trades": 74
+      },
+      {
+        "expectancy_r": 0.0037,
+        "min_confidence": 60.0,
+        "risk_reward": 2.0,
+        "trades": 50
+      },
+      {
+        "expectancy_r": 0.4667,
+        "min_confidence": 60.0,
+        "risk_reward": 3.0,
+        "trades": 3
+      },
+      {
+        "expectancy_r": -0.2227,
+        "min_confidence": 70.0,
+        "risk_reward": 1.5,
+        "trades": 54
+      },
+      {
+        "expectancy_r": -0.2675,
+        "min_confidence": 70.0,
+        "risk_reward": 2.0,
+        "trades": 39
+      },
+      {
+        "expectancy_r": -1.5245,
+        "min_confidence": 70.0,
+        "risk_reward": 3.0,
+        "trades": 2
+      }
+    ],
+    "grid_positive": 0.333,
+    "max_drawdown_r": 6.29,
+    "next_parameters": {},
+    "p_value": 1.0,
+    "passed": false,
+    "profit_factor": 0.899,
+    "random_entries": null,
+    "total_r": -1.11,
+    "trades": 19,
+    "win_rate": 42.11
+  },
+  "quality_passed": true,
+  "seeds": {
+    "bootstrap": 7,
+    "random_entries": 7
+  },
+  "sha256": "00726ba72ddbd4aa2ca92396b4ad6799ee26a866d32dee91e62e72f1c381b7bd",
+  "stage": "walk_forward",
+  "strategy": {
+    "name": "engine",
+    "parameters": {
+      "grid": [
+        [
+          50.0,
+          1.5
+        ],
+        [
+          50.0,
+          2.0
+        ],
+        [
+          50.0,
+          3.0
+        ],
+        [
+          60.0,
+          1.5
+        ],
+        [
+          60.0,
+          2.0
+        ],
+        [
+          60.0,
+          3.0
+        ],
+        [
+          70.0,
+          1.5
+        ],
+        [
+          70.0,
+          2.0
+        ],
+        [
+          70.0,
+          3.0
+        ]
+      ],
+      "risk_pct": 1.0,
+      "use_ladder": true
+    },
+    "version": "engine@c6f62452c4f8"
+  },
+  "symbol": "SOLUSD",
+  "timeframe": "1h",
+  "trials": 9,
+  "venue": "coindcx",
+  "verdict": {
+    "reasons": [
+      "Only 19 out-of-sample trades (need 30) \u2014 too few to tell an edge from luck."
+    ],
+    "state": "NO MEASURED EDGE"
+  },
+  "window": {
+    "bars_requested": 4000,
+    "folds": 4,
+    "from": 1780236000,
+    "to": 1791752400
+  }
+}
