@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import type { LiveAlert } from '../../lib/types'
 import { useStore } from '../../store/useStore'
@@ -284,13 +285,13 @@ export default function TradingModeControl() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {confirmingSwitch && (
+        {confirmingSwitch && createPortal(
           <motion.div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-6"
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           >
             <motion.div
-              className={`w-full max-w-sm rounded-2xl border-2 bg-panel shadow-2xl overflow-hidden ${
+              className={`w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-2xl border-2 bg-panel shadow-2xl ${
                 confirmingSwitch === 'LIVE' ? 'border-bear/60' : 'border-edge'}`}
               initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96 }}
             >
@@ -331,18 +332,19 @@ export default function TradingModeControl() {
                 </button>
               </div>
             </motion.div>
-          </motion.div>
+          </motion.div>,
+          document.body,
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {confirmingAutoLive && (
+        {confirmingAutoLive && createPortal(
           <motion.div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-6"
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           >
             <motion.div
-              className="w-full max-w-sm rounded-2xl border-2 border-bear/60 bg-panel shadow-2xl overflow-hidden"
+              className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-2xl border-2 border-bear/60 bg-panel shadow-2xl"
               initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96 }}
             >
               <div className="bg-bear/15 border-b border-bear/40 px-5 py-3">
@@ -380,7 +382,8 @@ export default function TradingModeControl() {
                 </button>
               </div>
             </motion.div>
-          </motion.div>
+          </motion.div>,
+          document.body,
         )}
       </AnimatePresence>
     </div>
