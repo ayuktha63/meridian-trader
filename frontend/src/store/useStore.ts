@@ -71,6 +71,7 @@ interface State {
   theme: Theme
   activePanel: 'analysis' | 'position' | 'strategies' | 'derivatives'
     | 'structure' | 'drawings' | 'journal' | 'backtest'
+    | 'live-positions' | 'live-history'
 
   // actions
   bootstrap: () => Promise<void>

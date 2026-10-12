@@ -15,6 +15,8 @@ import BacktestPanel from './components/panels/BacktestPanel'
 import DerivativesPanel from './components/panels/DerivativesPanel'
 import DrawingsPanel from './components/panels/DrawingsPanel'
 import JournalPanel from './components/panels/JournalPanel'
+import LiveHistoryPanel from './components/panels/LiveHistoryPanel'
+import LivePositionsPanel from './components/panels/LivePositionsPanel'
 import ManagementCard from './components/panels/ManagementCard'
 import MTFPanel from './components/panels/MTFPanel'
 import PositionPanel from './components/panels/PositionPanel'
@@ -44,6 +46,9 @@ const PANELS = [
     hint: 'Logged calls and accuracy by confidence band' },
   { id: 'backtest', label: 'Backtest',
     hint: 'Historical performance of the engine on this symbol' },
+  // 'live-positions' and 'live-history' are deliberately not in this list —
+  // see TopBar.tsx for why they get their own always-visible buttons instead
+  // of a 9th/10th tab in a strip that already scrolls at 8 in a 360px rail.
 ] as const
 
 export default function App() {
@@ -274,6 +279,8 @@ export default function App() {
                   {activePanel === 'drawings' && <DrawingsPanel />}
                   {activePanel === 'journal' && <JournalPanel />}
                   {activePanel === 'backtest' && <BacktestPanel />}
+                  {activePanel === 'live-positions' && <LivePositionsPanel />}
+                  {activePanel === 'live-history' && <LiveHistoryPanel />}
                 </motion.div>
               </AnimatePresence>
             </div>

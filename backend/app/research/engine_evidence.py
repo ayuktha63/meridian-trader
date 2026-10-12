@@ -12,7 +12,8 @@ does not:
   result sit on one setting?
 * How deep did it fall on the way?
 
-Two rows are written: the experiment (the full record) and the `backtests`
+Two rows are written: the experiment (the full record) and — when the run
+was charged as the venue the market actually trades on — the `backtests`
 row the gate has always read, which now points at it.
 """
 from __future__ import annotations
@@ -237,6 +238,8 @@ async def record_walk_forward(session: AsyncSession, request: BacktestRequest,
         seeds={"bootstrap": request.seed, "random_entries": 7},
         extra={"quality_passed": data.quality_passed})
     record = await registry.save(session, record)
+    if profile["profile"] != costs.describe(instrument)["profile"]:
+        return record               # another venue's costs: research, not gate evidence
     session.add(BacktestRow(
         symbol=result.symbol, timeframe=result.timeframe,
         strategy=WALK_FORWARD_PREFIX + result.strategy, bars=result.bars_tested,

@@ -174,3 +174,98 @@ def test_markets_are_left_out_of_the_universe_for_a_stated_reason():
     link = next(m for m in included if m.symbol == "LINKUSD")
     assert set(link.data) == {"1h", "4h", "1d"}
     assert link.data["4h"].meta["derived_from"] == good.id
+
+
+def test_configurations_that_are_the_same_idea_count_as_fewer_tries():
+    rng = np.random.default_rng(4)
+    separate = [rng.normal(0, 1, 300) for _ in range(12)]
+    assert study.effective_trials(separate) == pytest.approx(12, rel=0.15)
+    one_idea = rng.normal(0, 1, 300)
+    copies = [one_idea + rng.normal(0, 0.05, 300) for _ in range(12)]
+    assert study.effective_trials(copies) == pytest.approx(1.0, abs=0.1)
+    assert study.effective_trials([one_idea]) == 1.0
+    assert study.effective_trials([]) == 0.0
+
+
+def test_a_diagnosis_reads_the_research_stretch_and_nothing_after(small, monkeypatch):
+    opened = []
+    original = study.Market.span
+
+    def watched(self, timeframe, stage):
+        opened.append(stage)
+        return original(self, timeframe, stage)
+    monkeypatch.setattr(study.Market, "span", watched)
+
+    result = study.diagnose(markets(trending=True), profiles=("crypto_perp",),
+                            timeframes=("4h",), draws=20)
+    assert set(opened) <= {"research", "validation"}, "validation only for the benchmark"
+    assert "holdout" not in opened
+    assert result["trials"] == 6
+    assert 1.0 <= result["effective_trials"] <= 6.0
+    trend, = [row for row in result["families"] if row["key"].startswith("donchian")]
+    assert trend["excess_over_random_r"] > 0
+    assert trend["deflated_sharpe_effective_trials"] >= trend["deflated_sharpe_all_trials"]
+
+
+# ── forward watching ──────────────────────────────────────────
+
+def test_a_registered_strategy_is_only_ever_traded_on_bars_after_it_was_frozen(small):
+    import asyncio
+
+    from sqlalchemy import delete
+
+    from app.db.models import ExperimentRow
+    from app.db.session import init_db, session_scope
+    from app.research import forward
+
+    universe = markets(trending=True)
+    frozen_at = START + 9_000 * FOUR_HOURS + 1234.0          # part-way through a bar
+    assert forward.first_unseen_bar("4h", frozen_at) == START + 9_001 * FOUR_HOURS
+
+    async def go():
+        await init_db()
+        async with session_scope() as session:
+            await session.execute(delete(ExperimentRow))
+            registration = await forward.register(
+                session, universe, "donchian_trend", {"n": 20.0, "k": 3.0}, "4h",
+                "crypto_perp", "a near miss on the history", now=frozen_at)
+            result = await forward.evaluate(session, registration, universe)
+            listed = await forward.registrations(session)
+            await session.execute(delete(ExperimentRow))
+            return registration, result, listed
+    registration, result, listed = asyncio.run(go())
+
+    assert registration["verdict"]["state"] == forward.WATCHING
+    assert [r["id"] for r in listed] == [registration["id"]]
+    assert registration["window"]["from"] == START + 9_001 * FOUR_HOURS
+    assert result["kind"] == "forward"
+    assert result["metrics"]["registration"] == registration["id"]
+    assert set(result["metrics"]["bars_since"].values()) == {BARS - 9_001}
+
+    strategy = small[0]
+    outcome = study.run(universe, strategy, {"n": 20.0, "k": 3.0}, "4h", "crypto_perp",
+                        (registration["window"]["from"], float("inf")))
+    assert outcome.trades and result["metrics"]["pooled"]["trades"] == len(outcome.trades)
+    assert min(t.entry_time for t in outcome.trades) >= registration["window"]["from"]
+    assert result["verdict"]["state"] in (forward.AGREES, forward.DISAGREES)
+
+
+def test_a_few_forward_trades_are_not_a_verdict(small):
+    import asyncio
+
+    from app.db.session import init_db, session_scope
+    from app.research import forward
+
+    universe = markets(trending=True)[:1]
+    late = START + (BARS - 60) * FOUR_HOURS
+
+    async def go():
+        await init_db()
+        async with session_scope() as session:
+            registration = await forward.register(
+                session, universe, "donchian_trend", {"n": 20.0, "k": 3.0}, "4h",
+                "crypto_perp", "watching", now=late)
+            return await forward.evaluate(session, registration, universe)
+    result = asyncio.run(go())
+    assert result["verdict"]["state"] == forward.TOO_FEW
+    assert "interval" not in result["metrics"]

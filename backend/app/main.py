@@ -14,9 +14,9 @@ from typing import Any, Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, PlainTextResponse
 
-from . import __version__, notify, runtime_settings
+from . import __version__, notify, observability, runtime_settings
 from .ai import claude_client
 from .cache import cache
 from .config import settings
@@ -26,17 +26,11 @@ from .db.session import dialect, init_db, shutdown_db
 from .instruments import SYMBOLS, TIMEFRAME_CODES
 from .routers import (
     analysis, backtest, broker_angel, drawings, execution, journal, market,
-    paper, positions, settings as settings_router, ws,
+    paper, positions, research, settings as settings_router, ws,
 )
 from .security import LOCAL_ORIGIN_REGEX, AccessTokenMiddleware, assert_safe_bind
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s  %(levelname)-7s %(name)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-for noisy in ("httpx", "httpcore", "websockets.client", "asyncio"):
-    logging.getLogger(noisy).setLevel(logging.WARNING)
+observability.configure_logging(settings.log_level, settings.log_format)
 
 log = logging.getLogger("meridian")
 
@@ -112,6 +106,7 @@ app.include_router(drawings.router)
 app.include_router(analysis.router)
 app.include_router(journal.router)
 app.include_router(backtest.router)
+app.include_router(research.router)
 app.include_router(positions.router)
 app.include_router(paper.router)
 app.include_router(broker_angel.router)
@@ -138,6 +133,24 @@ async def health() -> Dict[str, Any]:
             "guarantee of any outcome, and no setting makes trading risk-free."
         ),
     }
+
+
+@app.get("/api/ready", tags=["system"])
+async def ready() -> ORJSONResponse:
+    """Whether this process can do its job right now: 200 or 503, with the
+    reason. `/api/health` says the process is up; this says it is usable."""
+    ok, checks = await observability.readiness()
+    return ORJSONResponse({"ready": ok, "checks": checks,
+                           "feed": observability.feed_freshness()},
+                          status_code=200 if ok else 503)
+
+
+@app.get("/metrics", tags=["system"], response_class=PlainTextResponse)
+async def metrics() -> PlainTextResponse:
+    """Prometheus text format. Behind the same access rule as everything
+    else: this machine only, unless an access token is set."""
+    return PlainTextResponse(await observability.metrics_text(STARTED_AT),
+                             media_type="text/plain; version=0.0.4")
 
 
 @app.get("/", tags=["system"])

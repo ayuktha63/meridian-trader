@@ -26,7 +26,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -78,6 +78,9 @@ THRESHOLDS: Dict[str, Dict[str, float]] = {
     "holdout": {"min_trades": 100, "interval_level": 0.90, "market_min_trades": 20},
 }
 
+#: A named stretch of the protocol, or a (from, until) pair of timestamps.
+Stage = Union[str, Tuple[float, float]]
+
 REJECTED, INSUFFICIENT, APPROVED = "REJECTED", "INSUFFICIENT EVIDENCE", "RESEARCH APPROVED"
 VALIDATED, CONFIRMED = "VALIDATED", "CONFIRMED ON HOLDOUT"
 
@@ -116,13 +119,14 @@ class Market:
             self._bars[timeframe] = Bars.from_frame(self.frame(timeframe), timeframe)
         return self._bars[timeframe]
 
-    def span(self, timeframe: str, stage: str) -> Tuple[int, int]:
-        """Bar indices [first, last) of a stage on this market."""
+    def span(self, timeframe: str, stage: Stage) -> Tuple[int, int]:
+        """Bar indices [first, last) of a stage on this market. A stage is
+        one of the protocol's three, or any (from, until) pair of times."""
         times = self.frame(timeframe)["time"].to_numpy()
         start, end = stage_window(stage)
         return int(np.searchsorted(times, start, "left")), int(np.searchsorted(times, end, "left"))
 
-    def plan(self, strategy: Strategy, params: Params, timeframe: str, stage: str) -> Plan:
+    def plan(self, strategy: Strategy, params: Params, timeframe: str, stage: Stage) -> Plan:
         """The strategy's decisions, computed on nothing later than the end
         of the stage being traded."""
         key = (strategy.name, strategies.label(params), timeframe, stage)
@@ -132,7 +136,9 @@ class Market:
         return self._plans[key]
 
 
-def stage_window(stage: str) -> Tuple[float, float]:
+def stage_window(stage: Stage) -> Tuple[float, float]:
+    if not isinstance(stage, str):
+        return float(stage[0]), float(stage[1])
     return {"research": (0.0, VALIDATION_START),
             "validation": (VALIDATION_START, HOLDOUT_START),
             "holdout": (HOLDOUT_START, float("inf"))}[stage]
@@ -177,7 +183,7 @@ class Outcome:
     params: Dict[str, float]
     timeframe: str
     profile: str
-    stage: str
+    stage: Stage
     by_market: Dict[str, List[Trade]]
 
     @property
@@ -216,11 +222,12 @@ class Outcome:
 
 
 def run(markets: Sequence[Market], strategy: Strategy, params: Params, timeframe: str,
-        profile: str, stage: str, cost_multiplier: float = 1.0) -> Outcome:
+        profile: str, stage: Stage, cost_multiplier: float = 1.0,
+        min_bars: int = 50) -> Outcome:
     by_market: Dict[str, List[Trade]] = {}
     for market in markets:
         first, last = market.span(timeframe, stage)
-        if last - first < 50:
+        if last - first < min_bars:
             continue
         plan = market.plan(strategy, params, timeframe, stage)
         by_market[market.symbol] = simulate(
@@ -485,6 +492,110 @@ def _failed_later(stage: Dict[str, Any], rule: Dict[str, float], name: str) -> L
 
 # ── the whole study ───────────────────────────────────────────
 
+def research_grids(markets: Sequence[Market], profiles: Sequence[str],
+                   timeframes: Sequence[str],
+                   say=None) -> List[Tuple[Family, Dict[str, Outcome], Strategy]]:
+    """Every declared configuration, traded on the research stretch."""
+    say = say or (lambda message: None)
+    families: List[Tuple[Family, Dict[str, Outcome], Strategy]] = []
+    for profile in profiles:
+        for timeframe in timeframes:
+            for strategy in strategies.CANDIDATES:
+                family, outcomes = research_grid(markets, strategy, timeframe, profile)
+                families.append((family, outcomes, strategy))
+                say("research grid {}: best {}".format(family.key, max(
+                    (row["expectancy_r"] for row in family.grid
+                     if row["expectancy_r"] is not None), default=None)))
+    return families
+
+
+def effective_trials(series: Sequence[np.ndarray]) -> float:
+    """How many *independent* tries a set of configurations amounts to.
+
+    A deflated Sharpe counts tries as if each were a separate draw. Two
+    hundred configurations that are the same five ideas with neighbouring
+    settings are not two hundred draws. This is the participation ratio of
+    the eigenvalues of their correlation matrix: N when they are unrelated,
+    1 when they are one series repeated.
+
+    Reported beside a verdict, never used to reach one: the protocol's bar
+    counts every configuration, and stays where it was set.
+    """
+    usable = [np.asarray(x, dtype=float) for x in series if len(x) > 2 and np.std(x) > 0]
+    if len(usable) < 2:
+        return float(len(usable))
+    length = min(len(x) for x in usable)
+    matrix = np.corrcoef(np.vstack([x[-length:] for x in usable]))
+    eigenvalues = np.clip(np.linalg.eigvalsh(matrix), 0.0, None)
+    return float(eigenvalues.sum() ** 2 / (eigenvalues ** 2).sum())
+
+
+def diagnose(markets: Sequence[Market], profiles: Sequence[str] = PROFILES,
+             timeframes: Sequence[str] = TIMEFRAMES, draws: int = 200,
+             say=None) -> Dict[str, Any]:
+    """A closer look at the research stretch, and only the research stretch.
+
+    For every family whose chosen configuration made money there with an
+    interval clear of zero: how it compares with entries at random bars, and
+    what its deflated Sharpe would be if the configurations were counted as
+    the independent tries they amount to rather than as the number declared.
+
+    Nothing here changes a verdict or opens a later stretch.
+    """
+    say = say or (lambda message: None)
+    rule = THRESHOLDS["research"]
+    families = research_grids(markets, profiles, timeframes)
+    trials = sum(len(family.grid) for family, _, _ in families)
+    weekly = [outcome.weekly(markets) for _, outcomes, _ in families
+              for outcome in outcomes.values() if len(outcome.r) >= rule["min_trades"]]
+    independent = effective_trials(weekly)
+    say("{} configurations behave like {:.1f} independent ones".format(trials, independent))
+
+    rows = []
+    for family, outcomes, strategy in families:
+        enough = [row for row in family.grid if row["trades"] >= rule["min_trades"]]
+        if not enough:
+            continue
+        best = max(enough, key=lambda row: row["expectancy_r"])
+        outcome = outcomes[best["label"]]
+        estimate = _interval(outcome, rule["interval_level"])
+        if estimate.low <= 0:
+            continue
+        series = outcome.weekly(markets)
+        null = random_baseline(markets, strategy, outcome, draws)
+        summary = summarise(outcome, markets)["pooled"]
+        row = {
+            "key": family.key, "parameters": best["parameters"],
+            "trades": summary["trades"], "expectancy_r": summary["expectancy_r"],
+            "interval": [round(estimate.low, 4), round(estimate.high, 4)],
+            "weekly_sharpe": round(stats.sharpe(series), 4),
+            "deflated_sharpe_all_trials": round(stats.deflated_sharpe(series, trials), 4),
+            "deflated_sharpe_effective_trials": round(
+                stats.deflated_sharpe(series, max(int(round(independent)), 1)), 4),
+            "random_entries": {
+                "draws": draws, "mean_r": round(float(null.mean()), 4),
+                "p95_r": round(float(np.quantile(null, 0.95)), 4),
+                "best_r": round(float(null.max()), 4),
+                "p_value": round(stats.permutation_p_value(estimate.mean, null), 5)},
+            "excess_over_random_r": round(estimate.mean - float(null.mean()), 4),
+            "long": summary["long"], "short": summary["short"],
+            "by_year": summary["by_year"], "max_drawdown_r": summary["max_drawdown_r"],
+            "annualised_return_pct": summary["annualised_return_pct"],
+            "annualised_sharpe": summary["annualised_sharpe"],
+            "calmar": summary["calmar"], "best_trade_r": summary["best_trade_r"],
+            "share_of_profit_from_best_trade": round(
+                summary["best_trade_r"] / summary["total_r"], 3) if summary["total_r"] > 0
+            else None,
+        }
+        rows.append(row)
+        say("{}: {:+.3f}R vs random {:+.3f}R (p={:.3f}); deflated {:.2f} / {:.2f}".format(
+            family.key, row["expectancy_r"], row["random_entries"]["mean_r"],
+            row["random_entries"]["p_value"], row["deflated_sharpe_all_trials"],
+            row["deflated_sharpe_effective_trials"]))
+    return {"trials": trials, "effective_trials": round(independent, 2),
+            "families": sorted(rows, key=lambda r: -r["deflated_sharpe_all_trials"]),
+            "benchmarks": _benchmarks(markets, timeframes[-1])}
+
 def _audits(markets: Sequence[Market], timeframe: str) -> Dict[str, Dict[str, Any]]:
     """Every candidate, checked for look-ahead on the first market's
     research bars before a single result is computed."""
@@ -508,15 +619,7 @@ def execute(markets: Sequence[Market], excluded: Sequence[Dict[str, str]],
     say("audit: " + ", ".join("{} {}".format(n, "ok" if ok else "FAILED")
                               for n, ok in audited.items()))
 
-    families: List[Tuple[Family, Dict[str, Outcome], Strategy]] = []
-    for profile in profiles:
-        for timeframe in timeframes:
-            for strategy in strategies.CANDIDATES:
-                family, outcomes = research_grid(markets, strategy, timeframe, profile)
-                families.append((family, outcomes, strategy))
-                say("research grid {}: best {}".format(family.key, max(
-                    (row["expectancy_r"] for row in family.grid
-                     if row["expectancy_r"] is not None), default=None)))
+    families = research_grids(markets, profiles, timeframes, say)
     trials = sum(len(family.grid) for family, _, _ in families)
 
     for family, outcomes, strategy in families:

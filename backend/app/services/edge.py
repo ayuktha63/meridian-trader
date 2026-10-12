@@ -175,6 +175,12 @@ async def latest_edge(session: AsyncSession, symbol: str, timeframe: str,
     the answer whichever of them said no."""
     now = now or time.time()
     edge, mine, survives, tests, runs = await _measured(session, symbol, timeframe, now)
+    # Every walk-forward of this market as the venue it trades on is a try,
+    # whether or not it left a row for the gate.
+    runs = max(runs, await registry.runs_on_record(
+        session, kind="engine_walk_forward", strategy=LIVE_STRATEGY, symbol=symbol,
+        timeframe=timeframe, since=now - MAX_AGE_SECONDS,
+        cost_profile=_expected_profile(symbol)))
     evidence = await _evidence(session, symbol, timeframe, now, mine, edge, survives,
                                tests, runs)
     decision = eligibility.evaluate(evidence)

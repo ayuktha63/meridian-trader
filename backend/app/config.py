@@ -74,6 +74,8 @@ class Settings(BaseSettings):
         ]
     )
     log_level: str = "INFO"
+    #: "text" for a person at a terminal, "json" for one object per line.
+    log_format: str = "text"
 
     # ── risk ──────────────────────────────────────────────────
     account_balance: float = 10_000.0

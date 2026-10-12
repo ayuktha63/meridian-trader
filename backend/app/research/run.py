@@ -3,7 +3,11 @@
     python -m app.research.run snapshot BTCUSD ETHUSD        take history snapshots
     python -m app.research.run datasets                      list what is in the store
     python -m app.research.run study                         run the candidate study
+    python -m app.research.run diagnose                      look closer at its research stretch
     python -m app.research.run engine BTCUSD 1h --bars 4000  walk-forward the live engine
+    python -m app.research.run register donchian_trend 4h crypto_perp --reason "..."
+                                                             freeze a candidate for forward watching
+    python -m app.research.run forward [--refresh]           trade what is registered on bars since
     python -m app.research.run experiments                   list what is on record
 
 Every run that measures something writes an experiment record: to the
@@ -19,7 +23,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..db.session import init_db, session_scope
-from . import datasets, registry, study
+from . import datasets, forward, registry, study
 from .engine_evidence import walk_forward_on_snapshot
 
 
@@ -110,6 +114,71 @@ async def _study(profiles: Optional[List[str]], timeframes: Optional[List[str]])
     return record
 
 
+async def _diagnose() -> Dict[str, Any]:
+    markets, _ = study.load_universe()
+    if not markets:
+        raise SystemExit("No usable snapshots.")
+    started = time.time()
+    result = study.diagnose(markets, say=lambda message: print("  " + message, flush=True))
+    record = registry.build(
+        kind="diagnostic", stage="research", strategy="candidates", symbol="UNIVERSE",
+        timeframe=",".join(study.TIMEFRAMES), venue=markets[0].data["1h"].provider,
+        cost_profile=",".join(study.PROFILES), verdict="NOT A VERDICT",
+        datasets=[m.data["1h"].describe() for m in markets],
+        window={"until": study.VALIDATION_START}, parameters={},
+        assumptions={"execution": list(study.EXECUTION_ASSUMPTIONS)},
+        metrics=result,
+        reasons=["A closer look at the research stretch. It changes no verdict and "
+                 "opens no later stretch."],
+        trials=0, seeds={"bootstrap": 7, "random_entries": 7})
+    await init_db()
+    async with session_scope() as session:
+        record = await registry.save(session, record)
+    print("{} configurations behave like {:.1f} independent ones ({:.0f}s) — {}".format(
+        result["trials"], result["effective_trials"], time.time() - started, record["id"]))
+    return record
+
+
+async def _register(strategy: str, timeframe: str, profile: str, reason: str) -> None:
+    """Freeze the configuration the last study chose for this family."""
+    markets, _ = study.load_universe()
+    await init_db()
+    async with session_scope() as session:
+        studies = await registry.recent(session, 1, kind="study")
+        key = "{}/{}/{}".format(strategy, timeframe, profile)
+        family = next((f for f in (studies[0].get("families") if studies else [])
+                       if f["key"] == key), None)
+        if family is None or not family.get("chosen"):
+            raise SystemExit("No study on record chose a configuration for " + key)
+        record = await forward.register(session, markets, strategy, family["chosen"],
+                                        timeframe, profile, reason)
+    print("registered {} {} from {} — {}".format(
+        key, family["chosen"], _day(record["window"]["from"]), record["id"]))
+
+
+async def _forward(refresh: bool) -> None:
+    await init_db()
+    async with session_scope() as session:
+        watching = await forward.registrations(session)
+    if not watching:
+        print("Nothing is registered for forward watching.")
+        return
+    if refresh:
+        symbols = sorted({s for r in watching for s in r["metrics"]["symbols"]})
+        await _snapshot(symbols, "1h")
+    markets, _ = study.load_universe()
+    async with session_scope() as session:
+        for registration in watching:
+            result = await forward.evaluate(session, registration, markets)
+            pooled = result["metrics"]["pooled"]
+            print("{}/{}/{} since {}: {} trades{} — {}".format(
+                registration["strategy"]["name"], registration["timeframe"],
+                registration["cost_profile"], _day(registration["window"]["from"]),
+                pooled["trades"],
+                "" if not pooled["trades"] else ", {:+.3f}R".format(pooled["expectancy_r"]),
+                result["verdict"]["state"]))
+
+
 async def _engine(symbol: str, timeframe: str, bars: int, profile: Optional[str],
                   strategy: str) -> Dict[str, Any]:
     await init_db()
@@ -155,6 +224,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     engine.add_argument("--bars", type=int, default=4000)
     engine.add_argument("--profile", default=None)
     engine.add_argument("--strategy", default="engine")
+    commands.add_parser("diagnose", help="a closer look at the research stretch only")
+    register = commands.add_parser("register", help="freeze a candidate for forward watching")
+    register.add_argument("strategy", choices=sorted(study.strategies.BY_NAME))
+    register.add_argument("timeframe", choices=study.TIMEFRAMES)
+    register.add_argument("profile", choices=study.PROFILES)
+    register.add_argument("--reason", required=True)
+    watch = commands.add_parser("forward", help="trade registered candidates on bars since")
+    watch.add_argument("--refresh", action="store_true", help="take fresh snapshots first")
     listing = commands.add_parser("experiments", help="list experiments on record")
     listing.add_argument("--limit", type=int, default=30)
     show = commands.add_parser("show", help="print one experiment record")
@@ -167,6 +244,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         _datasets()
     elif args.command == "study":
         asyncio.run(_study(args.profile, args.timeframe))
+    elif args.command == "diagnose":
+        asyncio.run(_diagnose())
+    elif args.command == "register":
+        asyncio.run(_register(args.strategy, args.timeframe, args.profile, args.reason))
+    elif args.command == "forward":
+        asyncio.run(_forward(args.refresh))
     elif args.command == "engine":
         asyncio.run(_engine(args.symbol.upper(), args.timeframe, args.bars, args.profile,
                             args.strategy))

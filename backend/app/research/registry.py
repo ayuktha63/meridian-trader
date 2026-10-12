@@ -131,10 +131,13 @@ async def trials_on_record(session: AsyncSession, since: float = 0.0,
 
 
 async def runs_on_record(session: AsyncSession, *, kind: str, strategy: str, symbol: str,
-                         timeframe: str, since: float = 0.0) -> int:
+                         timeframe: str, since: float = 0.0,
+                         cost_profile: Optional[str] = None) -> int:
     """How many times this exact question has been asked since `since`."""
     stmt = select(func.count()).select_from(ExperimentRow).where(
         ExperimentRow.kind == kind, ExperimentRow.strategy == strategy,
         ExperimentRow.symbol == symbol, ExperimentRow.timeframe == timeframe,
         ExperimentRow.created_at >= since)
+    if cost_profile:
+        stmt = stmt.where(ExperimentRow.cost_profile == cost_profile)
     return int((await session.execute(stmt)).scalar_one())

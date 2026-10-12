@@ -29,6 +29,8 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
   const toggleTheme = useStore((s) => s.toggleTheme)
   const aiEnabled = useStore((s) => s.aiEnabled)
   const aiModel = useStore((s) => s.aiModel)
+  const activePanel = useStore((s) => s.activePanel)
+  const setActivePanel = useStore((s) => s.setActivePanel)
 
   const instrument = useActiveInstrument()
   const digits = instrument?.digits ?? 5
@@ -266,6 +268,36 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
         </button>
 
         <Screener />
+
+        {/* Always-visible, not folded into the right-rail tab strip — that
+            strip already scrolls at 8 tabs in a 360px rail with its
+            scrollbar hidden, which made a 9th/10th tab effectively
+            undiscoverable. Clicking either just sets `activePanel`, so the
+            screen renders in that same tabbed slot either way. */}
+        <button type="button"
+                className={`btn ${activePanel === 'live-positions' ? '!border-bear/60 !text-bear' : ''}`}
+                onClick={() => setActivePanel('live-positions')}
+                aria-pressed={activePanel === 'live-positions'}
+                title="What is actually open at Angel One right now, marked to the live price">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
+               stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 3v18h18M7 14l4-4 3 3 5-6" />
+          </svg>
+          Live Positions
+        </button>
+
+        <button type="button"
+                className={`btn ${activePanel === 'live-history' ? '!border-bear/60 !text-bear' : ''}`}
+                onClick={() => setActivePanel('live-history')}
+                aria-pressed={activePanel === 'live-history'}
+                title="Every closed, cancelled or refused live order">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
+               stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
+            <path d="M12 7v5l4 2" />
+          </svg>
+          Live History
+        </button>
 
         {/* Grouped, not two disconnected floating badges — AutoTradeBar
             answers "is the demo auto-trader armed", TradingModeControl

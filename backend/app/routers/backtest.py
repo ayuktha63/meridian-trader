@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..backtest import run_backtest, walk_forward
+from ..research.datasets import DatasetError
+from ..research.engine_evidence import walk_forward_on_snapshot
 from ..db.models import BacktestRow
 from ..db.session import get_session
 from ..instruments import get_instrument, get_timeframe
@@ -52,6 +54,16 @@ async def run_walk_forward(
         get_timeframe(payload.timeframe)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+    try:
+        # A snapshot from the venue: the same test can then be run again on
+        # the same bars, and it goes on record as an experiment.
+        record = await walk_forward_on_snapshot(
+            session, payload.symbol, payload.timeframe, bars=payload.bars,
+            cost_profile=payload.cost_profile, strategy=payload.strategy, request=payload)
+        return record["result"]
+    except DatasetError:
+        pass                     # no real venue serves it: simulated, and said to be
 
     result = await walk_forward(payload)
     session.add(BacktestRow(
