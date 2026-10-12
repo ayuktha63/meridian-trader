@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import { fmtPrice, timeAgo } from '../../lib/format'
 import type { ExecutionRecord, LiveTradingOverview } from '../../lib/types'
@@ -59,14 +60,14 @@ export default function LivePositionsPanel() {
       </button>
 
       <AnimatePresence>
-        {open && (
+        {open && createPortal(
           <motion.div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-6"
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 p-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
           >
             <motion.div
-              className="w-full max-w-4xl h-[82vh] rounded-2xl border border-edge bg-panel
+              className="w-full max-w-4xl max-h-[85vh] rounded-2xl border border-edge bg-panel
                          shadow-2xl overflow-hidden flex flex-col"
               initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97 }}
               onClick={(e) => e.stopPropagation()}
@@ -125,7 +126,8 @@ export default function LivePositionsPanel() {
                 </>
               )}
             </motion.div>
-          </motion.div>
+          </motion.div>,
+          document.body,
         )}
       </AnimatePresence>
     </>

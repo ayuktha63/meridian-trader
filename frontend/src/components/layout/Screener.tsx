@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import { fmtPriceCcy } from '../../lib/format'
 import type { ScreenerRow } from '../../lib/types'
@@ -60,9 +61,9 @@ export default function Screener() {
       </button>
 
       <AnimatePresence>
-        {open && (
+        {open && createPortal(
           <motion.div
-            className="fixed inset-0 z-[210] flex items-start justify-center bg-black/60 px-6 pt-20"
+            className="fixed inset-0 z-[210] flex items-start justify-center bg-black/60 px-4 sm:px-6 pt-20"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
           >
@@ -129,7 +130,8 @@ export default function Screener() {
                 cut down which charts are worth opening. Analysis only; nothing here places an order.
               </p>
             </motion.div>
-          </motion.div>
+          </motion.div>,
+          document.body,
         )}
       </AnimatePresence>
     </>
