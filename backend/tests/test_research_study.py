@@ -8,6 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from app import costs
 from app.instruments import get_instrument
 from app.research import datasets, strategies, study
 from app.research.simulator import reference
@@ -38,8 +39,8 @@ def rows(seed, trending):
 
 def markets(trending):
     return [study.Market(symbol, get_instrument(symbol),
-                         {"4h": datasets.build("coindcx", symbol, "4h", rows(seed, trending))})
-            for seed, symbol in enumerate(("BTCUSD", "ETHUSD", "SOLUSD"), start=31)]
+                         {"4h": datasets.build("angelone", symbol, "4h", rows(seed, trending))})
+            for seed, symbol in enumerate(("RELIANCE", "TCS", "INFY"), start=31)]
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def small(monkeypatch):
 
 
 def execute(universe):
-    return study.execute(universe, [], profiles=("crypto_perp",), timeframes=("4h",))
+    return study.execute(universe, [], profiles=(costs.EXCHANGE,), timeframes=("4h",))
 
 
 def test_noise_gets_nowhere_and_the_holdout_stays_shut(small):
@@ -105,7 +106,7 @@ def test_a_stage_is_computed_on_nothing_later_than_its_own_end(monkeypatch):
     for stage, end in (("research", study.VALIDATION_START),
                        ("validation", study.HOLDOUT_START)):
         seen.clear()
-        study.run(universe, watcher, watcher.grid[0], "4h", "crypto_perp", stage)
+        study.run(universe, watcher, watcher.grid[0], "4h", costs.EXCHANGE, stage)
         assert max(seen["latest"]) < end, stage
 
 
@@ -122,7 +123,7 @@ def test_stages_do_not_overlap_and_cover_the_history():
 def test_random_entries_keep_the_exits_and_lose_the_skill(small):
     universe = markets(trending=True)
     strategy, params = small[0], small[0].grid[0]
-    outcome = study.run(universe, strategy, params, "4h", "crypto_perp", "research")
+    outcome = study.run(universe, strategy, params, "4h", costs.EXCHANGE, "research")
     market = universe[0]
     trades = outcome.by_market[market.symbol]
     plan = market.plan(strategy, params, "4h", "research")
@@ -158,22 +159,26 @@ def test_markets_are_left_out_of_the_universe_for_a_stated_reason():
         return [[start + i * hour, opens[i], max(opens[i], close[i]) * 1.001,
                  min(opens[i], close[i]) * 0.999, close[i], 5.0] for i in range(n)]
 
-    good = datasets.build("coindcx", "LINKUSD", "1h", hourly(deep, count, 1))
-    holed = hourly(deep, count, 2)
-    del holed[20_000:22_000]
-    broken = datasets.build("coindcx", "XRPUSD", "1h", holed)
-    recent = datasets.build("coindcx", "AVAXUSD", "1h", hourly(1_775_001_600, 1200, 3))
-    for dataset in (good, broken, recent):
+    good = datasets.build("angelone", "HDFCBANK", "1h", hourly(deep, count, 1))
+    stuck = hourly(deep, count, 2)
+    for row in stuck[20_000:20_100]:                        # the feed went stale
+        row[1:] = [stuck[20_000][1]] * 4 + [0.0]
+    broken = datasets.build("angelone", "SBIN", "1h", stuck)
+    recent = datasets.build("angelone", "ITC", "1h", hourly(1_775_001_600, 1200, 3))
+    # Kept from a venue the application no longer has.
+    gone = datasets.build("coindcx", "BTCUSD", "1h", hourly(deep, count, 4))
+    for dataset in (good, broken, recent, gone):
         datasets.save(dataset)
 
     included, excluded = study.load_universe()
     reasons = {row["symbol"]: row["reason"] for row in excluded}
-    assert "LINKUSD" in [m.symbol for m in included]
-    assert "missing" in reasons["XRPUSD"]
-    assert "no research stretch" in reasons["AVAXUSD"]
-    link = next(m for m in included if m.symbol == "LINKUSD")
-    assert set(link.data) == {"1h", "4h", "1d"}
-    assert link.data["4h"].meta["derived_from"] == good.id
+    assert "HDFCBANK" in [m.symbol for m in included]
+    assert "stale" in reasons["SBIN"]
+    assert "no research stretch" in reasons["ITC"]
+    assert reasons["BTCUSD"] == "not a market this application trades"
+    bank = next(m for m in included if m.symbol == "HDFCBANK")
+    assert set(bank.data) == {"1h", "4h", "1d"}
+    assert bank.data["4h"].meta["derived_from"] == good.id
 
 
 def test_configurations_that_are_the_same_idea_count_as_fewer_tries():
@@ -196,7 +201,7 @@ def test_a_diagnosis_reads_the_research_stretch_and_nothing_after(small, monkeyp
         return original(self, timeframe, stage)
     monkeypatch.setattr(study.Market, "span", watched)
 
-    result = study.diagnose(markets(trending=True), profiles=("crypto_perp",),
+    result = study.diagnose(markets(trending=True), profiles=(costs.EXCHANGE,),
                             timeframes=("4h",), draws=20)
     assert set(opened) <= {"research", "validation"}, "validation only for the benchmark"
     assert "holdout" not in opened
@@ -228,7 +233,7 @@ def test_a_registered_strategy_is_only_ever_traded_on_bars_after_it_was_frozen(s
             await session.execute(delete(ExperimentRow))
             registration = await forward.register(
                 session, universe, "donchian_trend", {"n": 20.0, "k": 3.0}, "4h",
-                "crypto_perp", "a near miss on the history", now=frozen_at)
+                costs.EXCHANGE, "a near miss on the history", now=frozen_at)
             result = await forward.evaluate(session, registration, universe)
             listed = await forward.registrations(session)
             await session.execute(delete(ExperimentRow))
@@ -243,7 +248,7 @@ def test_a_registered_strategy_is_only_ever_traded_on_bars_after_it_was_frozen(s
     assert set(result["metrics"]["bars_since"].values()) == {BARS - 9_001}
 
     strategy = small[0]
-    outcome = study.run(universe, strategy, {"n": 20.0, "k": 3.0}, "4h", "crypto_perp",
+    outcome = study.run(universe, strategy, {"n": 20.0, "k": 3.0}, "4h", costs.EXCHANGE,
                         (registration["window"]["from"], float("inf")))
     assert outcome.trades and result["metrics"]["pooled"]["trades"] == len(outcome.trades)
     assert min(t.entry_time for t in outcome.trades) >= registration["window"]["from"]
@@ -264,7 +269,7 @@ def test_a_few_forward_trades_are_not_a_verdict(small):
         async with session_scope() as session:
             registration = await forward.register(
                 session, universe, "donchian_trend", {"n": 20.0, "k": 3.0}, "4h",
-                "crypto_perp", "watching", now=late)
+                costs.EXCHANGE, "watching", now=late)
             return await forward.evaluate(session, registration, universe)
     result = asyncio.run(go())
     assert result["verdict"]["state"] == forward.TOO_FEW

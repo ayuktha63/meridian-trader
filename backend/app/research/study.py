@@ -5,7 +5,7 @@ History is cut once, by date, the same way for every market:
 
 * **research** — everything before `VALIDATION_START`. Parameters are chosen
   here, one set per strategy and timeframe for the *whole universe*: a rule
-  that needs a different setting on every coin has found nine accidents.
+  that needs a different setting on every market has found nine accidents.
 * **validation** — the next stretch, with those parameters frozen. The
   first look at data the choice never saw.
 * **holdout** — the most recent stretch. Opened once, for what survived the
@@ -42,7 +42,10 @@ from .strategies import Params, Plan, Strategy
 
 log = logging.getLogger("meridian.research.study")
 
-PROTOCOL_VERSION = "1"
+#: "1" judged CoinDCX's books, under two venue profiles. That venue is gone;
+#: "2" has the same stretches and the same thresholds, and charges each market
+#: as the exchange it trades on does.
+PROTOCOL_VERSION = "2"
 WEEK = 604_800
 
 
@@ -57,7 +60,7 @@ HOLDOUT_START = _utc("2025-10-01")
 HISTORY_REQUIRED_FROM = _utc("2021-03-01")
 
 TIMEFRAMES: Tuple[str, ...] = ("1h", "4h", "1d")
-PROFILES: Tuple[str, ...] = ("crypto_perp", "crypto_spot")
+PROFILES: Tuple[str, ...] = (costs.EXCHANGE,)
 STAGES: Tuple[str, ...] = ("research", "validation", "holdout")
 
 #: What a family has to show at each stage. Fixed before the first run.
@@ -91,8 +94,6 @@ EXECUTION_ASSUMPTIONS = (
     "When one bar reaches both stop and target, the stop is taken.",
     "One position per market at a time; a signal that arrives during one is not taken.",
     "A position open at the end of a window is closed at that window's last close.",
-    "Signals are computed on the spot book's bars; the perpetual profile assumes the "
-    "perpetual tracks them — basis is not modelled.",
     "No partial fills, no latency beyond the one-bar delay, no market impact: sizes "
     "are assumed small against the book.",
 )
@@ -155,6 +156,13 @@ def load_universe(base_timeframe: str = "1h") -> Tuple[List[Market], List[Dict[s
     excluded: List[Dict[str, str]] = []
     for symbol in sorted(newest):
         meta = newest[symbol]
+        try:
+            instrument = get_instrument(symbol)
+        except KeyError:
+            # A snapshot kept from a venue this application no longer has.
+            excluded.append({"symbol": symbol, "dataset_id": meta["sha256"][:16],
+                             "reason": "not a market this application trades"})
+            continue
         quality = meta.get("quality") or {}
         if not quality.get("passed"):
             excluded.append({"symbol": symbol, "dataset_id": meta["sha256"][:16],
@@ -171,7 +179,7 @@ def load_universe(base_timeframe: str = "1h") -> Tuple[List[Market], List[Dict[s
             if timeframe != base_timeframe:
                 data[timeframe] = datasets.resample(base, timeframe)
                 datasets.save(data[timeframe])
-        included.append(Market(symbol, get_instrument(symbol), data))
+        included.append(Market(symbol, instrument, data))
     return included, excluded
 
 

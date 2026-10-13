@@ -144,9 +144,27 @@ def random_entries(prep: bt.Prepared, instrument: Instrument, request: BacktestR
     return means
 
 
+#: Below this, `walk_forward` itself already declined to trade ("not enough
+#: history") — asking the engine to build frames from the same bars anyway
+#: is not a second opinion, it is calling `_prepare` on data it already
+#: knows is too thin, which is exactly the shape that crashes resampling a
+#: higher timeframe with nothing in it.
+_MIN_BASE_BARS = 50
+
+
 async def extra_checks(request: BacktestRequest, history: bt.History,
                        result: BacktestResult) -> Dict[str, Any]:
-    """The three questions the verdict alone does not answer."""
+    """The three questions the verdict alone does not answer — skipped,
+    honestly, rather than crashed through, when there is too little history
+    to ask them of in the first place."""
+    if len(history.base) < _MIN_BASE_BARS:
+        return {
+            "block_interval": None, "grid_positive": None, "grid": None,
+            "max_drawdown_r": round(_drawdown_r(result.trades), 2),
+            "random_entries": None,
+            "skipped": "Not enough history ({} bars) to run the robustness "
+                       "checks.".format(len(history.base)),
+        }
     instrument = get_instrument(request.symbol.upper())
     prep = await bt._prepare(request, history.base, history)       # noqa: SLF001 - cached
     start = int(np.searchsorted(prep.time, result.from_time, "left"))

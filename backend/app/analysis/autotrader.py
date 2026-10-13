@@ -26,8 +26,7 @@ automated system is not a bad trade, it is a hundred mediocre ones:
    the auto-trader exactly as they bind you. A machine revenge-trades faster
    than a human.
 5. **Cost sanity** — if the round-trip spread is a large fraction of the
-   expected move, the setup is unprofitable before it starts. This is what
-   stops the INR crypto books quietly draining the account.
+   expected move, the setup is unprofitable before it starts.
 """
 from __future__ import annotations
 

@@ -1,22 +1,36 @@
 """Instrument + timeframe reference data.
 
-Pip size, digits, contract size and typical spread drive risk maths, lot
-sizing and the synthetic feed's realism. Values reflect standard retail
-FX/metal/crypto conventions.
+Everything listed here is something Angel One trades. The exchange futures
+below are written out; NSE F&O stocks are not — which ones exist, and the lot
+and tick each trades in, are read from Angel One's scrip master (see
+`refresh_stock_instruments`).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import logging
+import os
+import time
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
+
+from .config import DATA_DIR
+
+log = logging.getLogger("meridian.instruments")
+
+#: What Angel One last listed, kept so that a restart knows its stocks before
+#: the broker is connected again — a saved trade or journal entry on one has
+#: to resolve whether or not there is a session.
+UNIVERSE_PATH = DATA_DIR / "angel_universe.json"
 
 
 @dataclass(frozen=True)
 class Instrument:
     """A tradable instrument.
 
-    `pip_size` is the smallest quoted increment (a pip in FX, a tick on an
-    exchange-traded future) and `contract_size` is the units in one lot, so
-    `pip_value_per_lot` is the cash value of one tick per lot in every market.
+    `pip_size` is the smallest quoted increment (a tick on an exchange) and
+    `contract_size` is the units in one lot, so `pip_value_per_lot` is the
+    cash value of one tick per lot in every market.
 
     `venue` is what you can actually trade it on, and `broker_symbol` is the
     tradingsymbol to search for there — the two fields that turn a signal into
@@ -25,16 +39,15 @@ class Instrument:
 
     symbol: str
     display: str
-    asset_class: str          # fx | metal | crypto | currency_fut | index | commodity
+    asset_class: str          # currency_fut | index | commodity | stock
     digits: int
     pip_size: float           # smallest price increment (pip / tick)
     contract_size: float      # units per lot
+    #: An assumption, used for costs only until a quote supplies the real one.
     typical_spread_pips: float
-    daily_vol_pct: float      # daily sigma used by the simulated feed
-    base_price: float
     quote_currency: str
     sessions: List[str] = field(default_factory=list)
-    venue: str = "otc"        # otc | NFO | CDS | MCX | crypto
+    venue: str = "otc"        # NFO | CDS | MCX
     broker_symbol: Optional[str] = None
     exchange: Optional[str] = None
     tradable_in_india: bool = False
@@ -42,7 +55,7 @@ class Instrument:
 
     @property
     def pip_value_per_lot(self) -> float:
-        """USD value of one pip for one standard lot (approximate)."""
+        """Cash value of one tick for one lot, in the quote currency."""
         return self.pip_size * self.contract_size
 
     def round_price(self, price: float) -> float:
@@ -58,203 +71,169 @@ class Instrument:
 INSTRUMENTS: Dict[str, Instrument] = {
     i.symbol: i
     for i in [
-        # ── Spot FX and metals (OTC) ──────────────────────────
-        # Not accessible to Indian residents: under FEMA only INR-paired
-        # currency derivatives on a recognised exchange are permitted. Kept
-        # for analysis and for users outside India.
-        Instrument("EURUSD", "EUR/USD", "fx", 5, 0.0001, 100_000, 0.6, 0.45,
-                   1.0850, "USD", ["london", "newyork"], venue="otc",
-                   note="Spot FX — not permitted for Indian residents"),
-        Instrument("GBPUSD", "GBP/USD", "fx", 5, 0.0001, 100_000, 0.9, 0.55,
-                   1.2720, "USD", ["london", "newyork"], venue="otc",
-                   note="Spot FX — not permitted for Indian residents"),
-        Instrument("USDJPY", "USD/JPY", "fx", 3, 0.01, 100_000, 0.8, 0.50,
-                   151.40, "JPY", ["tokyo", "newyork"], venue="otc",
-                   note="Spot FX — not permitted for Indian residents"),
-        Instrument("AUDUSD", "AUD/USD", "fx", 5, 0.0001, 100_000, 0.9, 0.52,
-                   0.6580, "USD", ["sydney", "tokyo"], venue="otc",
-                   note="Spot FX — not permitted for Indian residents"),
-        Instrument("USDCAD", "USD/CAD", "fx", 5, 0.0001, 100_000, 1.2, 0.44,
-                   1.3620, "CAD", ["newyork"], venue="otc",
-                   note="Spot FX — not permitted for Indian residents"),
-        Instrument("XAUUSD", "Gold / USD", "metal", 2, 0.10, 100, 2.5, 1.05,
-                   2338.0, "USD", ["london", "newyork"], venue="otc",
-                   note="Spot gold — Indian residents trade MCX GOLD instead"),
-
-        # ── Crypto, USDT-quoted (live from CoinDCX / Binance, keyless) ──
-        # `contract_size` is 1 because crypto is traded in units of the coin,
-        # not lots, so one "lot" here means one coin and pip_value_per_lot
-        # equals the tick size.
-        Instrument("BTCUSD", "Bitcoin / USDT", "crypto", 2, 1.0, 1, 1.0, 3.10,
-                   67250.0, "USD", ["24h"], venue="crypto",
-                   broker_symbol="BTCUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX BTCUSDT · 30% tax + 1% TDS in India"),
-        Instrument("ETHUSD", "Ethereum / USDT", "crypto", 2, 0.10, 1, 0.5, 3.60,
-                   3480.0, "USD", ["24h"], venue="crypto",
-                   broker_symbol="ETHUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX ETHUSDT · 30% tax + 1% TDS in India"),
-        Instrument("SOLUSD", "Solana / USDT", "crypto", 3, 0.01, 1, 1.0, 5.20,
-                   74.5, "USD", ["24h"], venue="crypto",
-                   broker_symbol="SOLUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX SOLUSDT · high volatility"),
-        Instrument("XRPUSD", "XRP / USDT", "crypto", 4, 0.0001, 1, 1.0, 4.80,
-                   1.07, "USD", ["24h"], venue="crypto",
-                   broker_symbol="XRPUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX XRPUSDT"),
-        Instrument("DOGEUSD", "Dogecoin / USDT", "crypto", 5, 0.00001, 1, 1.0, 6.50,
-                   0.0702, "USD", ["24h"], venue="crypto",
-                   broker_symbol="DOGEUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX DOGEUSDT · sentiment-driven, thin structure"),
-        Instrument("BNBUSD", "BNB / USDT", "crypto", 2, 0.10, 1, 1.0, 3.40,
-                   600.0, "USD", ["24h"], venue="crypto",
-                   broker_symbol="BNBUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX BNBUSDT"),
-        Instrument("ADAUSD", "Cardano / USDT", "crypto", 4, 0.0001, 1, 1.0, 4.60,
-                   0.19, "USD", ["24h"], venue="crypto",
-                   broker_symbol="ADAUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX ADAUSDT"),
-        Instrument("AVAXUSD", "Avalanche / USDT", "crypto", 3, 0.001, 1, 1.0, 5.40,
-                   6.68, "USD", ["24h"], venue="crypto",
-                   broker_symbol="AVAXUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX AVAXUSDT"),
-        Instrument("LINKUSD", "Chainlink / USDT", "crypto", 3, 0.001, 1, 1.0, 4.90,
-                   8.22, "USD", ["24h"], venue="crypto",
-                   broker_symbol="LINKUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX LINKUSDT"),
-        Instrument("DOTUSD", "Polkadot / USDT", "crypto", 4, 0.0001, 1, 2.0, 5.00,
-                   0.853, "USD", ["24h"], venue="crypto",
-                   broker_symbol="DOTUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX DOTUSDT"),
-        Instrument("LTCUSD", "Litecoin / USDT", "crypto", 2, 0.01, 1, 1.0, 3.80,
-                   45.4, "USD", ["24h"], venue="crypto",
-                   broker_symbol="LTCUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX LTCUSDT"),
-        Instrument("TRXUSD", "TRON / USDT", "crypto", 5, 0.00001, 1, 10.0, 3.20,
-                   0.328, "USD", ["24h"], venue="crypto",
-                   broker_symbol="TRXUSDT", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX TRXUSDT"),
-
-        # ── Crypto, INR-quoted (CoinDCX) ──────────────────────
-        # The INR book is what an Indian resident actually settles in, and it
-        # usually carries a small premium to the USDT price. Suffix "C" keeps
-        # these distinct from the NSE currency futures above (USDINR etc.).
-        Instrument("BTCINRC", "Bitcoin / INR", "crypto", 0, 1.0, 1, 23800.0, 3.10,
-                   6_402_000.0, "INR", ["24h"], venue="crypto",
-                   broker_symbol="BTCINR", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX BTCINR · settles in rupees · ~0.37% spread, 20x the USDT book — swing only, never scalp · 30% tax + 1% TDS"),
-        Instrument("ETHINRC", "Ethereum / INR", "crypto", 1, 0.1, 1, 8100.0, 3.60,
-                   190_805.0, "INR", ["24h"], venue="crypto",
-                   broker_symbol="ETHINR", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX ETHINR · settles in rupees · ~0.42% spread — the USDT book is far cheaper to trade"),
-        Instrument("SOLINRC", "Solana / INR", "crypto", 1, 0.1, 1, 410.0, 5.20,
-                   7_424.0, "INR", ["24h"], venue="crypto",
-                   broker_symbol="SOLINR", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX SOLINR · settles in rupees · ~0.55% spread — the USDT book is far cheaper to trade"),
-        Instrument("XRPINRC", "XRP / INR", "crypto", 3, 0.001, 1, 450.0, 4.80,
-                   106.7, "INR", ["24h"], venue="crypto",
-                   broker_symbol="XRPINR", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX XRPINR · settles in rupees · ~0.42% spread — the USDT book is far cheaper to trade"),
-        Instrument("DOGEINRC", "Dogecoin / INR", "crypto", 4, 0.0001, 1, 440.0, 6.50,
-                   6.99, "INR", ["24h"], venue="crypto",
-                   broker_symbol="DOGEINR", exchange="COINDCX", tradable_in_india=True,
-                   note="CoinDCX DOGEINR · settles in rupees · ~0.63% spread — the USDT book is far cheaper to trade"),
-
         # ── NSE currency futures (CDS) — the legal FX route in India ──
         # Tick 0.0025, lot 1000 units of the base currency, so one tick is
         # ₹2.50 per lot. Verify the live lot size on the contract page.
         Instrument("USDINR", "USD/INR Futures", "currency_fut", 4, 0.0025, 1_000,
-                   1.0, 0.30, 83.20, "INR", ["india"], venue="CDS",
+                   1.0, "INR", ["india"], venue="CDS",
                    broker_symbol="USDINR", exchange="CDS", tradable_in_india=True,
                    note="NSE currency future · 09:00-17:00 IST"),
         Instrument("EURINR", "EUR/INR Futures", "currency_fut", 4, 0.0025, 1_000,
-                   2.0, 0.45, 90.10, "INR", ["india"], venue="CDS",
+                   2.0, "INR", ["india"], venue="CDS",
                    broker_symbol="EURINR", exchange="CDS", tradable_in_india=True,
                    note="NSE currency future · 09:00-17:00 IST"),
         Instrument("GBPINR", "GBP/INR Futures", "currency_fut", 4, 0.0025, 1_000,
-                   2.5, 0.55, 105.60, "INR", ["india"], venue="CDS",
+                   2.5, "INR", ["india"], venue="CDS",
                    broker_symbol="GBPINR", exchange="CDS", tradable_in_india=True,
                    note="NSE currency future · 09:00-17:00 IST"),
         Instrument("JPYINR", "JPY/INR Futures", "currency_fut", 4, 0.0025, 100_000,
-                   2.5, 0.50, 55.20, "INR", ["india"], venue="CDS",
+                   2.5, "INR", ["india"], venue="CDS",
                    broker_symbol="JPYINR", exchange="CDS", tradable_in_india=True,
                    note="NSE currency future · quoted per 100 JPY"),
 
         # ── NSE indices ───────────────────────────────────────
-        Instrument("NIFTY", "NIFTY 50", "index", 2, 0.05, 75, 1.0, 0.85,
-                   24_500.0, "INR", ["india"], venue="NFO",
+        # The lot and tick here are stand-ins until Angel One is connected:
+        # its scrip master then supplies the current contract's (`adopt_contract`).
+        Instrument("NIFTY", "NIFTY 50", "index", 2, 0.05, 75, 1.0,
+                   "INR", ["india"], venue="NFO",
                    broker_symbol="NIFTY", exchange="NSE", tradable_in_india=True,
                    note="Index — trade the future/option. Verify current lot size."),
-        Instrument("BANKNIFTY", "BANK NIFTY", "index", 2, 0.05, 30, 1.5, 1.10,
-                   52_000.0, "INR", ["india"], venue="NFO",
+        Instrument("BANKNIFTY", "BANK NIFTY", "index", 2, 0.05, 30, 1.5,
+                   "INR", ["india"], venue="NFO",
                    broker_symbol="BANKNIFTY", exchange="NSE", tradable_in_india=True,
                    note="Index — trade the future/option. Verify current lot size."),
 
         # ── MCX commodities ───────────────────────────────────
-        Instrument("MCXGOLD", "Gold (MCX)", "commodity", 0, 1.0, 100, 2.0, 0.95,
-                   71_500.0, "INR", ["india"], venue="MCX",
+        Instrument("MCXGOLD", "Gold (MCX)", "commodity", 0, 1.0, 100, 2.0,
+                   "INR", ["india"], venue="MCX",
                    broker_symbol="GOLD", exchange="MCX", tradable_in_india=True,
                    note="MCX GOLD · 100g lot · GOLDM is the 10g mini"),
-        Instrument("MCXSILVER", "Silver (MCX)", "commodity", 0, 1.0, 30, 3.0, 1.60,
-                   88_000.0, "INR", ["india"], venue="MCX",
+        Instrument("MCXSILVER", "Silver (MCX)", "commodity", 0, 1.0, 30, 3.0,
+                   "INR", ["india"], venue="MCX",
                    broker_symbol="SILVER", exchange="MCX", tradable_in_india=True,
                    note="MCX SILVER · 30kg lot · SILVERM is the 5kg mini"),
-        Instrument("MCXCRUDE", "Crude Oil (MCX)", "commodity", 0, 1.0, 100, 2.0, 2.10,
-                   6_400.0, "INR", ["india"], venue="MCX",
+        Instrument("MCXCRUDE", "Crude Oil (MCX)", "commodity", 0, 1.0, 100, 2.0,
+                   "INR", ["india"], venue="MCX",
                    broker_symbol="CRUDEOIL", exchange="MCX", tradable_in_india=True,
                    note="MCX CRUDEOIL · 100 barrel lot"),
     ]
 }
 
-def _stock_instruments() -> List[Instrument]:
-    """Generate an Instrument per NSE F&O stock from the compact table.
 
-    Tick size on NSE equity is ₹0.05 across the board, and `contract_size` is
-    the F&O lot — so `pip_value_per_lot` is the rupee value of one tick for one
-    lot, which is what the sizing maths needs.
+def _stock_instruments() -> List[Instrument]:
+    """An Instrument per NSE F&O stock Angel One currently lists.
+
+    `contract_size` is the F&O lot, so `pip_value_per_lot` is the rupee value
+    of one tick for one lot, which is what the sizing maths needs.
     """
-    from .stocks import NSE_FO_STOCKS
+    from .stocks import UNIVERSE, display_of, sector_of
 
     out: List[Instrument] = []
-    for symbol, display, sector, lot, price in NSE_FO_STOCKS:
-        # Bigger names move less in percentage terms; this only seeds the
-        # simulator, so a coarse split by price band is enough.
-        vol = 1.9 if price < 300 else 1.5 if price < 2_000 else 1.2
+    for listing in UNIVERSE:
         out.append(Instrument(
-            symbol=symbol,
-            display=display,
+            symbol=listing.symbol,
+            display=display_of(listing.symbol),
             asset_class="stock",
             digits=2,
-            pip_size=0.05,
-            contract_size=float(lot),
+            pip_size=listing.tick_size,
+            contract_size=float(listing.lot_size),
             typical_spread_pips=1.0,
-            daily_vol_pct=vol,
-            base_price=price,
             quote_currency="INR",
             sessions=["india"],
             venue="NFO",
-            broker_symbol=symbol,
+            broker_symbol=listing.symbol,
             exchange="NSE",
             tradable_in_india=True,
-            note="{} · NSE F&O · lot {} · cash, futures or options".format(sector, lot),
+            note="{} · NSE F&O · lot {} · cash, futures or options".format(
+                sector_of(listing.symbol), listing.lot_size),
         ))
     return out
 
 
-INSTRUMENTS.update({i.symbol: i for i in _stock_instruments()})
-
 SYMBOLS: List[str] = list(INSTRUMENTS.keys())
 
-#: Symbols the feed streams by default. Streaming all ~200 instruments would
-#: open far more subscriptions than any one trader watches, so the background
-#: feed covers the majors and everything else hydrates on demand when selected.
-DEFAULT_STREAM_SYMBOLS: List[str] = [
-    s for s in SYMBOLS
-    if INSTRUMENTS[s].asset_class != "stock"
-] + ["RELIANCE", "HDFCBANK", "INFY", "TATAMOTORS", "SBIN"]
+#: Stocks streamed from the start, when Angel One lists them. Streaming every
+#: one would open far more subscriptions than any one trader watches.
+DEFAULT_STOCKS = ("RELIANCE", "HDFCBANK", "INFY", "TATAMOTORS", "SBIN")
+
+#: Symbols the feed streams by default: the majors, with everything else
+#: hydrating on demand when it is selected.
+DEFAULT_STREAM_SYMBOLS: List[str] = list(SYMBOLS)
+
+
+def refresh_stock_instruments() -> None:
+    """Rebuild the stocks from the universe Angel One last reported, so a
+    lot-size revision or a new listing arrives without a restart. The
+    containers are changed in place: other modules hold these same objects."""
+    fresh = {i.symbol: i for i in _stock_instruments()}
+    for symbol in [s for s, inst in INSTRUMENTS.items()
+                   if inst.asset_class == "stock" and s not in fresh]:
+        del INSTRUMENTS[symbol]
+    INSTRUMENTS.update(fresh)
+
+    SYMBOLS[:] = list(INSTRUMENTS.keys())
+    DEFAULT_STREAM_SYMBOLS[:] = [
+        s for s in SYMBOLS if INSTRUMENTS[s].asset_class != "stock"
+    ] + [s for s in DEFAULT_STOCKS if s in INSTRUMENTS]
+
+
+def adopt_contract(symbol: str, lot_size: int, tick_size: float) -> None:
+    """Take a written-down instrument's lot and tick from the contract Angel
+    One currently lists for it."""
+    current = INSTRUMENTS[symbol]
+    INSTRUMENTS[symbol] = replace(
+        current, contract_size=float(lot_size), pip_size=tick_size,
+        note="Index — trade the future/option · lot {}".format(lot_size))
+
+
+def save_universe() -> None:
+    from .stocks import UNIVERSE
+
+    payload = {
+        "saved_at": time.time(),
+        "stocks": [[listing.symbol, listing.lot_size, listing.tick_size] for listing in UNIVERSE],
+        "contracts": {i.symbol: [int(i.contract_size), i.pip_size]
+                      for i in INSTRUMENTS.values() if i.asset_class == "index"},
+    }
+    try:
+        scratch = UNIVERSE_PATH.with_suffix(".tmp")
+        scratch.write_text(json.dumps(payload))
+        os.replace(scratch, UNIVERSE_PATH)
+    except OSError as exc:
+        log.warning("could not keep the stock universe for the next start: %s", exc)
+
+
+def restore_universe() -> None:
+    """Adopt the universe kept from the last scrip-master load, if there is
+    one. Angel One's own list, a little old; replaced when it is next read."""
+    from .stocks import Listing, set_universe
+
+    try:
+        payload = json.loads(UNIVERSE_PATH.read_text())
+        listings = [Listing(str(symbol), int(lot), float(tick))
+                    for symbol, lot, tick in payload["stocks"]]
+        contracts = {str(symbol): (int(lot), float(tick))
+                     for symbol, (lot, tick) in (payload.get("contracts") or {}).items()}
+    except OSError:
+        return                                  # never connected: nothing kept yet
+    except (ValueError, TypeError, KeyError) as exc:
+        log.warning("the kept stock universe is unreadable (%s); starting without it", exc)
+        return
+    set_universe(listings)
+    refresh_stock_instruments()
+    for symbol, (lot, tick) in contracts.items():
+        if symbol in INSTRUMENTS and INSTRUMENTS[symbol].asset_class == "index":
+            adopt_contract(symbol, lot, tick)
+
+
+restore_universe()
 
 
 def get_instrument(symbol: str) -> Instrument:
-    key = symbol.upper().replace("/", "").replace("-", "")
+    key = symbol.upper()
+    if key in INSTRUMENTS:          # a ticker with its own hyphen: BAJAJ-AUTO
+        return INSTRUMENTS[key]
+    key = key.replace("/", "").replace("-", "")
     if key not in INSTRUMENTS:
         raise KeyError("Unknown symbol: {}".format(symbol))
     return INSTRUMENTS[key]

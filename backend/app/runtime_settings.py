@@ -1,9 +1,10 @@
 """Runtime settings — the values a trader changes from the UI.
 
 `config.py` holds boot-time defaults from the environment. This module holds
-the layer on top: the Claude key, the data provider, broker credentials and
-risk parameters, all editable at runtime and persisted to
-`backend/data/settings.json`.
+the layer on top: the Claude key and risk parameters, all editable at
+runtime and persisted to `backend/data/settings.json`. Angel One broker
+credentials live in `config.py` instead (see its docstring) — they never
+round-trip through this API-reachable store.
 
 Secrets are stored in plain JSON on the local disk. That is a deliberate
 trade-off for a single-user desktop tool — it is the same trust level as a
@@ -27,10 +28,7 @@ log = logging.getLogger("meridian.settings")
 SETTINGS_PATH = DATA_DIR / "settings.json"
 
 #: Fields never returned in full over the API.
-SECRET_FIELDS = {
-    "anthropic_api_key", "twelvedata_api_key",
-    "zerodha_api_secret", "zerodha_access_token",
-}
+SECRET_FIELDS = {"anthropic_api_key"}
 
 
 class RuntimeSettings(BaseModel):
@@ -39,18 +37,6 @@ class RuntimeSettings(BaseModel):
     claude_model: str = "claude-sonnet-5"
     claude_effort: str = "medium"
     ai_auto_analysis_interval: int = 45
-
-    # ── market data ───────────────────────────────────────────
-    market_provider: str = "synthetic"   # synthetic | coindcx | binance | zerodha | twelvedata
-    hybrid_crypto_live: bool = True
-    twelvedata_api_key: Optional[str] = None
-
-    # ── zerodha (kite connect) ────────────────────────────────
-    zerodha_api_key: Optional[str] = None
-    zerodha_api_secret: Optional[str] = None
-    #: Expires daily at ~06:00 IST; re-run the login flow each morning.
-    zerodha_access_token: Optional[str] = None
-    zerodha_token_issued_at: Optional[float] = None
 
     # ── risk ──────────────────────────────────────────────────
     account_balance: float = 10_000.0
@@ -87,9 +73,6 @@ class SettingsStore:
             claude_model=env_settings.claude_model,
             claude_effort=env_settings.claude_effort,
             ai_auto_analysis_interval=env_settings.ai_auto_analysis_interval,
-            market_provider=env_settings.market_provider,
-            hybrid_crypto_live=env_settings.hybrid_crypto_live,
-            twelvedata_api_key=env_settings.twelvedata_api_key,
             account_balance=env_settings.account_balance,
             risk_per_trade_pct=env_settings.risk_per_trade_pct,
             auto_protect=env_settings.auto_protect,
@@ -177,11 +160,6 @@ class SettingsStore:
     def claude_enabled(self) -> bool:
         key = self.current.anthropic_api_key
         return bool(key and key.strip())
-
-    @property
-    def zerodha_ready(self) -> bool:
-        s = self.current
-        return bool(s.zerodha_api_key and s.zerodha_access_token)
 
 
 store = SettingsStore()

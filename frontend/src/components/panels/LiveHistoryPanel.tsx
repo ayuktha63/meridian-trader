@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import { fmtPrice, fmtSigned, timeAgo } from '../../lib/format'
-import type { ExecutionRecord, LiveTradingOverview } from '../../lib/types'
+import { useStore } from '../../store/useStore'
+import type { ExecutionRecord, LiveTradingOverview, PaperState, PaperTrade } from '../../lib/types'
 import { Badge, EmptyState, Spinner } from '../ui'
 
 /**
@@ -13,25 +13,39 @@ import { Badge, EmptyState, Spinner } from '../ui'
  * sliver in the tabbed side panel. Same source as that screen
  * (`/api/trades/live/overview`), just the other half of the split —
  * anything no longer open.
+ *
+ * In PAPER mode the same popup shows the demo account's closed trades
+ * (`/api/paper`, its 15 most recent) instead — never a mix of the two.
  */
 const POLL_MS = 15_000
 
 export default function LiveHistoryPanel() {
   const [open, setOpen] = useState(false)
+  const isLive = useStore((s) => s.tradingMode?.mode) === 'LIVE'
   const [data, setData] = useState<LiveTradingOverview | null>(null)
+  const [paper, setPaper] = useState<PaperState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // A mode switch must never leave the other account's history on screen.
+  useEffect(() => {
+    setData(null)
+    setPaper(null)
+    setError(null)
+  }, [isLive])
+
   const refresh = useCallback(async () => {
     try {
-      setData(await api.liveOverview())
+      if (isLive) setData(await api.liveOverview())
+      else setPaper(await api.paperState())
       setError(null)
     } catch (exc) {
-      setError(exc instanceof ApiError ? exc.message : 'Could not reach the live account.')
+      setError(exc instanceof ApiError ? exc.message
+        : isLive ? 'Could not reach the live account.' : 'Could not load the demo account.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isLive])
 
   useEffect(() => {
     if (!open) return
@@ -42,24 +56,34 @@ export default function LiveHistoryPanel() {
   }, [open, refresh])
 
   const history = data?.history ?? []
-  const closedWins = history.filter((r) => (r.net_pnl ?? 0) > 0).length
-  const closedLosses = history.filter((r) => (r.net_pnl ?? 0) < 0 && r.status === 'CLOSED').length
+  const demoHistory = (paper?.recent ?? []).filter((t) => t.status === 'closed')
+  const total = isLive ? history.length : demoHistory.length
+  const closedWins = isLive
+    ? history.filter((r) => (r.net_pnl ?? 0) > 0).length
+    : demoHistory.filter((t) => t.net_pnl > 0).length
+  const closedLosses = isLive
+    ? history.filter((r) => (r.net_pnl ?? 0) < 0 && r.status === 'CLOSED').length
+    : demoHistory.filter((t) => t.net_pnl < 0).length
   const refused = history.filter((r) => r.status === 'REJECTED').length
+  const hasData = isLive ? !!data : !!paper
+  const label = isLive ? 'Live' : 'Demo'
 
   return (
     <>
       <button type="button" className="btn" onClick={() => setOpen(true)}
-              title="Every closed, cancelled or refused live order">
+              title={isLive
+                ? 'Every closed, cancelled or refused live order'
+                : 'Every closed demo (paper) trade'}>
         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none"
              stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
           <path d="M12 7v5l4 2" />
         </svg>
-        Live History
+        {label} History
       </button>
 
       <AnimatePresence>
-        {open && createPortal(
+        {open && (
           <motion.div
             className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 p-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -72,8 +96,8 @@ export default function LiveHistoryPanel() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline shrink-0">
-                <h2 className="text-sm font-bold tracking-tight">Live history</h2>
-                <span className="text-2xs text-faint">· Angel One</span>
+                <h2 className="text-sm font-bold tracking-tight">{label} history</h2>
+                <span className="text-2xs text-faint">· {isLive ? 'Angel One' : 'Demo account'}</span>
                 <span className="flex-1" />
                 <button type="button" className="chip !py-0.5" onClick={refresh} disabled={loading}
                         title="Refresh now">
@@ -85,38 +109,47 @@ export default function LiveHistoryPanel() {
                 </button>
               </div>
 
-              {loading && !data ? (
+              {loading && !hasData ? (
                 <div className="flex-1 grid place-items-center">
                   <Spinner className="h-5 w-5" />
                 </div>
-              ) : error && !data ? (
+              ) : error && !hasData ? (
                 <div className="flex-1 grid place-items-center">
-                  <EmptyState title="Could not load live history" hint={error} />
+                  <EmptyState title={`Could not load ${label.toLowerCase()} history`} hint={error} />
                 </div>
               ) : (
                 <>
                   <div className="shrink-0 flex items-center gap-4 px-5 py-3 border-b border-hairline text-xs">
-                    <span className="text-faint">{history.length} total</span>
+                    <span className="text-faint">{total} total</span>
                     <span className="text-bull font-semibold">{closedWins}W</span>
                     <span className="text-bear font-semibold">{closedLosses}L</span>
-                    <span className="text-warn font-semibold">{refused} refused</span>
+                    {isLive && <span className="text-warn font-semibold">{refused} refused</span>}
                   </div>
 
                   <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2">
-                    {history.length === 0 ? (
-                      <EmptyState title="No live history yet"
-                                  hint="Every closed, cancelled or refused live order will show up here." />
+                    {isLive ? (
+                      history.length === 0 ? (
+                        <EmptyState title="No live history yet"
+                                    hint="Every closed, cancelled or refused live order will show up here." />
+                      ) : (
+                        history.map((row) => (
+                          <HistoryRow key={row.id} row={row} currency={data?.currency ?? 'USD'} />
+                        ))
+                      )
+                    ) : demoHistory.length === 0 ? (
+                      <EmptyState title="No demo history yet"
+                                  hint="Closed paper trades from the demo account will show up here." />
                     ) : (
-                      history.map((row) => (
-                        <HistoryRow key={row.id} row={row} currency={data?.currency ?? 'USD'} />
+                      demoHistory.map((trade) => (
+                        <DemoHistoryRow key={trade.id} trade={trade}
+                                        currency={paper?.account.currency ?? 'USD'} />
                       ))
                     )}
                   </div>
                 </>
               )}
             </motion.div>
-          </motion.div>,
-          document.body,
+          </motion.div>
         )}
       </AnimatePresence>
     </>
@@ -173,6 +206,42 @@ function HistoryRow({ row, currency }: { row: ExecutionRecord; currency: string 
         {row.gross_pnl != null && row.charges != null && (
           <span>{fmtSigned(row.gross_pnl, 2)} gross − {money(row.charges)} charges</span>
         )}
+      </div>
+    </div>
+  )
+}
+
+function DemoHistoryRow({ trade, currency }: { trade: PaperTrade; currency: string }) {
+  const sym = currency === 'INR' ? '₹' : '$'
+  const money = (value: number | null | undefined) =>
+    value == null ? '—' : `${sym}${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  const win = trade.net_pnl >= 0
+
+  return (
+    <div className="rounded-lg border border-hairline bg-tint/[0.02] px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-bold ${trade.side === 'LONG' ? 'text-bull' : 'text-bear'}`}>
+          {trade.side}
+        </span>
+        <span className="text-xs font-semibold text-ink">{trade.symbol}</span>
+        <Badge tone={win ? 'bull' : 'bear'}>CLOSED</Badge>
+        <Badge tone="neutral">demo</Badge>
+        <span className="flex-1" />
+        <span className={`text-sm font-bold tnum ${win ? 'text-bull' : 'text-bear'}`}>
+          {win ? '+' : '−'}{money(trade.net_pnl)}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-3 text-2xs text-faint">
+        <span>Qty <span className="text-ink tnum">{trade.quantity}</span></span>
+        <span>Entry <span className="text-ink tnum">{fmtPrice(trade.entry, 2)}</span></span>
+        <span>Exit <span className="text-ink tnum">{fmtPrice(trade.exit, 2)}</span></span>
+        <span>Costs <span className="text-ink tnum">{money(trade.entry_cost + trade.exit_cost)}</span></span>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-faint">
+        <span>{trade.timeframe}</span>
+        <span>{timeAgo(trade.exit_at ?? trade.entry_at)}</span>
+        {trade.exit_reason && <span>{trade.exit_reason}</span>}
+        <span>{fmtSigned(trade.gross_pnl, 2)} gross − {money(trade.entry_cost + trade.exit_cost)} costs</span>
       </div>
     </div>
   )

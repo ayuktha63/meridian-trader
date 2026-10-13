@@ -11,9 +11,10 @@ edge of a coin flip is exactly zero and the average edge of a coin flip minus
 costs is negative. Three things are modelled here specifically so the result
 means something:
 
-* **You cross the spread twice.** A long buys at the ask and sells at the bid.
-  On a CoinDCX USDT book that is a rounding error; on the INR books it is 0.4%
-  a side and it will eat a scalping strategy alive. Both are shown for real.
+* **You cross the spread twice.** A long buys at the ask and sells at the bid
+  — the top of Angel One's own book where it quotes one. On a liquid future
+  that is a rounding error; on a thin stock it will eat a scalping strategy
+  alive.
 * **Stops fill at the stop or worse, never better.** Price gapping through a
   level does not politely stop at it.
 * **Commission is charged per side** at the venue's taker rate.
@@ -32,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import PaperAccountRow, PaperTradeRow
-from ..instruments import Instrument
+from ..instruments import Instrument, get_instrument
 from ..schemas.paper import ExitReason, PaperAccount, PaperStatus, PaperTrade
 
 from ..costs import COMMISSION_RATE, STOP_SLIPPAGE_PIPS, per_side_rate  # shared with the backtest
@@ -68,19 +69,16 @@ def commission(notional: float, instrument: Optional[Instrument] = None) -> floa
 
 #: How much notional the account may carry per unit of balance.
 #:
-#: Crypto on CoinDCX is spot: you buy the coin, so a $10,000 account can hold
-#: $10,000 of it and no more. Exchange-traded derivatives are margined, and
-#: posting roughly 20% gets you five times the notional. Assuming leverage the
-#: venue does not give you — or refusing leverage it does — both make the demo
-#: stop resembling the thing it is testing.
-MAX_LEVERAGE = {"crypto": 1.0, "fx": 5.0, "metal": 5.0}
+#: Exchange-traded derivatives are margined, and posting roughly 20% gets you
+#: five times the notional. Assuming leverage the venue does not give you —
+#: or refusing leverage it does — both make the demo stop resembling the
+#: thing it is testing. Anything with no margin on file is capped at the
+#: balance.
 DERIVATIVE_LEVERAGE = 5.0
 
 
 def max_leverage(instrument: Instrument) -> float:
-    if instrument.venue in ("NFO", "CDS", "MCX"):
-        return DERIVATIVE_LEVERAGE
-    return MAX_LEVERAGE.get(instrument.asset_class, 1.0)
+    return DERIVATIVE_LEVERAGE if instrument.venue in ("NFO", "CDS", "MCX") else 1.0
 
 
 def position_size(balance: float, risk_pct: float, entry: float, stop: float,
@@ -243,14 +241,34 @@ async def open_trade(session: AsyncSession, symbol: str, timeframe: str,
     return _trade_to_schema(row)
 
 
+STRANDED = ("The open demo trade is on {}, which is no longer a market here, so it "
+            "cannot be priced. Nothing new is taken while it is open: close it, or "
+            "reset the demo account.")
+
+
+def stranded(trade: Optional[PaperTrade]) -> str:
+    """Why the account is stuck behind its open trade, or "" when it is not.
+    One trade is held at a time, so a trade on a market that has since been
+    removed would otherwise stop the demo for good and say nothing."""
+    if trade is None:
+        return ""
+    try:
+        get_instrument(trade.symbol)
+    except KeyError:
+        return STRANDED.format(trade.symbol)
+    return ""
+
+
 async def close_trade(session: AsyncSession, trade_id: str, bid: float,
                       ask: float, last: float, reason: ExitReason,
-                      instrument: Instrument,
+                      instrument: Optional[Instrument],
                       fill_at: Optional[float] = None) -> Optional[PaperTrade]:
     """Close a paper trade and settle it against the account.
 
     `fill_at` forces the exit price — used for stop and target fills, where the
-    trade left at the level rather than at the current quote.
+    trade left at the level rather than at the current quote. `instrument` is
+    None only for a trade on a market that no longer exists here: it is
+    charged the placeholder commission, at whatever price the caller has.
     """
     row = await session.get(PaperTradeRow, trade_id)
     if row is None or row.status != PaperStatus.OPEN.value:
@@ -260,7 +278,7 @@ async def close_trade(session: AsyncSession, trade_id: str, bid: float,
     exit_price = fill_at if fill_at is not None else fill_price(
         row.side, False, bid, ask, last)
 
-    if reason is ExitReason.STOP:
+    if reason is ExitReason.STOP and instrument is not None:
         # A stop is a market order once triggered. Fill it slightly against
         # you, never at the level exactly and never better.
         slip = instrument.from_pips(STOP_SLIPPAGE_PIPS)

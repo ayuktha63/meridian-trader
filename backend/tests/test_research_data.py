@@ -106,17 +106,17 @@ def test_an_absurd_bar_is_pointed_out():
 # ── snapshots ─────────────────────────────────────────────────
 
 def test_a_snapshot_is_named_by_its_contents():
-    one = datasets.build("coindcx", "BTCUSD", "1h", bars(500))
-    same = datasets.build("coindcx", "BTCUSD", "1h", bars(500))
-    other = datasets.build("coindcx", "BTCUSD", "1h", bars(501))
-    elsewhere = datasets.build("binance", "BTCUSD", "1h", bars(500))
+    one = datasets.build("angelone", "RELIANCE", "1h", bars(500))
+    same = datasets.build("angelone", "RELIANCE", "1h", bars(500))
+    other = datasets.build("angelone", "RELIANCE", "1h", bars(501))
+    elsewhere = datasets.build("elsewhere", "RELIANCE", "1h", bars(500))
     assert one.id == same.id
     assert len({one.id, other.id, elsewhere.id}) == 3
     assert one.real and one.quality_passed
 
 
 def test_a_snapshot_reads_back_exactly_and_cannot_be_edited():
-    built = datasets.build("coindcx", "ETHUSD", "1h", bars(500))
+    built = datasets.build("angelone", "NIFTY", "1h", bars(500))
     datasets.save(built)
     loaded = datasets.load(built.id)
     assert np.array_equal(loaded.rows, built.rows)
@@ -126,7 +126,7 @@ def test_a_snapshot_reads_back_exactly_and_cannot_be_edited():
 
 
 def test_a_snapshot_changed_on_disk_is_refused():
-    built = datasets.build("coindcx", "SOLUSD", "1h", bars(500))
+    built = datasets.build("angelone", "USDINR", "1h", bars(500))
     path = datasets.save(built)
     tampered = np.array(built.rows)
     tampered[250, 4] *= 1.01
@@ -142,7 +142,7 @@ def test_a_missing_snapshot_says_so():
 
 def test_coarser_bars_are_built_from_the_snapshot_and_say_where_from():
     midnight = 1_700_006_400                      # 00:00 UTC, on every grid
-    hourly = datasets.build("coindcx", "BTCUSD", "1h", bars(24 * 30 + 5, start=midnight))
+    hourly = datasets.build("angelone", "RELIANCE", "1h", bars(24 * 30 + 5, start=midnight))
     four_hour = datasets.resample(hourly, "4h")
     assert four_hour.meta["derived_from"] == hourly.id
     assert four_hour.timeframe == "4h"
@@ -161,7 +161,7 @@ def test_coarser_bars_are_built_from_the_snapshot_and_say_where_from():
 def test_a_coarse_bar_the_snapshot_only_half_covers_is_not_kept():
     """Two of its four hours are not a four-hour candle — its open is wrong."""
     midnight = 1_700_006_400
-    hourly = datasets.build("coindcx", "BTCUSD", "1h",
+    hourly = datasets.build("angelone", "RELIANCE", "1h",
                             bars(24 * 30, start=midnight + 2 * HOUR))
     four_hour = datasets.resample(hourly, "4h")
     assert four_hour.first == midnight + 4 * HOUR
@@ -169,20 +169,30 @@ def test_a_coarse_bar_the_snapshot_only_half_covers_is_not_kept():
 
 
 def test_a_window_is_cut_by_time_half_open():
-    data = datasets.build("coindcx", "BTCUSD", "1h", bars(500))
+    data = datasets.build("angelone", "RELIANCE", "1h", bars(500))
     frame = data.frame(start=T0 + 10 * HOUR, end=T0 + 20 * HOUR)
     assert list(frame["time"]) == [T0 + i * HOUR for i in range(10, 20)]
     assert list(frame.columns) == ["time", "open", "high", "low", "close", "volume"]
 
 
-def test_no_snapshot_is_taken_from_the_simulator():
-    """The suite has no venue connected: every symbol resolves to the simulator."""
-    with pytest.raises(datasets.DatasetError, match="never taken from the simulator"):
-        asyncio.run(datasets.fetch("EURUSD", "1h", bars=500))
-    simulated = asyncio.run(datasets.fetch("EURUSD", "1h", bars=500, allow_simulated=True))
+def test_no_snapshot_is_taken_from_generated_bars():
+    """The suite has no venue connected: every symbol resolves to its generator."""
+    with pytest.raises(datasets.DatasetError, match="never taken from generated bars"):
+        asyncio.run(datasets.fetch("RELIANCE", "1h", bars=500))
+    simulated = asyncio.run(datasets.fetch("RELIANCE", "1h", bars=500, allow_simulated=True))
     assert not simulated.real
     assert json.loads((datasets.root() / (simulated.id + ".json")).read_text())[
         "provider"] == "synthetic"
+
+
+def test_no_snapshot_can_be_taken_without_the_broker(monkeypatch):
+    """As the application runs: Angel One or nothing."""
+    from app.data import providers
+    from conftest import angel_only_providers
+
+    monkeypatch.setattr(providers, "build_providers", angel_only_providers)
+    with pytest.raises(datasets.DatasetError, match="Angel One is not connected"):
+        asyncio.run(datasets.fetch("RELIANCE", "1h", bars=500))
 
 
 # ── fingerprints ──────────────────────────────────────────────

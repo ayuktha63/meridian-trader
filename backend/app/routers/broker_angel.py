@@ -49,8 +49,8 @@ async def angel_connect() -> AngelStatus:
     except AngelOneAuthError as exc:
         raise HTTPException(502, str(exc)) from exc
     # Angel One becomes available as a market-data source the instant it's
-    # connected — reload the feed so NSE/MCX/CDS symbols switch from
-    # synthetic to real prices without needing a backend restart.
+    # connected — reload the feed so NSE/MCX/CDS symbols pick up real
+    # prices (and the stock universe refreshes) without a backend restart.
     asyncio.create_task(feed.reload("angel one connected"))
     return AngelStatus(**status)
 

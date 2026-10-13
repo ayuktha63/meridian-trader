@@ -122,14 +122,20 @@ def test_metrics_are_not_served_to_another_machine():
         assert remote.get("/api/ready").status_code == 403
 
 
-def test_a_series_standing_in_for_a_dead_venue_is_counted(monkeypatch):
+def test_a_series_the_venue_did_not_supply_is_counted(monkeypatch):
+    import time
+
     from app.data.store import store
-    store.series("DOTUSD", "1h").replace([[1_700_000_000, 1, 1, 1, 1, 1]], source="synthetic")
-    monkeypatch.setattr(observability.feed, "provider_for", lambda symbol: "coindcx")
+    store.series("MCXGOLD", "1h").replace([])
+    monkeypatch.setitem(observability.feed._source_failed, ("MCXGOLD", "1h"),  # noqa: SLF001
+                        time.time())
+    assert "MCXGOLD:1h" in observability.feed_freshness()["unsupplied_series"]
+    # Once it has bars it is no longer missing, whatever happened earlier.
+    store.series("MCXGOLD", "1h").replace([[1_700_000_000, 1, 1, 1, 1, 1]], source="angelone")
     try:
-        assert "DOTUSD:1h" in observability.feed_freshness()["simulated_stand_ins"]
+        assert "MCXGOLD:1h" not in observability.feed_freshness()["unsupplied_series"]
     finally:
-        store.series("DOTUSD", "1h").replace([])
+        store.series("MCXGOLD", "1h").replace([])
 
 
 # ── the lifecycle of a live execution ─────────────────────────

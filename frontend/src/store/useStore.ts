@@ -33,6 +33,8 @@ interface State {
   quote: Quote | null
   quotes: Record<string, Quote>
   loadingCandles: boolean
+  /** Why the active chart has no bars, when it has none. */
+  noData: string | null
 
   // drawings
   drawings: Drawing[]
@@ -76,7 +78,8 @@ interface State {
   bootstrap: () => Promise<void>
   setSymbol: (symbol: string) => Promise<void>
   setTimeframe: (timeframe: string) => Promise<void>
-  loadCandles: () => Promise<void>
+  loadCandles: (quiet?: boolean) => Promise<void>
+  refreshMarket: () => Promise<void>
   loadDrawings: () => Promise<void>
   addDrawing: (type: DrawingType, points: Point[], extra?: { text?: string; label?: string }) => Promise<void>
   moveDrawing: (id: string, points: Point[]) => Promise<void>
@@ -110,14 +113,15 @@ export const useStore = create<State>((set, get) => ({
   aiEnabled: false,
   aiModel: '',
 
-  // BTCUSD is the only instrument that streams real, second-by-second data
-  // with no credentials at all, so it is what a first run should open on.
-  symbol: 'BTCUSD',
+  // NIFTY is listed whether or not Angel One is connected; the stocks only
+  // exist once it is, so a first run cannot open on one of those.
+  symbol: 'NIFTY',
   timeframe: '15m',
   candles: [],
   quote: null,
   quotes: {},
   loadingCandles: false,
+  noData: null,
 
   drawings: [],
   activeTool: 'cursor',
@@ -173,7 +177,11 @@ export const useStore = create<State>((set, get) => ({
         const [tradingMode, angelStatus] = await Promise.all([
           api.tradingMode(), api.angelStatus(),
         ])
-        set({ tradingMode, angelStatus })
+        set({ tradingMode })
+        get().setAngelStatus(angelStatus)
+        // An empty chart is asked for again: the bars arrive when the broker
+        // session does, and the feed behind it takes a moment to load.
+        if (get().candles.length === 0 && !get().loadingCandles) void get().refreshMarket()
       } catch {
         /* transient — next poll retries */
       }
@@ -287,20 +295,32 @@ export const useStore = create<State>((set, get) => ({
     await Promise.all([get().loadCandles(), get().loadDrawings()])
   },
 
-  async loadCandles() {
+  async loadCandles(quiet = false) {
     const { symbol, timeframe } = get()
-    set({ loadingCandles: true })
+    // A retry of a chart already known to be empty does not flash "loading".
+    if (!quiet) set({ loadingCandles: true })
     try {
       const batch = await api.candles(symbol, timeframe, CANDLE_LIMIT)
       // Guard against a slow response for a view we have since left.
       if (get().symbol !== symbol || get().timeframe !== timeframe) return
-      set({ candles: batch.candles, loadingCandles: false })
+      set({ candles: batch.candles, loadingCandles: false, noData: null })
     } catch (error) {
-      set({
-        loadingCandles: false,
-        analysisError: error instanceof Error ? error.message : 'Failed to load candles',
-      })
+      if (get().symbol !== symbol || get().timeframe !== timeframe) return
+      const reason = error instanceof Error ? error.message : 'Failed to load candles'
+      set({ loadingCandles: false, noData: reason, analysisError: reason })
     }
+  },
+
+  /** What there is to trade, and the bars behind the open chart: both come
+   *  from Angel One, so both are read again when its session changes. */
+  async refreshMarket() {
+    try {
+      set({ symbols: await api.symbols() })
+    } catch {
+      /* transient — the next poll retries */
+    }
+    api.quotes().then((quotes) => set({ quotes })).catch(() => undefined)
+    if (get().candles.length === 0 && !get().loadingCandles) await get().loadCandles(true)
   },
 
   async loadDrawings() {
@@ -413,7 +433,15 @@ export const useStore = create<State>((set, get) => ({
   setPaper: (paper) => set({ paper }),
   dismissPaperFill: () => set({ paperFill: null }),
   setTradingMode: (tradingMode) => set({ tradingMode }),
-  setAngelStatus: (angelStatus) => set({ angelStatus }),
+  setAngelStatus: (angelStatus) => {
+    const before = get().angelStatus
+    set({ angelStatus })
+    if (before !== null && before.connected !== angelStatus.connected) {
+      void get().refreshMarket()
+      // The feed reloads behind the connection, scrip master included.
+      window.setTimeout(() => void get().refreshMarket(), 5_000)
+    }
+  },
 
   setTheme: (theme) => {
     applyTheme(theme)

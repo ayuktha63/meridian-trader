@@ -12,7 +12,7 @@ from app.research.audit import audit
 from app.research.simulator import Bars, Signal, simulate
 from app.research.strategies import BY_NAME, CANDIDATES, Plan, Strategy
 
-BTC = get_instrument("BTCUSD")
+OTC = get_instrument("OTCUSD")
 HOUR = 3600
 
 
@@ -113,8 +113,8 @@ def test_a_strategy_that_reads_the_next_bar_is_caught():
     report = audit(cheat, frame, {})
     assert not report.passed
     assert report.lookahead and "removed" in report.lookahead[0]
-    trades = simulate(Bars.from_frame(frame, "1h"), peek(frame, {}).signals, BTC,
-                      profile="crypto_perp")
+    trades = simulate(Bars.from_frame(frame, "1h"), peek(frame, {}).signals, OTC,
+                      profile="test_perp")
     assert np.mean([t.r for t in trades]) > 0.1, "and it looks wonderful, which is the danger"
 
 

@@ -29,7 +29,7 @@ async def list_symbols() -> List[SymbolInfo]:
             contract_size=inst.contract_size,
             typical_spread_pips=inst.typical_spread_pips,
             quote_currency=inst.quote_currency,
-            live=feed.provider_for(symbol) != "synthetic",
+            live=feed.is_live(symbol),
             venue=inst.venue,
             exchange=inst.exchange,
             broker_symbol=inst.broker_symbol,
@@ -48,7 +48,7 @@ async def list_timeframes() -> List[TimeframeInfo]:
 
 @router.get("/candles", response_model=CandleBatch)
 async def get_candles(
-    symbol: str = Query(..., description="e.g. EURUSD"),
+    symbol: str = Query(..., description="e.g. RELIANCE"),
     timeframe: str = Query("15m"),
     limit: int = Query(600, ge=50, le=5000),
 ) -> CandleBatch:
@@ -61,16 +61,18 @@ async def get_candles(
     await feed.ensure_history(symbol, timeframe)
     rows = store.series(symbol, timeframe).dicts(limit)
     if not rows:
+        # An empty chart, and the reason for it: there is no other source to
+        # draw one from.
+        why = ("Angel One has not supplied it yet" if feed.provider_for(symbol)
+               else "Angel One is not connected")
         raise HTTPException(
             status_code=503,
-            detail="No data available yet for {} {}".format(symbol, timeframe))
+            detail="No data for {} {}: {}.".format(symbol.upper(), timeframe, why))
 
     return CandleBatch(
         symbol=symbol.upper(),
         timeframe=timeframe.lower(),
         candles=[Candle(**row) for row in rows],
-        # Where these bars came from — which is the simulator when the venue
-        # that should serve the symbol did not answer.
         provider=feed.source_of(symbol, timeframe) or feed.provider_for(symbol),
         partial_bar=Candle(**rows[-1]),
     )

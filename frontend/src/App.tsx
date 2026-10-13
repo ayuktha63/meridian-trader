@@ -7,6 +7,7 @@ import ChartCanvas from './components/chart/ChartCanvas'
 import DrawingLayer from './components/chart/DrawingLayer'
 import AIOverlay from './components/chart/AIOverlay'
 import Toolbar from './components/chart/Toolbar'
+import LiveModeBanner from './components/layout/LiveModeBanner'
 import StatusBar from './components/layout/StatusBar'
 import TopBar from './components/layout/TopBar'
 import AccountRiskBar from './components/panels/AccountRiskBar'
@@ -52,8 +53,11 @@ const PANELS = [
 export default function App() {
   const bootstrap = useStore((s) => s.bootstrap)
   const bootError = useStore((s) => s.bootError)
+  const tradingMode = useStore((s) => s.tradingMode)
+  const isLive = tradingMode?.mode === 'LIVE'
   const candles = useStore((s) => s.candles)
   const loading = useStore((s) => s.loadingCandles)
+  const noData = useStore((s) => s.noData)
   const analysis = useStore((s) => s.analysis)
   const showOverlays = useStore((s) => s.showOverlays)
   const activePanel = useStore((s) => s.activePanel)
@@ -113,7 +117,13 @@ export default function App() {
   }
 
   return (
-    <div className="h-full flex flex-col gap-2 p-2">
+    // `isLive` applies a persistent red tell around the whole app — a ring
+    // nobody can scroll past — in addition to the banner. Neither replaces
+    // the other: the ring survives a dismissed/missed banner on a tall
+    // screen, and the banner carries the words the ring alone cannot.
+    <div className={`h-full flex flex-col gap-2 p-2 transition-colors ${
+      isLive ? 'ring-2 ring-bear/70 ring-inset rounded-2xl' : ''}`}>
+      <LiveModeBanner />
       <TopBar onOpenSettings={() => setSettingsOpen(true)} />
 
       <main className="flex-1 min-h-0 flex gap-2">
@@ -162,6 +172,19 @@ export default function App() {
             <div className="absolute inset-0 grid place-items-center">
               <div className="shimmer h-full w-full absolute inset-0 opacity-40" />
               <span className="relative text-2xs text-faint">Loading price history…</span>
+            </div>
+          ) : candles.length === 0 ? (
+            <div className="absolute inset-0 grid place-items-center p-8">
+              <div className="max-w-sm text-center space-y-2">
+                <p className="text-xs font-semibold text-ink">No data for this chart</p>
+                <p className="text-2xs text-muted leading-relaxed">
+                  {noData ?? 'Angel One has not supplied any bars for it yet.'}
+                </p>
+                <p className="text-2xs text-faint leading-relaxed">
+                  Every price here comes from Angel One. Connect it from the DEMO / LIVE
+                  control in the top bar — nothing is drawn in its place.
+                </p>
+              </div>
             </div>
           ) : (
             <ChartCanvas

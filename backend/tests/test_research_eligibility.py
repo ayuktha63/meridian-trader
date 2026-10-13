@@ -52,7 +52,7 @@ def test_everything_in_order_is_eligible_for_review_and_no_more():
     (dict(tested=dict(CODE, engine="engine@0")), INELIGIBLE, "strategy's code has changed"),
     (dict(tested=dict(CODE, execution="exec@0")), INELIGIBLE, "execution model has changed"),
     (dict(tested=dict(CODE, costs="costs@0")), INELIGIBLE, "cost model has changed"),
-    (dict(cost_profile="crypto_perp"), INELIGIBLE, "different venue"),
+    (dict(cost_profile="test_perp"), INELIGIBLE, "different venue"),
     (dict(expectancy=-0.05, ci_low=-0.3), INELIGIBLE, "expectancy after costs is -0.050R"),
     (dict(ci_low=-0.02), INELIGIBLE, "includes zero"),
     (dict(survives_multiple_testing=False, tests_considered=6), INELIGIBLE, "among the 6 markets"),

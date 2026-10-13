@@ -1,11 +1,11 @@
 """Research from the command line. Nothing here can place an order.
 
-    python -m app.research.run snapshot BTCUSD ETHUSD        take history snapshots
+    python -m app.research.run snapshot RELIANCE NIFTY       take history snapshots
     python -m app.research.run datasets                      list what is in the store
     python -m app.research.run study                         run the candidate study
     python -m app.research.run diagnose                      look closer at its research stretch
-    python -m app.research.run engine BTCUSD 1h --bars 4000  walk-forward the live engine
-    python -m app.research.run register donchian_trend 4h crypto_perp --reason "..."
+    python -m app.research.run engine RELIANCE 1h --bars 4000  walk-forward the live engine
+    python -m app.research.run register donchian_trend 4h exchange --reason "..."
                                                              freeze a candidate for forward watching
     python -m app.research.run forward [--refresh]           trade what is registered on bars since
     python -m app.research.run experiments                   list what is on record

@@ -197,17 +197,13 @@ def implied_vol_from_atr(atr: float, price: float, bar_seconds: int,
 
 
 #: Hours the market is actually open in a year — the denominator that turns a
-#: per-bar sigma into an annual one. Crypto never closes; NSE equity and F&O
-#: run 09:15-15:30 (6.25h) over ~252 sessions; MCX runs to 23:30.
+#: per-bar sigma into an annual one. NSE equity and F&O run 09:15-15:30
+#: (6.25h) over ~252 sessions; MCX runs to 23:30.
 def _hours_per_year(instrument: Instrument) -> float:
-    if instrument.asset_class == "crypto":
-        return 365.0 * 24.0
     if instrument.venue == "MCX":
         return 252.0 * 14.0
     if instrument.venue == "CDS":
         return 252.0 * 8.0
-    if instrument.asset_class in ("fx", "metal"):
-        return 252.0 * 24.0
     return 252.0 * 6.25
 
 

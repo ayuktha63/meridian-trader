@@ -103,6 +103,16 @@ export default function AutoTradeBar() {
     }
   }
 
+  const closeOpenTrade = async () => {
+    if (!trade) return
+    setBusy(true)
+    try {
+      setPaper(await api.paperClose(trade.id))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const reset = async () => {
     if (!window.confirm('Reset the demo to its starting balance? Every paper trade is deleted.')) return
     setBusy(true)
@@ -188,7 +198,8 @@ export default function AutoTradeBar() {
         {trade && (
           <span className={`text-[9px] px-1.5 py-0.5 rounded ${
             trade.side === 'LONG' ? 'bg-bull/15 text-bull' : 'bg-bear/15 text-bear'}`}
-                title={`Open paper ${trade.side} on ${trade.symbol} from ${trade.entry}`}>
+                title={account.blocked_reason
+                  || `Open paper ${trade.side} on ${trade.symbol} from ${trade.entry}`}>
             {trade.side} {trade.symbol}
           </span>
         )}
@@ -209,8 +220,8 @@ export default function AutoTradeBar() {
               <LivePanel wallet={wallet} walletMoney={walletMoney}
                          live={live} stats={liveStats} />
             ) : (
-              <DemoPanel account={account} paper={paper} money={money}
-                         busy={busy} onReset={reset} />
+              <DemoPanel account={account} paper={paper} money={money} busy={busy}
+                         onReset={reset} onCloseOpenTrade={closeOpenTrade} />
             )}
           </motion.div>
         )}
@@ -329,12 +340,13 @@ function LivePanel({ wallet, walletMoney, live, stats }: {
   )
 }
 
-function DemoPanel({ account, paper, money, busy, onReset }: {
+function DemoPanel({ account, paper, money, busy, onReset, onCloseOpenTrade }: {
   account: PaperAccount
   paper: PaperState
   money: (value: number) => string
   busy: boolean
   onReset: () => void
+  onCloseOpenTrade: () => void
 }) {
   return (
     <>
@@ -346,6 +358,17 @@ function DemoPanel({ account, paper, money, busy, onReset }: {
           Reset
         </button>
       </div>
+
+      {account.blocked_reason && (
+        <div className="rounded-lg border border-warn/50 bg-warn/10 px-2.5 py-2 space-y-1.5">
+          <p className="text-[10px] leading-relaxed text-warn">{account.blocked_reason}</p>
+          <button type="button" className="chip !py-0.5" onClick={onCloseOpenTrade}
+                  disabled={busy}
+                  title="Close this trade where it was opened — there is no price for it any more">
+            Close it
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2">
         <Stat label="Balance" value={money(account.balance)}

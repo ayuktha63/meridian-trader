@@ -6,10 +6,12 @@ Every experiment on record as of 12 October 2026 — all 27 of them, copied from
 `python -m app.research.run experiments` flags a record that no longer matches.
 
 The history they ran on is not in the repository — about 18 MB of exchange data in
-`backend/data/research/datasets/`, named by the dataset ids each record lists. To rebuild
-it: `python -m app.research.run snapshot BTCUSD ETHUSD SOLUSD DOGEUSD BNBUSD ADAUSD LINKUSD
-LTCUSD TRXUSD`. A snapshot taken later holds more bars and so has a different id; the
-stretches a study uses are cut by date and are the same.
+`backend/data/research/datasets/`, named by the dataset ids each record lists. It can no
+longer be rebuilt from the current code: these were CoinDCX's markets, and that venue was
+removed on 13 October 2026 (see the note at the top of [REPORT.md](../REPORT.md)). At
+commit `45ee41b` it could be, with `python -m app.research.run snapshot BTCUSD ETHUSD SOLUSD
+DOGEUSD BNBUSD ADAUSD LINKUSD LTCUSD TRXUSD`; a snapshot taken later holds more bars and so
+has a different id, but the stretches a study uses are cut by date and are the same.
 
 | Experiment | Kind | Strategy | Market | Timeframe | Charged as | Verdict | Result | sha256 |
 |---|---|---|---|---|---|---|---|---|

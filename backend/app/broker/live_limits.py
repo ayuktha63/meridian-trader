@@ -37,11 +37,8 @@ def trading_day_start(now: Optional[float] = None) -> float:
 
 
 def sector_of(symbol: str) -> Optional[str]:
-    from ..stocks import NSE_FO_STOCKS
-    for row in NSE_FO_STOCKS:
-        if row[0] == symbol:
-            return row[2]
-    return None
+    from ..stocks import sector_of as stock_sector
+    return stock_sector(symbol)
 
 
 def estimated_charges(row: LiveExecutionRow, exit_price: Optional[float] = None,

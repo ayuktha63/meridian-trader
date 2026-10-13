@@ -13,9 +13,9 @@ from app.instruments import get_instrument
 from app.research.simulator import LIMIT, STOP, Bars, Signal, simulate
 from app.schemas.journal import BacktestRequest
 
-BTC = get_instrument("BTCUSD")
+OTC = get_instrument("OTCUSD")
 HOUR = 3600
-PERP = "crypto_perp"
+PERP = "test_perp"
 FLAT = (100, 101, 99.5, 100)
 
 
@@ -30,7 +30,7 @@ def frame(rows, begin=1_700_000_000.0) -> pd.DataFrame:
 def run(rows, signals, **kwargs):
     params = dict(profile=PERP, include_costs=False)
     params.update(kwargs)
-    return simulate(Bars.from_frame(frame(rows), "1h"), signals, BTC, **params)
+    return simulate(Bars.from_frame(frame(rows), "1h"), signals, OTC, **params)
 
 
 def long(stop=95.0, **kwargs):
@@ -142,7 +142,7 @@ def test_shorts_mirror_longs_and_are_not_taken_where_they_cannot_be():
     rows = [FLAT, (100, 100.5, 89.5, 91), FLAT]
     trade, = run(rows, {0: short(target=90.0)})
     assert (trade.direction, trade.reason, trade.gross_r) == (-1, "target", 2.0)
-    assert run(rows, {0: short(target=90.0)}, profile="crypto_spot") == []
+    assert run(rows, {0: short(target=90.0)}, profile="test_spot") == []
 
 
 def test_one_position_at_a_time():
@@ -169,13 +169,13 @@ def test_every_trade_is_charged_and_the_charge_follows_the_venue_and_the_fill():
     rows = [FLAT, (100, 110.5, 99, 109), FLAT]
     free, = run(rows, {0: long(target=110.0)})
     perp, = run(rows, {0: long(target=110.0)}, include_costs=True)
-    spot, = run(rows, {0: long(target=110.0)}, include_costs=True, profile="crypto_spot")
+    spot, = run(rows, {0: long(target=110.0)}, include_costs=True, profile="test_spot")
     doubled, = run(rows, {0: long(target=110.0)}, include_costs=True, cost_multiplier=2.0)
     assert free.cost_r == 0.0 and free.r == free.gross_r == 2.0
     assert 0 < perp.cost_r < spot.cost_r
     assert perp.r == pytest.approx(perp.gross_r - perp.cost_r)
     assert doubled.cost_r == pytest.approx(2 * perp.cost_r)
-    expected = costs.round_trip_cost(BTC, 100.0, 110.0, exit_passive=True, profile=PERP)
+    expected = costs.round_trip_cost(OTC, 100.0, 110.0, exit_passive=True, profile=PERP)
     assert perp.cost_r == pytest.approx(expected / 5.0)
 
     stopped, = run([FLAT, (100, 101, 94, 95), FLAT], {0: long()}, include_costs=True)
@@ -187,7 +187,7 @@ def test_time_in_the_market_is_financed_on_a_perpetual():
     quick, = run(rows, {0: long(max_hold=1)}, include_costs=True)
     slow, = run(rows, {0: long(max_hold=24)}, include_costs=True)
     assert slow.cost_r - quick.cost_r == pytest.approx(
-        costs.carry_cost(BTC, 100.0, 23 * HOUR, PERP) / 5.0)
+        costs.carry_cost(OTC, 100.0, 23 * HOUR, PERP) / 5.0)
 
 
 # ── against the engine's own backtest ─────────────────────────
@@ -219,13 +219,13 @@ def test_it_agrees_with_the_engine_backtest_trade_for_trade():
                                      entry=LIMIT, price=entry, valid_bars=1,
                                      max_hold=bt.MAX_HOLD_BARS)
 
-    request = BacktestRequest(symbol="BTCUSD", timeframe="1h", strategy="engine",
+    request = BacktestRequest(symbol="OTCUSD", timeframe="1h", strategy="engine",
                               min_confidence=0.0, risk_reward=0.0, use_ladder=False,
                               cost_profile=PERP)
-    prep = bt.prepare(data, BTC, "1h", engine_signals, PERP)
-    theirs, _ = bt._simulate(prep, BTC, request, 0, n)      # noqa: SLF001
+    prep = bt.prepare(data, OTC, "1h", engine_signals, PERP)
+    theirs, _ = bt._simulate(prep, OTC, request, 0, n)      # noqa: SLF001
     theirs = [t for t in theirs if t.outcome != "open"]
-    ours = [t for t in simulate(Bars.from_frame(data, "1h"), research_signals, BTC,
+    ours = [t for t in simulate(Bars.from_frame(data, "1h"), research_signals, OTC,
                                 profile=PERP) if t.reason != "end"]
 
     assert len(theirs) == len(ours) > 150

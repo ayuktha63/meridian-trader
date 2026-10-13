@@ -1,5 +1,14 @@
 # Research report — 12 October 2026
 
+> **Archived, 13 October 2026.** Every market in this report was CoinDCX's.
+> The application has since been made to take its data from Angel One alone,
+> and CoinDCX, the crypto instruments and their cost profiles were removed
+> with it. The findings stand as what was measured. They can no longer be
+> reproduced from the current code — commit `45ee41b` is the last that can —
+> and the forward test registered on the 4-hour trend idea ended with the
+> venue. Nothing here says anything about the NSE and MCX markets the
+> application trades now: those have not been tested.
+
 **No strategy in this repository has a demonstrated edge. Nothing is
 eligible for live trading, and the recommendation is to remain in research.**
 

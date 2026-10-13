@@ -50,11 +50,13 @@ MIN_PAPER_TRADES = 10
 
 NOT_MEASURED = ("No measured edge: no walk-forward test of the live engine has been "
                 "run for {} on {}. Run one from the Backtest tab.")
-#: Sources that are not a market. A test run on them is a test of the software.
+#: Sources that are not a market. A test run on them is a test of the
+#: software. The application no longer generates bars, but a test recorded
+#: when it did is still on file, and still must not count.
 NOT_A_MARKET = ("synthetic",)
 SIMULATED = ("No measured edge: the walk-forward test on record for {} {} ran on "
-             "simulated bars, which says nothing about the market. Connect the venue "
-             "that serves it and run the test again.")
+             "simulated bars, which says nothing about the market. Connect Angel "
+             "One and run the test again.")
 UNSOURCED = ("No measured edge: the walk-forward test on record for {} {} does not "
              "record what data it ran on, so it cannot be counted. Run it again.")
 
@@ -109,8 +111,6 @@ def venue_block(symbol: str) -> Optional[str]:
         instrument = get_instrument(symbol)
     except KeyError:
         return "Unknown instrument."
-    if instrument.venue == "crypto":
-        return "There is no live order path for crypto: Angel One does not trade it."
     if not instrument.tradable_in_india:
         return "Not tradable through an Indian broker: analysis only."
     exchange = (instrument.exchange or "").upper()

@@ -38,8 +38,7 @@ MAX_OPEN_RISK_R = 3.0
 MAX_CONSECUTIVE_LOSSES = 3
 MAX_TRADES_PER_DAY = 6
 
-#: Trading day boundary. Crypto never closes, so the cut has to be arbitrary;
-#: 00:00 UTC is the convention most exchanges report against.
+#: Trading day boundary: 00:00 UTC, which falls outside every Indian session.
 DAY_SECONDS = 86_400
 
 

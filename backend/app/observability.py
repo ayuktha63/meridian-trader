@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from . import alerts
 from .broker.angelone.auth import angel_auth, redact_secrets
 from .broker.trading_mode import trading_mode
-from .data.feed import SYNTHETIC, feed
+from .data.feed import feed
 from .data.store import store
 from .db.models import ExperimentRow, LiveExecutionRow
 from .db.session import session_scope
@@ -64,21 +64,18 @@ def configure_logging(level: str, fmt: str) -> None:
 
 def feed_freshness(now: float = 0.0) -> Dict[str, Any]:
     """How old the newest quote is for each symbol that has one, and which
-    loaded series are simulated stand-ins."""
+    series the venue was asked for and did not supply."""
     now = now or time.time()
     ages = {symbol: round(now - quote.updated_at, 1) for symbol, quote in feed.quotes.items()}
     sources: Dict[str, int] = {}
-    stand_ins: List[str] = []
     for symbol, timeframe in store.keys():
         series = store.series(symbol, timeframe)
         if not len(series):
             continue
         source = series.source or "unknown"
         sources[source] = sources.get(source, 0) + 1
-        if source == SYNTHETIC and feed.provider_for(symbol) != SYNTHETIC:
-            stand_ins.append("{}:{}".format(symbol, timeframe))
     return {"quote_age_seconds": ages, "oldest_quote_seconds": max(ages.values(), default=None),
-            "series_by_source": sources, "simulated_stand_ins": sorted(stand_ins)}
+            "series_by_source": sources, "unsupplied_series": feed.unsupplied()}
 
 
 # ── readiness ─────────────────────────────────────────────────
@@ -148,8 +145,8 @@ async def metrics_text(started_at: float) -> str:
     for source, count in sorted(fresh["series_by_source"].items()):
         add("candle_series", count, "Loaded candle series, by where the bars came from.",
             source=source)
-    add("simulated_stand_ins", len(fresh["simulated_stand_ins"]),
-        "Series showing simulated bars because their venue did not answer.")
+    add("unsupplied_series", len(fresh["unsupplied_series"]),
+        "Series left empty because the venue did not supply them.")
     for symbol, age in sorted(fresh["quote_age_seconds"].items()):
         add("quote_age_seconds", age, "Age of the newest quote.", symbol=symbol)
 

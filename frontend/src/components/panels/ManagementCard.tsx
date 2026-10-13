@@ -166,7 +166,7 @@ export default function ManagementCard({
 
       <p className="px-4 pb-2.5 text-[10px] leading-snug text-faint/70">
         Meridian cannot see your broker. Adjusting the stop here only updates this
-        tracker — move it in Kite too, or the protection is imaginary.
+        tracker — move it in Angel One too, or the protection is imaginary.
       </p>
     </div>
   )

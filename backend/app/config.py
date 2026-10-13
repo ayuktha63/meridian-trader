@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     ai_auto_analysis_interval: int = 45
 
     # ── market data ───────────────────────────────────────────
-    market_provider: str = "synthetic"
-    twelvedata_api_key: Optional[str] = None
-    hybrid_crypto_live: bool = True
-    feed_tick_hz: float = 2.0
     history_bars: int = 1500
 
     # ── storage ───────────────────────────────────────────────

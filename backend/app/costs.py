@@ -5,11 +5,11 @@ The backtest used to charge nothing while the paper account charged spread
 and commission, so the two disagreed by construction and the backtest was
 the flattering one. All of them now read these numbers.
 
-Costs belong to a venue, not to an asset. The same bitcoin costs about a
-tenth of a percent a side on one book and half a percent on another, and a
-strategy that survives the first is dead on the second — so every figure
-here is filed under a named *profile*, a result records which one it was
-charged by, and `PROFILES` says where each number comes from.
+Costs belong to a venue, not to an asset, so every result records what it
+was charged as. Everything Angel One trades is an exchange product, charged
+by its segment's own schedule (`STATUTORY_PER_SIDE`); `EXCHANGE` is the name
+that schedule goes by where a profile has to be named. A market that is not
+an exchange segment is charged by a named `Profile` instead.
 
 The statutory rates are averages per side for an intraday round trip on the
 segment, rounded up; they move with the Finance Act and exchange circulars,
@@ -20,10 +20,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from . import costs_india
 from .instruments import Instrument
 
-#: GST on brokerage and exchange charges (India). Indian crypto venues add it
-#: to their trading fee as well.
+#: GST on brokerage and exchange charges (India).
 GST = 0.18
 
 #: Brokerage per side on the Indian segments: the discount brokers charge the
@@ -32,6 +32,15 @@ GST = 0.18
 #: order — where the flat fee is the smaller — is charged more than it would
 #: be. Check it against your own contract note.
 INDIA_BROKERAGE_RATE = 0.0003
+
+#: Cash equity is charged more than that. Since 17 November 2025 Angel One
+#: takes 0.1% of an equity order, delivery and intraday alike — at most Rs 20
+#: and at least Rs 5. As a rate this is exact for an order between Rs 5,000
+#: and Rs 20,000, too much above it (the cap) and too little below it (the
+#: floor); `costs_india` prices the order itself and is what `charges` uses.
+#: A backtest or a paper trade is charged this rate, so a large order is
+#: over-charged rather than a small one let off.
+EQUITY_BROKERAGE_RATE = 0.001
 
 #: Slippage against you on a stop fill, in ticks. A stop is a market order
 #: once triggered, and it fills where the book is.
@@ -70,35 +79,15 @@ class Profile:
 
 
 PROFILES: Dict[str, Profile] = {
-    # CoinDCX USDT-margined futures, base tier, as widely reported in 2026:
-    # 0.02% maker / 0.05% taker plus 18% GST, and no TDS (a derivative is
-    # not a transfer of the asset). The venue's own fee page could not be
-    # read when this was written — check it against your statement.
-    "crypto_perp": Profile(
-        "crypto_perp", taker=0.0005, maker=0.0002, gst=True,
-        funding_per_8h=0.0001, stop_slippage=0.0002,
-        source="CoinDCX USDT-M futures base tier (secondary sources, Oct 2026)"),
-    # CoinDCX spot. Reports of the base tier range from 0.10% to 0.50% a
-    # side; 0.20% is the figure most of them give. Not included, and it
-    # matters: 1% TDS withheld on every sale's proceeds, and tax on gains
-    # at 30% with no set-off for losses.
-    "crypto_spot": Profile(
-        "crypto_spot", taker=0.0020, maker=0.0020, gst=True,
-        funding_per_8h=0.0, stop_slippage=0.0002,
-        source="CoinDCX spot base tier (secondary sources, Oct 2026); excludes 1% TDS",
-        shorting=False),
-    # Anything else with no schedule on file: a flat taker fee, no rebate.
+    # A market with no schedule on file: a flat taker fee, no rebate.
     "generic": Profile(
         "generic", taker=0.0005, maker=0.0005, gst=False,
         funding_per_8h=0.0, stop_slippage=0.0, source="placeholder: 0.05% a side"),
 }
 
-#: The profile a market is charged by when a caller does not name one. The
-#: crypto instruments here are CoinDCX's USDT *spot* books — that is what the
-#: candles are and what TRADING.md tells you to trade — so spot is what they
-#: are charged as. The perpetual on the same pair is cheaper, and a research
-#: run can ask for it by name; it has to say so.
-DEFAULT_PROFILE = {"crypto": "crypto_spot"}
+#: "Whatever this market's own venue charges": the statutory schedule for an
+#: exchange product, which is everything Angel One trades.
+EXCHANGE = "exchange"
 
 #: Kept for callers that only want "the usual taker fee".
 COMMISSION_RATE = PROFILES["generic"].taker
@@ -109,7 +98,15 @@ def profile_for(instrument: Instrument, name: Optional[str] = None) -> Optional[
     segment, whose charges are statutory and come from `STATUTORY_PER_SIDE`."""
     if instrument.asset_class in STATUTORY_PER_SIDE:
         return None
-    return PROFILES[name or DEFAULT_PROFILE.get(instrument.asset_class, "generic")]
+    return PROFILES["generic" if name in (None, EXCHANGE) else name]
+
+
+def known(name: str) -> str:
+    """A profile name a result can be charged under. Raises KeyError for any
+    other, so a misspelt venue fails before anything is recorded under it."""
+    if name != EXCHANGE:
+        PROFILES[name]
+    return name
 
 
 def can_short(instrument: Instrument, profile: Optional[str] = None) -> bool:
@@ -132,14 +129,29 @@ def per_side_rate(instrument: Instrument, passive: bool = False,
     transaction_tax, exchange, sebi, stamp = charges
     # GST is levied on brokerage and on the exchange and SEBI charges, not on
     # the transaction tax or the stamp duty.
-    return (INDIA_BROKERAGE_RATE + exchange + sebi) * (1.0 + GST) + transaction_tax + stamp
+    brokerage = (EQUITY_BROKERAGE_RATE if instrument.asset_class == "stock"
+                 else INDIA_BROKERAGE_RATE)
+    return (brokerage + exchange + sebi) * (1.0 + GST) + transaction_tax + stamp
 
 
 def charges(instrument: Instrument, entry_value: float, exit_value: float) -> float:
     """Brokerage and statutory charges on a round trip of this size, in the
     account's currency. No spread and no slippage — a real fill already has
     both in its price. This is what the live limits subtract from a gross
-    profit or loss; Angel One's order book reports fills, not charges."""
+    profit or loss; Angel One's order book reports fills, not charges.
+
+    A cash-equity order is priced as the two orders it is (`costs_india`):
+    its brokerage has a floor and a cap in rupees, which no rate per side
+    can hold. The rate put a Rs 10,000 round trip at Rs 10.60; Angel One's
+    own calculator says Rs 27.15, and the daily loss limit is enforced on
+    this number. A live order is intraday. Which leg was the sale is not
+    known here, so the dearer reading is the one returned.
+    """
+    if instrument.asset_class == "stock":
+        rates = costs_india.schedule(costs_india.INTRADAY)
+        return max(costs_india.round_trip_charges(rates, entry_value, [exit_value],
+                                                  long=long).total
+                   for long in (True, False))
     return (abs(entry_value) + abs(exit_value)) * per_side_rate(instrument)
 
 

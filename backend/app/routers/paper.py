@@ -42,6 +42,7 @@ async def _state(session: AsyncSession) -> PaperState:
 
     price = feed.price(open_trade.symbol) if open_trade else None
     account = repo.summarise(account, closed, open_trade, price)
+    account.blocked_reason = repo.stranded(open_trade)
     return PaperState(account=account, open_trade=open_trade,
                       recent=closed[:15])
 
@@ -86,12 +87,18 @@ async def close(trade_id: str,
     trade = await repo.open_trade_for(session)
     if trade is None or trade.id != trade_id:
         raise HTTPException(404, "No such open paper trade")
+    try:
+        instrument = get_instrument(trade.symbol)
+    except KeyError:
+        # A market that has been removed. There is no price to be had for it,
+        # so it leaves where it came in — and the account is free again.
+        instrument = None
     quote = feed.quote(trade.symbol)
     price = feed.price(trade.symbol) or trade.entry
     await repo.close_trade(
         session, trade_id,
         quote.bid if quote else price, quote.ask if quote else price, price,
-        ExitReason.MANUAL, get_instrument(trade.symbol))
+        ExitReason.MANUAL, instrument)
     return await _state(session)
 
 

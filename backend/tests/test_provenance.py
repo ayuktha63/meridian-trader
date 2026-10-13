@@ -1,6 +1,6 @@
-"""Where a bar came from. Simulated bars are for looking at: they are never
-passed off as an exchange's, never blended with real ones, and never count
-as evidence about a real market."""
+"""Where a bar came from. Every series says which source supplied it, a
+venue that does not answer leaves the chart empty rather than drawn from
+anywhere else, and generated bars never count as evidence about a market."""
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +22,7 @@ from app.services.edge import latest_edge
 
 HOUR = 3600
 T0 = 1_700_000_000 // HOUR * HOUR
-SYMBOL = "DOTUSD"
+SYMBOL = "MCXSILVER"
 
 
 def run(coro):
@@ -31,7 +31,7 @@ def run(coro):
 
 class Exchange(MarketDataProvider):
     """A live venue whose history endpoint can be switched off."""
-    name, live = "coindcx", True
+    name, live = "angelone", True
 
     def __init__(self) -> None:
         self.up, self.requests = True, 0
@@ -49,90 +49,101 @@ class Exchange(MarketDataProvider):
         return None
 
 
-class Simulator(MarketDataProvider):
-    name, live = "synthetic", False
-
-    def supports(self, symbol: str) -> bool:
-        return True
-
-    async def history(self, symbol, timeframe, bars):
-        return [[T0 + i * HOUR, 1.0, 1.1, 0.9, 1.0, 10.0] for i in range(bars)]
-
-    async def stream(self, symbols, handler):
-        return None
-
-
 @pytest.fixture
 def market(monkeypatch):
-    """A feed whose exchange for DOTUSD can fail, with a simulator behind it."""
+    """A feed whose one venue can stop answering."""
     feed, exchange = MarketFeed(), Exchange()
-    feed.providers = {"synthetic": Simulator(), "coindcx": exchange}
-    monkeypatch.setattr(feed_module, "resolve_provider", lambda symbol, providers: exchange)
-    monkeypatch.setattr(feed_module, "REAL_SOURCE_RETRY_SECONDS", 0.0)
+    feed.providers = {"angelone": exchange}
+    monkeypatch.setattr(feed_module, "SOURCE_RETRY_SECONDS", 0.0)
     store.series(SYMBOL, "1h").replace([])
     yield feed, exchange
     store.series(SYMBOL, "1h").replace([])
 
 
-def test_bars_from_the_simulator_are_never_labelled_as_an_exchanges(market):
+def test_a_venue_that_does_not_answer_leaves_the_chart_empty(market):
     feed, exchange = market
     exchange.up = False
     run(feed.ensure_history(SYMBOL, "1h"))
-    assert len(store.series(SYMBOL, "1h")) > 0, "the chart still has something to draw"
-    assert feed.provider_for(SYMBOL) == "coindcx", "the venue that should have answered"
-    assert feed.source_of(SYMBOL, "1h") == "synthetic", "but that is not where these came from"
+    assert len(store.series(SYMBOL, "1h")) == 0, "nothing is drawn in its place"
+    assert feed.source_of(SYMBOL, "1h") is None
+    assert feed.provider_for(SYMBOL) == "angelone", "the venue that should have answered"
+    assert feed.unsupplied() == [SYMBOL + ":1h"], "and it is on record as not having"
 
 
-def test_real_ticks_are_not_folded_into_simulated_history(market):
-    """The exchange's history failed but its quotes work. Folding an 83,000
-    quote into bars simulated around 1.00 makes a chart of nothing."""
+def test_a_quote_does_not_start_a_chart_the_venue_never_supplied(market):
     feed, exchange = market
     exchange.up = False
     run(feed.ensure_history(SYMBOL, "1h"))
+    tick = ProviderTick(symbol=SYMBOL, time=T0 + 2 * HOUR, price=105.25,
+                        bid=105.20, ask=105.30)
+    run(feed._on_tick(tick, "angelone"))                   # noqa: SLF001
+    assert len(store.series(SYMBOL, "1h")) == 0, "one price is not a history"
+    assert feed.quote(SYMBOL).last == 105.25, "the quote itself is real, and shown"
+
+
+def test_one_sources_quote_is_never_folded_into_anothers_bars(market):
+    feed, _ = market
+    store.series(SYMBOL, "1h").replace(
+        [[T0 + i * HOUR, 1.0, 1.1, 0.9, 1.0, 10.0] for i in range(50)], source="elsewhere")
     before = store.series(SYMBOL, "1h").rows()
-    tick = ProviderTick(symbol=SYMBOL, time=before[-1][0] + 2 * HOUR, price=83_000.0,
-                        bid=82_999.0, ask=83_001.0)
-    run(feed._on_tick(tick, "coindcx"))                    # noqa: SLF001
+    tick = ProviderTick(symbol=SYMBOL, time=before[-1][0] + 2 * HOUR, price=105.25,
+                        bid=105.20, ask=105.30)
+    run(feed._on_tick(tick, "angelone"))                   # noqa: SLF001
     assert store.series(SYMBOL, "1h").rows() == before
-    assert feed.quote(SYMBOL).last == 83_000.0, "the quote itself is real, and shown"
 
 
-def test_simulated_history_is_replaced_as_soon_as_the_exchange_answers(market):
+def test_an_empty_chart_fills_as_soon_as_the_venue_answers(market):
     feed, exchange = market
     exchange.up = False
     run(feed.ensure_history(SYMBOL, "1h"))
     exchange.up = True
     run(feed.ensure_history(SYMBOL, "1h"))
     series = store.series(SYMBOL, "1h")
-    assert feed.source_of(SYMBOL, "1h") == "coindcx"
-    assert {row[4] for row in series.rows()} == {100.0}, "nothing simulated is left in it"
+    assert feed.source_of(SYMBOL, "1h") == "angelone"
+    assert {row[4] for row in series.rows()} == {100.0}
+    assert feed.unsupplied() == []
 
 
-def test_a_failing_exchange_is_not_asked_again_on_every_request(market, monkeypatch):
+def test_a_failing_venue_is_not_asked_again_on_every_request(market, monkeypatch):
     feed, exchange = market
-    monkeypatch.setattr(feed_module, "REAL_SOURCE_RETRY_SECONDS", 60.0)
+    monkeypatch.setattr(feed_module, "SOURCE_RETRY_SECONDS", 60.0)
     exchange.up = False
     for _ in range(5):
         run(feed.ensure_history(SYMBOL, "1h"))
     assert exchange.requests == 1
 
 
-def test_real_bars_are_labelled_with_their_venue(market):
+def test_bars_are_labelled_with_the_venue_that_supplied_them(market):
     feed, _ = market
     run(feed.ensure_history(SYMBOL, "1h"))
-    assert feed.source_of(SYMBOL, "1h") == "coindcx"
+    assert feed.source_of(SYMBOL, "1h") == "angelone"
     assert feed.source_of(SYMBOL, "4h") is None, "a series nobody loaded has no source"
+
+
+def test_with_no_broker_session_there_is_no_source_and_no_bars(monkeypatch):
+    """As the application runs: Angel One or nothing. Not connected, nothing
+    serves any symbol, and the feed does not make something up."""
+    from conftest import angel_only_providers
+
+    monkeypatch.setattr(feed_module, "build_providers", angel_only_providers)
+    assert angel_only_providers() == {}
+    feed = MarketFeed()
+    store.series(SYMBOL, "1h").replace([])
+    run(feed.ensure_history(SYMBOL, "1h"))
+    assert len(store.series(SYMBOL, "1h")) == 0
+    assert feed.provider_for(SYMBOL) == "" and feed.is_live(SYMBOL) is False
+    assert feed_module.provider_assignments([SYMBOL, "RELIANCE"], feed.providers) == {}
 
 
 # ── simulated bars are not evidence ───────────────────────────
 
 def test_a_backtest_on_simulated_bars_says_so_and_cannot_pass(monkeypatch):
-    """The suite runs on the simulator. Whatever the numbers say there, the
+    """The suite runs on generated bars. Whatever the numbers say there, the
     verdict is not about a market."""
     monkeypatch.setattr(bt, "edge_verdict", lambda trades, method, seed=7: EdgeVerdict(
         passed=True, reason="looks wonderful", trades=80, expectancy=0.9, p_value=0.0001,
         method=method))
-    result = run(run_backtest(BacktestRequest(symbol="EURUSD", timeframe="1h", bars=400,
+    result = run(run_backtest(BacktestRequest(symbol="TATAMOTORS", timeframe="1h", bars=400,
                                               strategy="random")))
     assert result.data_source == "synthetic"
     assert result.edge.passed is False

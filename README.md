@@ -27,13 +27,17 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 > plays and five simpler strategies were tested on nine crypto markets with up to eight years
 > of history. Nothing has a demonstrated edge, nothing on hourly bars survives its costs, and
 > the confidence figure shown beside a signal does not tell winners from losers. One idea —
-> slow trend-following on 4-hour bars — came close, was rejected by a protocol fixed in
-> advance, and is being watched on new data. The full account, with every experiment
-> reproducible, is in [docs/research/REPORT.md](docs/research/REPORT.md). Indian equities and
-> F&O need a broker connection for their history and have not been tested.
+> slow trend-following on 4-hour bars — came close and was rejected by a protocol fixed in
+> advance. The full account is in [docs/research/REPORT.md](docs/research/REPORT.md).
+>
+> **Those markets were CoinDCX's, and the application no longer has that venue.** The report
+> and its experiment records stand as an archive: they cannot be re-run from this code, and
+> the forward test registered on that idea ended with the venue. Everything the application
+> trades now — NSE stocks, index and currency futures, MCX commodities, all from Angel One —
+> **has not been tested at all.**
 
 > **Trading with it?** Read **[TRADING.md](TRADING.md)** — what you can legally trade from
-> India, how to connect Zerodha or Angel One, how a signal becomes an order (manual or live),
+> India, how to connect Angel One, how a signal becomes an order (manual or live),
 > what it costs, and the honest path from paper trading to real size.
 
 ---
@@ -42,14 +46,14 @@ trend, volume and volatility — then asks Claude to reason over the evidence an
 
 | Layer | Capability |
 | --- | --- |
-| **Live data** | 154 instruments across 1m → 1W: 17 crypto pairs (CoinDCX, keyless), 122 NSE F&O stocks, NIFTY/BANKNIFTY, currency futures, MCX commodities and spot FX |
+| **Live data** | From Angel One and nowhere else, across 1m → 1W: every NSE stock with a listed future (about 210 — the list, the lots and the ticks are read from Angel One's own instrument master), NIFTY/BANKNIFTY, the INR currency futures, and MCX gold, silver and crude. Not connected, there is no data: nothing is simulated in its place |
 | **Drawing** | 15 drawing tools rendered on a Konva layer perfectly registered to the chart's price/time axes |
 | **Drawing intelligence** | Every drawing is stored with price/time/angle/length and scored for touches, reactions, breakouts, fake breakouts, volume behaviour |
 | **Indicators** | EMA, SMA, VWAP, ATR, RSI, MACD, ADX/DI, Stochastic RSI, Ichimoku, SuperTrend, Bollinger Bands, Volume Profile (POC/VAH/VAL), OBV, MFI, Pivot Points |
 | **Market structure** | Swing highs/lows, HH/HL/LH/LL, BOS, CHoCH, liquidity sweeps, FVGs, order blocks, breaker blocks, mitigation blocks, equal highs/lows, premium/discount, supply/demand |
 | **Patterns** | Triangles, wedges, flags, pennants, channels, H&S + inverse, double top/bottom, cup & handle, rectangles + **56 candlestick patterns** |
 | **MTF** | 1m/5m/15m/1H/4H/D fused into a single alignment score with a conflict report |
-| **Screener** | One click ("Best trades" in the top bar) scans every instrument and returns only the ones with a live BUY or SELL signal, sorted by confidence — instead of opening each chart by hand. Filtered to what's actually tradable on CoinDCX or Angel One (spot FX/metals excluded — analysis-only), and every row is tagged with the real trading name for that app (CoinDCX's own pair name, or Angel One's live-resolved contract — `NIFTY25AUG26FUT`, not a guess). Same rule engine as a normal analysis, minus Claude and pattern detection, so ~30 symbols come back in a few seconds (first scan of a session is slower — Angel One's contract list has to download once, then it's cached) |
+| **Screener** | One click ("Best trades" in the top bar) scans every instrument and returns only the ones with a live BUY or SELL signal, sorted by confidence — instead of opening each chart by hand. Every row is tagged with Angel One's live-resolved contract — `NIFTY25AUG26FUT`, not a guess — and a symbol it has no contract for is dropped. Same rule engine as a normal analysis, minus Claude and pattern detection, so ~30 symbols come back in a few seconds (first scan of a session is slower — Angel One's contract list has to download once, then it's cached) |
 | **Strategies** | Five named plays scored side by side — trend continuation, mean reversion, breakout, order-block retest, momentum — each showing every precondition met and missing |
 | **Scenario paths** | Each engaged strategy draws its thesis forward on the chart, with the invalidation leg alongside it |
 | **Futures & options** | Any call expressed as a listed contract: futures cash risk, or an ITM/ATM/OTM option ladder with premium, delta, theta as %/day, break-even and the stop converted into premium |
@@ -120,8 +124,10 @@ from another machine see [Reaching it from another machine](#reaching-it-from-an
 make dev
 ```
 
-Then open the URL from the banner. You should see live BTC candles moving
-within a few seconds — that is CoinDCX, streaming without any credentials.
+Then open the URL from the banner. The charts are empty until Angel One is
+connected: it is the only source of prices. Its credentials go in `.env`
+([TRADING.md §2a](TRADING.md)); then press **Connect Angel One** in the
+DEMO / LIVE control in the top bar.
 
 ### Stopping it
 
@@ -173,9 +179,11 @@ make clean       # remove venv, node_modules, build output
 
 ### First things to do in the app
 
-1. **Nothing** — it already works. BTC and 16 other crypto pairs are live from
-   CoinDCX with no setup, and the deterministic analyst produces verdicts
-   without an API key.
+1. **Connect Angel One.** Every price, and the list of stocks itself, comes
+   from that connection — until it is made there is nothing on the charts and
+   nothing to analyse. Credentials in `.env`, then **Connect Angel One** in the
+   DEMO / LIVE control ([TRADING.md §2a](TRADING.md)). The deterministic
+   analyst needs no API key.
 2. **Add your Claude key** (optional): gear icon → *Analyst* → paste → *Test
    connection*. Applies immediately, no restart.
 3. **Set your account balance** (recommended): gear icon → *Risk*. Every lot
@@ -194,7 +202,8 @@ make clean       # remove venv, node_modules, build output
 | A backtest takes a minute | It runs the full live analysis once per bar | Expected the first time on a market; other strategies and re-runs on it are instant |
 | `make: command not found` | No build tools | macOS: `xcode-select --install` |
 | `make setup` fails on `python3 -m venv` | Python missing or too old | Install Python 3.9+ and re-run |
-| Chart shows **SIM**, not **LIVE** | That symbol has no keyless source | Expected for NSE/MCX symbols — they need Zerodha (see [TRADING.md](TRADING.md)). Crypto should always read LIVE |
+| Chart is empty and the badge reads **NO DATA** | Angel One is not connected, or has not supplied that series yet | Connect it from the DEMO / LIVE control. Nothing else supplies prices, and nothing is simulated in their place |
+| No stocks in the symbol picker | Angel One has never been connected on this machine | The stocks are whatever Angel One lists. They appear once it is connected, and are remembered after that |
 | Everything is stale after a code change | The API does not hot-reload under `make dev` | Ctrl-C and `make dev` again, or use `make backend`, which does reload |
 
 ### Everything is configured in the app
@@ -204,8 +213,7 @@ Open the **gear icon** in the top bar. No env editing, no restarts:
 | Tab | What you set |
 | --- | --- |
 | **Analyst** | Anthropic API key (with a live *Test connection*), model, effort, re-analysis interval |
-| **Market data** | Which provider serves prices, plus a per-symbol LIVE / SIM table |
-| **Zerodha** | Kite Connect key + secret, and the daily login that mints an access token |
+| **Market data** | Whether Angel One is connected, and what is serving each symbol |
 | **Risk** | Account balance, currency, risk-per-trade — the inputs behind every lot size |
 | **Automatic protection** | Whether the stop climbs the protection ladder on its own as a trade runs |
 
@@ -247,30 +255,27 @@ and keeps it in that browser. There is one token and one user: this is not a log
 
 ### Zero-config by design
 
-Nothing external is required to boot, and **17 crypto pairs stream genuinely live from
-CoinDCX with no credentials at all** — so a fresh clone shows real, moving prices and
-analysis that changes with them.
+Nothing external is required to boot. To *show* anything it needs one thing: Angel One,
+which is the only source of prices, of history and of the list of stocks. There is no
+keyless feed and no simulated one — a fresh clone has empty charts until it is connected.
 
 | Dependency | Present | Absent |
 | --- | --- | --- |
 | Anthropic API key | Claude Opus 5 analyst | Deterministic rule-based analyst (same JSON contract) |
-| CoinDCX / Binance keys | — | Not used. Market data is public; Meridian places no orders |
-| Kite Connect | Live NSE-CDS / NFO / MCX data | Those symbols run simulated |
-| Angel One credentials | LIVE mode can be armed (still requires manual confirmation per trade); also serves live NSE/MCX data if Zerodha isn't connected | Trading mode stays `PAPER`; demo auto-trading works fully either way |
+| Angel One credentials | Prices, history and the stock list for everything; LIVE mode can be armed (still requires manual confirmation per trade) | No market data at all — empty charts, nothing to analyse or demo-trade. Trading mode stays `PAPER` |
 | PostgreSQL | Async Postgres via asyncpg | SQLite at `backend/data/meridian.db` |
 | Redis | Shared cache / pub-sub | In-process LRU cache |
 
 ### Instrument coverage
 
-| Group | Symbols | Live source |
+Every row is served by Angel One. Nothing else is listed, because nothing else could be.
+
+| Group | Symbols | Where the list comes from |
 | --- | --- | --- |
-| Crypto (USDT) | BTC, ETH, SOL, XRP, DOGE, BNB, ADA, AVAX, LINK, DOT, LTC, TRX | CoinDCX — keyless |
-| Crypto (INR) | BTCINRC, ETHINRC, SOLINRC, XRPINRC, DOGEINRC | CoinDCX — keyless (wide spreads, see TRADING.md) |
-| NSE F&O stocks | 122 names — RELIANCE, HDFCBANK, INFY, TCS, … | Zerodha Kite Connect (or Angel One) |
-| NSE currency futures | USDINR, EURINR, GBPINR, JPYINR | Zerodha Kite Connect (or Angel One) |
-| NSE indices | NIFTY, BANKNIFTY | Zerodha Kite Connect (or Angel One) |
-| MCX commodities | MCXGOLD, MCXSILVER, MCXCRUDE | Zerodha Kite Connect (or Angel One) |
-| Spot FX & gold | EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, XAUUSD | Twelve Data (analysis only for Indian residents — see TRADING.md) |
+| NSE F&O stocks | Every stock with a listed future — about 210: RELIANCE, HDFCBANK, INFY, TCS, … | Angel One's instrument master, with each one's current lot and tick. None is written into the code |
+| NSE indices | NIFTY, BANKNIFTY | Written down; lot and tick taken from Angel One's current contract |
+| NSE currency futures | USDINR, EURINR, GBPINR, JPYINR | Written down |
+| MCX commodities | MCXGOLD, MCXSILVER, MCXCRUDE | Written down |
 
 ---
 
@@ -365,9 +370,9 @@ backend/app
 ├── alerts.py · notify.py operator alerts, and the optional Telegram channel
 ├── audit.py              append-only log of everything that touched real money
 ├── instruments.py        instrument reference data (pip size, lots, venues)
-├── stocks.py             the NSE F&O stock universe
-├── data/                 providers (coindcx, binance, zerodha, angelone,
-│                         twelvedata, synthetic), tick→candle feed, candle store
+├── stocks.py             names and sectors for NSE F&O stocks; which ones
+│                         exist, their lots and ticks come from Angel One
+├── data/                 the Angel One provider, tick→candle feed, candle store
 ├── analysis/             indicators, structure, patterns, candlesticks,
 │                         volume profile, drawings, mtf, confidence, engine,
 │                         strategies, derivatives, live tier, manage,
@@ -411,7 +416,7 @@ frontend/src
 │                         Screener (best trades now)
 ├── components/ExitAlert  full-screen stop/target alert on the 1s tier
 ├── components/PaperFillToast   screen flash + toast when a demo/live trade opens or closes
-├── components/SettingsModal    gear-icon settings (Analyst, Market data, Zerodha, Risk, Automatic protection)
+├── components/SettingsModal    gear-icon settings (Analyst, Market data, Risk, Automatic protection)
 ├── lib/theme.ts          dark/light palette + canvas re-theming
 ├── components/ui/        design-system primitives
 ├── store/                zustand slices (chart, drawings, analysis, journal)
@@ -427,16 +432,16 @@ Whether a strategy has an edge is a question with a procedure, and the procedure
 
 ```bash
 cd backend
-.venv/bin/python -m app.research.run snapshot BTCUSD ETHUSD   # history, frozen and hashed
+.venv/bin/python -m app.research.run snapshot RELIANCE NIFTY  # history, frozen and hashed
 .venv/bin/python -m app.research.run datasets                 # what is in the store
-.venv/bin/python -m app.research.run engine BTCUSD 1h         # walk-forward the live engine
+.venv/bin/python -m app.research.run engine RELIANCE 1h       # walk-forward the live engine
 .venv/bin/python -m app.research.run study                    # the candidate study
 .venv/bin/python -m app.research.run forward --refresh        # frozen candidates, on new bars
 .venv/bin/python -m app.research.run experiments              # everything on record
 ```
 
 * **Data is a snapshot**, cleaned by recorded rules and named by the hash of its contents. A
-  snapshot edited on disk is refused. None is ever taken from the simulator.
+  snapshot edited on disk is refused. Angel One is the only place one is taken from.
 * **Every run is an experiment record** — the snapshot, fingerprints of the code that decided,
   simulated and priced the trades, every assumption, the number of configurations tried, the
   verdict — stored in the database and as a file, and hashed.
@@ -492,8 +497,9 @@ protection ladder, the account guardrails, demo auto-trading, and:
 The safety rules were also checked the other way round: twenty-six of them
 were broken on purpose, one at a time, and in every case a test failed.
 
-Tests never touch the network or your data. They run on the synthetic feed
-against a throwaway directory that is removed afterwards — never
+Tests never touch the network or your data. They run on bars the test suite
+generates for itself — the application has no such feed — against a
+throwaway directory that is removed afterwards — never
 `backend/data/` — otherwise fabricated test trades would appear in your real
 journal and account limits, and a test run could flip your kill switch.
 
@@ -504,7 +510,7 @@ suite, the frontend typecheck and a production build on every push.
 
 ## Risk notice
 
-Forex, metals and crypto trading carries substantial risk of loss. This software produces
+Trading stocks, futures and commodities carries substantial risk of loss. This software produces
 probabilistic analysis for research and education and makes no claim of accuracy. By default it
 does not place orders or manage capital. The one exception — Angel One live execution — is
 off by default, requires explicit setup and per-trade confirmation, and is documented in full,

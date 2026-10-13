@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import type { LiveAlert } from '../../lib/types'
 import { useStore } from '../../store/useStore'
@@ -148,24 +147,47 @@ export default function TradingModeControl() {
           {typeof critical.context.symbol === 'string' ? ` — ${critical.context.symbol}` : ''}
         </div>
       )}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 transition-colors ${
-          isLive ? 'border-bear/60 bg-bear/10' : 'border-bull/40 bg-bull/[0.06]'}`}
-        title={isLive ? 'LIVE — real orders can be submitted to Angel One'
-                     : 'DEMO — simulated only, no real money'}
-      >
-        <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-bear animate-pulse' : 'bg-bull'}`} />
-        <span className={`text-2xs font-bold tracking-wide ${isLive ? 'text-bear' : 'text-bull'}`}>
-          {isLive ? 'LIVE' : 'DEMO'}
-        </span>
-        {isLive && (
-          <span className="text-[9px] text-bear/80" title="Available funds — Angel One (rmsLimit)">
-            {wallet ?? 'REAL MONEY'}
-          </span>
-        )}
-      </button>
+      {/* Both states are always on screen, side by side, so the mode never
+          has to be remembered — only one of these two segments is ever lit,
+          and which one is never a matter of reading a single word's color. */}
+      <div className="flex items-center rounded-lg border border-hairline overflow-hidden"
+           role="radiogroup" aria-label="Trading mode">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!isLive}
+          onClick={() => (isLive ? setConfirmingSwitch('PAPER') : setOpen(!open))}
+          disabled={busy}
+          title="DEMO — simulated fills only, no real money"
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold tracking-wide
+                      transition-colors ${
+                        !isLive ? 'bg-bull/15 text-bull' : 'text-faint hover:text-muted'}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${!isLive ? 'bg-bull' : 'bg-faint/40'}`} />
+          PAPER
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={isLive}
+          onClick={() => (isLive ? setOpen(!open) : setConfirmingSwitch('LIVE'))}
+          disabled={busy || (!isLive && !angel?.connected)}
+          title={isLive ? 'LIVE — real orders can be submitted to Angel One'
+                        : !angel?.connected ? 'Connect Angel One first' : 'Switch to LIVE'}
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold tracking-wide
+                      transition-colors border-l border-hairline ${
+                        isLive ? 'bg-bear text-white' : 'text-faint hover:text-bear disabled:opacity-40'}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-white animate-pulse' : 'bg-faint/40'}`} />
+          LIVE
+          {isLive && (
+            <span className="text-[9px] font-semibold text-white/85"
+                  title="Available funds — Angel One (rmsLimit)">
+              {wallet ?? 'REAL MONEY'}
+            </span>
+          )}
+        </button>
+      </div>
 
       <AnimatePresence>
         {open && (
@@ -285,7 +307,7 @@ export default function TradingModeControl() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {confirmingSwitch && createPortal(
+        {confirmingSwitch && (
           <motion.div
             className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -332,13 +354,12 @@ export default function TradingModeControl() {
                 </button>
               </div>
             </motion.div>
-          </motion.div>,
-          document.body,
+          </motion.div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {confirmingAutoLive && createPortal(
+        {confirmingAutoLive && (
           <motion.div
             className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -382,8 +403,7 @@ export default function TradingModeControl() {
                 </button>
               </div>
             </motion.div>
-          </motion.div>,
-          document.body,
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

@@ -6,11 +6,9 @@ tokens included. That file is the only authoritative source for a token, lot
 size or tick size; hard-coding any of those is how a live order gets rejected
 or, worse, filled against the wrong contract.
 
-Angel One does not support crypto at all, so every crypto symbol in Meridian
-is unsupported for live execution by construction — this is not a mapping
-gap to fix, it is a real product boundary. §5/§6 of the spec this module
-implements are explicit that this must be an honest "unsupported", never a
-silent substitution.
+§5/§6 of the spec this module implements are explicit that an instrument
+with no real Angel One contract must come back an honest "unsupported",
+never a silent substitution.
 """
 from __future__ import annotations
 
@@ -25,7 +23,10 @@ from typing import Dict, List, Optional
 
 import httpx
 
-from ...instruments import get_instrument
+from ...instruments import (
+    INSTRUMENTS, adopt_contract, get_instrument, refresh_stock_instruments, save_universe,
+)
+from ...stocks import Listing, set_universe
 
 log = logging.getLogger("meridian.angelone.instruments")
 
@@ -39,8 +40,8 @@ SCRIP_MASTER_URL = (
 #: continuously.
 REFRESH_INTERVAL_SECONDS = 6 * 3600
 
-#: The only exchange segments Angel One executes on. Anything else (crypto,
-#: an offshore FX book) is out of scope by definition, not a lookup miss.
+#: The only exchange segments Angel One executes on. Anything else is out of
+#: scope by definition, not a lookup miss.
 SUPPORTED_EXCHANGES = {"NSE", "BSE", "NFO", "CDS", "MCX"}
 
 #: Meridian's index/currency-future/commodity instruments quote off a spot or
@@ -57,6 +58,15 @@ DERIVATIVE_VENUE = {
     "currency_fut": ("CDS", "FUTCUR"),
     "commodity": ("MCX", "FUTCOM"),
 }
+
+#: Single-stock futures. A stock is charted and traded as its cash share, so
+#: these are not in `DERIVATIVE_VENUE` — but which stocks have one, and its
+#: lot, is what the stock universe is read from.
+STOCK_FUTURE_TYPE = "FUTSTK"
+
+#: The exchange lists scrips of its own for testing — 011NSETEST and the like
+#: — with futures and a share, exactly as a company has. They are not stocks.
+TEST_SCRIP_SUFFIX = "NSETEST"
 
 
 @dataclass
@@ -130,7 +140,7 @@ class AngelOneInstrumentService:
 
         by_key = {}
         derivatives: Dict[tuple, List[dict]] = defaultdict(list)
-        derivative_types = {t for _, t in DERIVATIVE_VENUE.values()}
+        derivative_types = {t for _, t in DERIVATIVE_VENUE.values()} | {STOCK_FUTURE_TYPE}
         for row in rows:
             exch = row.get("exch_seg")
             tsym = row.get("symbol")
@@ -150,6 +160,63 @@ class AngelOneInstrumentService:
         log.info("Angel One scrip master loaded: %s instruments (%s derivative "
                  "contracts) across %s", len(by_key),
                  sum(len(v) for v in derivatives.values()), SUPPORTED_EXCHANGES)
+        self._update_stock_universe()
+
+    def stock_universe(self) -> List[Listing]:
+        """Every NSE stock with an unexpired future and a cash share to chart,
+        with the lot and tick the master gives for them. A row that cannot be
+        read is left out: a lot or tick is never guessed."""
+        with self._lock:
+            names = [name for exchange, name, itype in self._derivatives
+                     if exchange == "NFO" and itype == STOCK_FUTURE_TYPE
+                     and not name.endswith(TEST_SCRIP_SUFFIX)]
+        out: List[Listing] = []
+        for name in names:
+            future = self._nearest_contract("NFO", name, STOCK_FUTURE_TYPE)
+            share = self._by_key.get(("NSE", name + "-EQ"))
+            if future is None or share is None:
+                continue
+            try:
+                lot = int(float(future.get("lotsize") or 0))
+                tick = float(share.get("tick_size") or 0) / 100.0
+            except (TypeError, ValueError):
+                continue
+            if lot > 0 and tick > 0:
+                out.append(Listing(symbol=name, lot_size=lot, tick_size=tick))
+        return out
+
+    def _update_stock_universe(self) -> None:
+        listings = self.stock_universe()
+        if not listings:
+            # A master with no stock futures in it is a bad read, not a market
+            # with no stocks: keep the last good universe.
+            log.warning("Angel One scrip master lists no stock futures — "
+                        "keeping the previous stock universe")
+            return
+        set_universe(listings)
+        refresh_stock_instruments()
+        log.info("stock universe: %s NSE F&O stocks from Angel One", len(listings))
+        self._adopt_index_contracts()
+        save_universe()
+
+    def _adopt_index_contracts(self) -> None:
+        """An index future's lot is revised like a stock's, and the one
+        written down goes stale the same way. NFO only: the master counts a
+        currency or commodity contract in lots, not in the units the sizing
+        maths needs, so those are left as written."""
+        for instrument in [i for i in INSTRUMENTS.values() if i.asset_class == "index"]:
+            exchange, itype = DERIVATIVE_VENUE["index"]
+            future = self._nearest_contract(
+                exchange, (instrument.broker_symbol or instrument.symbol).upper(), itype)
+            if future is None:
+                continue
+            try:
+                lot = int(float(future.get("lotsize") or 0))
+                tick = float(future.get("tick_size") or 0) / 100.0
+            except (TypeError, ValueError):
+                continue
+            if lot > 0 and tick > 0:
+                adopt_contract(instrument.symbol, lot, tick)
 
     @staticmethod
     def _parse_expiry(expiry: str) -> Optional[datetime]:
@@ -181,11 +248,6 @@ class AngelOneInstrumentService:
         simply doesn't have a matching row today (expiry rolled, etc).
         """
         instrument = get_instrument(symbol)
-
-        if instrument.asset_class == "crypto" or instrument.venue == "crypto":
-            raise InstrumentUnsupported(
-                "Angel One does not support crypto trading. {} can only be "
-                "auto-traded on the demo account.".format(symbol))
 
         if not instrument.tradable_in_india or not instrument.exchange:
             raise InstrumentUnsupported(

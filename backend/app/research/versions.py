@@ -21,8 +21,10 @@ APP = Path(__file__).resolve().parent.parent
 ENGINE_FILES: Tuple[str, ...] = ("analysis", "instruments.py", "backtest/replay.py")
 #: How an order's life is simulated.
 EXECUTION_FILES: Tuple[str, ...] = ("backtest/engine.py", "research/simulator.py")
-#: What a trade is charged.
-COST_FILES: Tuple[str, ...] = ("costs.py",)
+#: What a trade is charged. `costs_india.py` holds the equity schedules that
+#: `costs.py` prices an order by: change a rate there and evidence charged
+#: by the old one stops counting.
+COST_FILES: Tuple[str, ...] = ("costs.py", "costs_india.py")
 #: The candidate strategies studied offline.
 RESEARCH_FILES: Tuple[str, ...] = ("research/strategies.py", "analysis/indicators.py")
 

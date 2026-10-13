@@ -156,12 +156,12 @@ def test_unknown_recommendation_404s(client, fake):
 
 def test_unsupported_instrument_is_rejected(client, fake, monkeypatch):
     async def resolve(symbol):
-        raise InstrumentUnsupported("Angel One does not support crypto trading.")
+        raise InstrumentUnsupported("No matching Angel One contract found for it.")
     monkeypatch.setattr(angel_instruments, "resolve", resolve)
 
-    body = execute(client, _run(_seed_recommendation(symbol="BTCUSD"))).json()
+    body = execute(client, _run(_seed_recommendation(symbol="ITC"))).json()
     assert body["status"] == "REJECTED"
-    assert "crypto" in body["error_message"].lower()
+    assert "no matching angel one contract" in body["error_message"].lower()
 
 
 def test_untrusted_cds_tick_conversion_blocks_execution(client, fake, monkeypatch):
@@ -308,7 +308,10 @@ def test_preview_shows_the_exact_order_and_places_nothing(client, fake):
     assert (body["quantity"], body["entry_price"], body["stop_price"]) == (100, 250.0, 248.0)
     assert (body["order_value"], body["risk"], body["margin_required"]) == (
         25_000.0, 200.0, 5_000.0)
-    assert body["charges"] == pytest.approx(26.41, abs=0.01), "and what the round trip costs"
+    # 25,000 in and 24,800 out, intraday, at Angel One's published rates: Rs 20
+    # brokerage a side (0.1%, capped), 1.58 to the exchange and SEBI, 7.48 GST,
+    # and 6.99 of STT and stamp duty. (A rate of 0.053% a side said 26.41.)
+    assert body["charges"] == pytest.approx(56.06, abs=0.01), "and what the round trip costs"
     assert body["trading_symbol"] == "RELIANCE-EQ"
     assert fake.placed == []
     assert client.get(f"/api/trades/{rec_id}/execution").status_code == 404, "nothing recorded"

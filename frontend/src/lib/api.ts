@@ -90,7 +90,7 @@ export const api = {
   timeframes: () => request<TimeframeInfo[]>('/api/market/timeframes'),
   candles: (symbol: string, timeframe: string, limit = 600) =>
     request<{ symbol: string; timeframe: string; candles: Candle[]; provider: string }>(
-      `/api/market/candles?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`),
+      `/api/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
   quotes: (symbols?: string[]) =>
     request<Record<string, Quote>>(
       `/api/market/quotes${symbols?.length ? `?symbols=${symbols.join(',')}` : ''}`),
@@ -99,7 +99,7 @@ export const api = {
   // ── drawings ──────────────────────────────────────────────
   listDrawings: (symbol: string, timeframe?: string) =>
     request<Drawing[]>(
-      `/api/drawings?symbol=${symbol}${timeframe ? `&timeframe=${timeframe}` : ''}`),
+      `/api/drawings?symbol=${encodeURIComponent(symbol)}${timeframe ? `&timeframe=${timeframe}` : ''}`),
   createDrawing: (payload: {
     symbol: string
     timeframe: string
@@ -121,11 +121,11 @@ export const api = {
     request<void>(`/api/drawings/${id}`, { method: 'DELETE' }),
   clearDrawings: (symbol: string, timeframe?: string) =>
     request<{ removed: number }>(
-      `/api/drawings?symbol=${symbol}${timeframe ? `&timeframe=${timeframe}` : ''}`,
+      `/api/drawings?symbol=${encodeURIComponent(symbol)}${timeframe ? `&timeframe=${timeframe}` : ''}`,
       { method: 'DELETE' }),
   drawingAnalytics: (symbol: string, timeframe: string) =>
     request<DrawingAnalytics[]>(
-      `/api/drawings/analytics?symbol=${symbol}&timeframe=${timeframe}`),
+      `/api/drawings/analytics?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`),
 
   // ── analysis ──────────────────────────────────────────────
   analyse: (symbol: string, timeframe: string, opts?: {
@@ -159,7 +159,7 @@ export const api = {
 
   // ── journal ───────────────────────────────────────────────
   journal: (symbol?: string) =>
-    request<JournalEntry[]>(`/api/journal${symbol ? `?symbol=${symbol}` : ''}`),
+    request<JournalEntry[]>(`/api/journal${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`),
   logAnalysis: (analysis: AnalysisResult, snapshot?: string, notes?: string) =>
     request<JournalEntry>('/api/journal/from-analysis', {
       method: 'POST',
@@ -181,7 +181,7 @@ export const api = {
   // ── positions ─────────────────────────────────────────────
   positions: (symbol?: string, status = 'open') =>
     request<Position[]>(
-      `/api/positions?status=${status}${symbol ? `&symbol=${symbol}` : ''}`),
+      `/api/positions?status=${status}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ''}`),
   openPosition: (payload: {
     symbol: string
     timeframe: string
@@ -253,7 +253,7 @@ export const api = {
   angelDisconnect: () =>
     request<AngelStatus>('/api/broker/angel/disconnect', { method: 'POST' }),
   instrumentCapability: (symbol: string) =>
-    request<InstrumentCapability>(`/api/broker/angel/instrument/${symbol}/capability`),
+    request<InstrumentCapability>(`/api/broker/angel/instrument/${encodeURIComponent(symbol)}/capability`),
   executeLive: (recommendationId: string, confirmed: boolean) =>
     request<ExecutionRecord>(`/api/trades/${recommendationId}/execute`, {
       method: 'POST', body: JSON.stringify({ confirmed }),
@@ -273,20 +273,6 @@ export const api = {
     }),
   testClaude: () => request<{ ok: boolean; model: string; reply: string; input_tokens: number; output_tokens: number }>(
     '/api/settings/test-claude', { method: 'POST' }),
-  zerodhaLoginUrl: () =>
-    request<{ url: string; instructions: string }>('/api/settings/zerodha/login-url'),
-  zerodhaExchange: (requestToken: string) =>
-    request<{ ok: boolean; user_name?: string; note: string }>(
-      '/api/settings/zerodha/exchange', {
-        method: 'POST',
-        body: JSON.stringify({ request_token: requestToken }),
-      }),
-  zerodhaDisconnect: () =>
-    request<{ ok: boolean }>('/api/settings/zerodha/disconnect', { method: 'POST' }),
-  zerodhaContracts: () =>
-    request<{ symbol: string; display: string; resolved: string | null; exchange: string
-              expiry: string | null; lot_size: number; error: string | null }[]>(
-      '/api/settings/zerodha/contracts'),
 
   // ── backtest ──────────────────────────────────────────────
   backtest: (payload: {

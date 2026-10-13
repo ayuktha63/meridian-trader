@@ -12,11 +12,18 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app import instruments, stocks
+from app.broker.angelone import instruments as instruments_module
+from app.broker.angelone.auth import angel_auth
 from app.broker.angelone.instruments import (
     AngelOneInstrumentService, InstrumentUnsupported,
 )
+from app.broker.live_limits import sector_of
 from app.broker.trading_mode import LIVE, PAPER, TradingModeStore
+from app.data.providers import resolve_provider
+from app.instruments import get_instrument
 from app.main import app
+from conftest import SHIPPED_SYMBOLS, angel_only_providers
 
 
 @pytest.fixture
@@ -135,13 +142,6 @@ def test_paper_trading_endpoints_work_with_angel_unconfigured(client):
 
 # ── instrument capability ────────────────────────────────────
 
-def test_crypto_is_never_live_tradable():
-    service = AngelOneInstrumentService()
-    result = _run(service.capability("BTCUSD"))
-    assert result["supported"] is False
-    assert "crypto" in result["reason"].lower()
-
-
 def test_unknown_symbol_is_not_supported():
     service = AngelOneInstrumentService()
     result = _run(service.capability("NOT_A_REAL_SYMBOL"))
@@ -217,6 +217,170 @@ def test_equity_resolves_by_eq_suffix_not_a_derivative_row():
     match = _run(service.resolve("RELIANCE"))
     assert match.trading_symbol == "RELIANCE-EQ"
     assert match.lot_size == 1
+
+
+def test_a_market_with_no_indian_exchange_is_unsupported():
+    result = _run(AngelOneInstrumentService().capability("EURUSD"))
+    assert result["supported"] is False
+    assert "no Indian exchange mapping" in result["reason"]
+
+
+# ── what there is to trade ────────────────────────────────────
+
+def _day(offset):
+    return (datetime.now(timezone.utc) + timedelta(days=offset)).strftime("%d%b%Y").upper()
+
+
+def _future(name, expiry, lot):
+    return {"token": "1", "symbol": name + expiry + "FUT", "name": name, "expiry": expiry,
+            "lotsize": str(lot), "instrumenttype": "FUTSTK", "exch_seg": "NFO",
+            "tick_size": "5"}
+
+
+def _share(name, tick):
+    return {"token": "2", "symbol": name + "-EQ", "name": name, "expiry": "",
+            "lotsize": "1", "instrumenttype": "", "exch_seg": "NSE", "tick_size": str(tick)}
+
+
+def test_the_application_lists_nothing_angel_one_cannot_trade():
+    assert set(SHIPPED_SYMBOLS) == {"USDINR", "EURINR", "GBPINR", "JPYINR", "NIFTY",
+                                    "BANKNIFTY", "MCXGOLD", "MCXSILVER", "MCXCRUDE"}
+    for symbol in SHIPPED_SYMBOLS:
+        instrument = get_instrument(symbol)
+        assert instrument.tradable_in_india and instrument.venue in ("NFO", "CDS", "MCX")
+        assert instrument.asset_class != "stock", "no stock is written down: Angel One lists them"
+
+
+def test_the_stocks_are_the_ones_angel_one_lists_with_its_lot_and_tick(universe):
+    service = AngelOneInstrumentService()
+    near, far, gone = _day(10), _day(40), _day(-5)
+    service._derivatives = {  # noqa: SLF001 - test seeds the cache directly
+        ("NFO", "RELIANCE", "FUTSTK"): [_future("RELIANCE", far, 999),
+                                        _future("RELIANCE", near, 250),
+                                        _future("RELIANCE", gone, 500)],
+        ("NFO", "NEWLISTING", "FUTSTK"): [_future("NEWLISTING", near, 1200)],
+        ("NFO", "DELISTED", "FUTSTK"): [_future("DELISTED", gone, 100)],
+        ("NFO", "NOSHARE", "FUTSTK"): [_future("NOSHARE", near, 100)],
+        ("NFO", "BADROW", "FUTSTK"): [_future("BADROW", near, "n/a")],
+        ("NFO", "011NSETEST", "FUTSTK"): [_future("011NSETEST", near, 50)],
+        ("NFO", "NIFTY", "FUTIDX"): [
+            dict(_future("NIFTY", near, 65), instrumenttype="FUTIDX", tick_size="10")],
+    }
+    service._by_key = {  # noqa: SLF001
+        ("NSE", "RELIANCE-EQ"): _share("RELIANCE", 10), ("NSE", "NEWLISTING-EQ"): _share("NEWLISTING", 5),
+        ("NSE", "DELISTED-EQ"): _share("DELISTED", 5), ("NSE", "BADROW-EQ"): _share("BADROW", 5),
+        ("NSE", "011NSETEST-EQ"): _share("011NSETEST", 5),
+    }
+    listed = {listing.symbol: listing for listing in service.stock_universe()}
+    assert set(listed) == {"RELIANCE", "NEWLISTING"}, \
+        "an expired future, a missing share, an unreadable lot or the exchange's own " \
+        "test scrip is not a listing"
+    assert (listed["RELIANCE"].lot_size, listed["RELIANCE"].tick_size) == (250, 0.1), \
+        "the nearest contract that has not expired, and the share's own tick"
+
+    service._update_stock_universe()  # noqa: SLF001
+    reliance = get_instrument("RELIANCE")
+    assert (reliance.contract_size, reliance.pip_size) == (250, 0.1), "not the 500 it had"
+    assert reliance.display == "Reliance Industries" and "Energy" in reliance.note
+    new = get_instrument("NEWLISTING")
+    assert (new.display, new.contract_size, new.pip_size) == ("NEWLISTING", 1200, 0.05)
+    with pytest.raises(KeyError):
+        get_instrument("TCS")       # Angel One no longer lists it, so neither does this
+    assert "RELIANCE" in instruments.DEFAULT_STREAM_SYMBOLS
+    assert "NIFTY" in instruments.SYMBOLS and "HDFCBANK" not in instruments.SYMBOLS
+
+    # The index future's lot is revised too, and the one written down was stale.
+    nifty = get_instrument("NIFTY")
+    assert (nifty.contract_size, nifty.pip_size) == (65, 0.1)
+    assert get_instrument("BANKNIFTY").contract_size == 30, "no contract seen: left as written"
+    assert get_instrument("USDINR").contract_size == 1_000, \
+        "a currency contract is counted in lots there, not units: never adopted"
+
+
+def test_the_universe_is_kept_for_the_next_start(universe, monkeypatch, tmp_path):
+    """A restart has no broker session. A saved trade on a stock still has to
+    resolve, so what Angel One last listed is kept and read back."""
+    monkeypatch.setattr(instruments, "UNIVERSE_PATH", tmp_path / "angel_universe.json")
+    stocks.set_universe([stocks.Listing("WIPRO", 3000, 0.01), stocks.Listing("M&M", 200, 0.1)])
+    instruments.refresh_stock_instruments()
+    instruments.adopt_contract("NIFTY", 65, 0.1)
+    instruments.save_universe()
+
+    stocks.set_universe([])                         # …the process ends, and another starts
+    instruments.refresh_stock_instruments()
+    instruments.adopt_contract("NIFTY", 75, 0.05)
+    with pytest.raises(KeyError):
+        get_instrument("WIPRO")
+
+    instruments.restore_universe()
+    assert (get_instrument("WIPRO").contract_size, get_instrument("WIPRO").pip_size) == (3000, 0.01)
+    assert get_instrument("M&M").display == "Mahindra & Mahindra"
+    assert (get_instrument("NIFTY").contract_size, get_instrument("NIFTY").pip_size) == (65, 0.1)
+
+    (tmp_path / "angel_universe.json").write_text("{ not json")
+    instruments.restore_universe()                  # unreadable: ignored, nothing lost
+    assert get_instrument("WIPRO").contract_size == 3000
+    (tmp_path / "angel_universe.json").unlink()
+    instruments.restore_universe()                  # absent: a first run, and fine
+
+
+def test_a_master_with_no_stock_futures_is_a_bad_read_not_an_empty_market(universe):
+    service = AngelOneInstrumentService()
+    service._derivatives, service._by_key = {}, {}  # noqa: SLF001
+    service._update_stock_universe()  # noqa: SLF001
+    assert get_instrument("RELIANCE").contract_size == 500, "the last good universe stands"
+
+
+def test_loading_the_scrip_master_adopts_its_stocks(universe, monkeypatch):
+    rows = [_share("RELIANCE", 10), _future("RELIANCE", _day(10), 250),
+            _share("WIPRO", 5), _future("WIPRO", _day(10), 3000),
+            dict(_share("ELSEWHERE", 5), exch_seg="NCDEX"),
+            {"token": "9", "symbol": "GOLD05DEC26FUT", "name": "GOLD", "expiry": _day(30),
+             "lotsize": "1", "instrumenttype": "FUTCOM", "exch_seg": "MCX", "tick_size": "100"}]
+
+    class Master:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            assert url == instruments_module.SCRIP_MASTER_URL
+            return type("Response", (), {"raise_for_status": lambda self: None,
+                                         "json": lambda self: rows})()
+
+    monkeypatch.setattr(instruments_module.httpx, "AsyncClient", lambda timeout=None: Master())
+    service = AngelOneInstrumentService()
+    _run(service.ensure_loaded())
+    assert [listing.symbol for listing in stocks.UNIVERSE] == ["RELIANCE", "WIPRO"]
+    assert get_instrument("WIPRO").contract_size == 3000
+    assert get_instrument("WIPRO").display == "Wipro"
+    assert _run(service.resolve("MCXGOLD")).exchange == "MCX", "and the futures still resolve"
+
+
+def test_sectors_are_a_label_and_an_unlabelled_stock_is_still_counted(universe):
+    assert sector_of("HDFCBANK") == sector_of("SBIN") == "Financials"
+    assert sector_of("INFY") == "IT"
+    assert sector_of("NIFTY") is None and sector_of("USDINR") is None, "not a stock"
+    stocks.set_universe(list(stocks.UNIVERSE) + [stocks.Listing("NEWLISTING", 100, 0.05)])
+    assert sector_of("NEWLISTING") == stocks.UNCLASSIFIED, \
+        "bound together with the other unlabelled ones, rather than by no limit at all"
+
+
+# ── where prices come from ────────────────────────────────────
+
+def test_angel_one_is_the_only_source_and_only_while_connected(monkeypatch):
+    assert angel_only_providers() == {}, "no session: nothing serves anything"
+    assert resolve_provider("RELIANCE", {}) is None
+
+    monkeypatch.setattr(type(angel_auth), "connected", property(lambda self: True))
+    providers = angel_only_providers()
+    assert list(providers) == ["angelone"]
+    assert resolve_provider("RELIANCE", providers).name == "angelone"
+    assert resolve_provider("MCXCRUDE", providers).live is True
+    assert resolve_provider("EURUSD", providers) is None, "not something Angel One trades"
+    assert resolve_provider("NOPE", providers) is None
 
 
 def _run(coro):

@@ -42,7 +42,7 @@ async def register(session: AsyncSession, markets: Sequence[Market], strategy_na
                    reason: str, now: Optional[float] = None) -> Dict[str, Any]:
     """Freeze a strategy for forward watching, from the next bar on."""
     strategy = strategies.BY_NAME[strategy_name]
-    costs.PROFILES[profile]                       # an unknown venue fails here
+    costs.known(profile)                          # an unknown venue fails here
     now = time.time() if now is None else now
     record = registry.build(
         kind="registration", stage="forward", strategy=strategy.name, symbol="UNIVERSE",

@@ -28,7 +28,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def snapshot(symbol="BTCUSD", provider="coindcx", count=1700, seed=13):
+def snapshot(symbol="RELIANCE", provider="angelone", count=1700, seed=13):
     rng = np.random.default_rng(seed)
     close = 30_000.0 * np.exp(np.cumsum(rng.normal(0.0012, 0.004, count)))   # a rising market
     opens = np.concatenate([[30_000.0], close[:-1]])
@@ -60,34 +60,39 @@ def test_a_snapshot_supplies_every_timeframe_the_replay_reads():
     history = history_from(snapshot(), bars=600)
     assert len(history.base) == 600 + replay.ANALYSIS_BARS
     assert set(history.higher) == {"4h", "1d"}
-    assert history.source == "coindcx"
+    assert history.source == "angelone"
     four_hour = history.higher["4h"]
     assert (four_hour["time"].diff().dropna() == 4 * HOUR).all()
     assert bars_needed("1h", 4000) == 4000 + replay.ANALYSIS_BARS + 400 * 24
     assert bars_needed("1m", 4000) == 60_000, "capped: nobody needs a year of minutes"
 
 
+async def _walk_forward(dataset, symbol, profile):
+    async with session_scope() as session:
+        record = await walk_forward_on_snapshot(
+            session, symbol, "1h", bars=1000, cost_profile=profile, dataset=dataset)
+    async with session_scope() as session:
+        rows = (await session.execute(select(BacktestRow))).scalars().all()
+        return record, [dict(r.payload) for r in rows], await registry.get(
+            session, record["id"])
+
+
+def test_a_walk_forward_charged_as_another_venue_leaves_nothing_for_the_gate(clean):
+    """An experiment, and on record as one — but not evidence about the venue
+    this market actually trades on."""
+    dataset = snapshot(symbol="OTCUSD", provider="elsewhere")
+    record, rows, _ = run(_walk_forward(dataset, "OTCUSD", "test_perp"))
+    assert record["cost_profile"] == "test_perp" and rows == []
+
+
 def test_the_engine_walk_forward_is_recorded_as_an_experiment(clean):
     dataset = snapshot()
 
-    async def go(profile):
-        async with session_scope() as session:
-            record = await walk_forward_on_snapshot(
-                session, "BTCUSD", "1h", bars=1000, cost_profile=profile, dataset=dataset)
-        async with session_scope() as session:
-            rows = (await session.execute(select(BacktestRow))).scalars().all()
-            return record, [dict(r.payload) for r in rows], await registry.get(
-                session, record["id"])
-
-    # Charged as another venue: an experiment, but nothing for the gate to read.
-    elsewhere, rows, _ = run(go("crypto_perp"))
-    assert elsewhere["cost_profile"] == "crypto_perp" and rows == []
-
-    record, rows, stored = run(go(None))
+    record, rows, stored = run(_walk_forward(dataset, "RELIANCE", None))
     payload, = rows
     assert record["kind"] == "engine_walk_forward"
     assert record["datasets"][0]["dataset_id"] == dataset.id
-    assert record["cost_profile"] == "crypto_spot" and record["venue"] == "coindcx"
+    assert record["cost_profile"] == "india:stock" and record["venue"] == "angelone"
     assert record["trials"] == 9
     metrics = record["metrics"]
     assert metrics["trades"] >= 30
@@ -99,7 +104,7 @@ def test_the_engine_walk_forward_is_recorded_as_an_experiment(clean):
 
     # …and the row the live gate reads points at it.
     assert payload["experiment_id"] == record["id"]
-    assert payload["dataset_id"] == dataset.id and payload["data_source"] == "coindcx"
+    assert payload["dataset_id"] == dataset.id and payload["data_source"] == "angelone"
     assert payload["code"]["engine"].startswith("engine@")
     assert payload["checks"]["random_entries"]["p_value"] == metrics["random_entries"]["p_value"]
 
@@ -110,8 +115,7 @@ def test_the_same_snapshot_gives_the_same_answer(clean):
     async def once():
         async with session_scope() as session:
             record = await walk_forward_on_snapshot(
-                session, "BTCUSD", "1h", bars=1000, cost_profile="crypto_perp",
-                dataset=dataset)
+                session, "RELIANCE", "1h", bars=1000, dataset=dataset)
         return {k: record["metrics"][k] for k in
                 ("trades", "expectancy_r", "ci_low", "ci_high", "random_entries",
                  "grid_positive", "max_drawdown_r")}
@@ -119,11 +123,11 @@ def test_the_same_snapshot_gives_the_same_answer(clean):
 
 
 def test_no_evidence_is_produced_from_simulated_bars(clean):
-    simulated = snapshot(provider="synthetic", symbol="EURUSD")
+    simulated = snapshot(provider="synthetic")
 
     async def go():
         async with session_scope() as session:
-            return await walk_forward_on_snapshot(session, "EURUSD", "1h", bars=1000,
+            return await walk_forward_on_snapshot(session, "RELIANCE", "1h", bars=1000,
                                                   dataset=simulated)
     with pytest.raises(datasets.DatasetError, match="simulated"):
         run(go())
@@ -140,24 +144,24 @@ def test_the_api_shows_what_was_run_and_on_what(clean, client):
 
     async def go():
         async with session_scope() as session:
-            return await walk_forward_on_snapshot(session, "BTCUSD", "1h", bars=1000,
+            return await walk_forward_on_snapshot(session, "RELIANCE", "1h", bars=1000,
                                                   dataset=dataset)
     record = run(go())
 
     listed = client.get("/api/research/experiments").json()
     assert [row["id"] for row in listed] == [record["id"]]
     assert listed[0]["intact"] is True and listed[0]["datasets"] == [dataset.id]
-    assert client.get("/api/research/experiments?symbol=ETHUSD").json() == []
+    assert client.get("/api/research/experiments?symbol=NIFTY").json() == []
     full = client.get("/api/research/experiments/" + record["id"]).json()
     assert full["sha256"] == record["sha256"] and full["intact"] is True
     assert client.get("/api/research/experiments/exp-none").status_code == 404
 
     catalogue = {row["dataset_id"]: row for row in client.get("/api/research/datasets").json()}
     assert catalogue[dataset.id]["quality_passed"] is True
-    assert catalogue[dataset.id]["provider"] == "coindcx"
+    assert catalogue[dataset.id]["provider"] == "angelone"
     assert client.get("/api/research/study").json()["run"] is False
 
-    state = client.get("/api/research/eligibility?symbol=BTCUSD&timeframe=1h").json()
+    state = client.get("/api/research/eligibility?symbol=RELIANCE&timeframe=1h").json()
     assert state["live_allowed"] is False
     assert state["state"] in ("INELIGIBLE", "INSUFFICIENT EVIDENCE", "RESEARCH APPROVED")
     assert state["experiment_id"] == record["id"]

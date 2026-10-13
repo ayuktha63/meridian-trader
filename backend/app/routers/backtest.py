@@ -63,7 +63,7 @@ async def run_walk_forward(
             cost_profile=payload.cost_profile, strategy=payload.strategy, request=payload)
         return record["result"]
     except DatasetError:
-        pass                     # no real venue serves it: simulated, and said to be
+        pass                     # no snapshot to be had: whatever the feed holds, if anything
 
     result = await walk_forward(payload)
     session.add(BacktestRow(

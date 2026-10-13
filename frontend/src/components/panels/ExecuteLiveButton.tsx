@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { api, ApiError } from '../../lib/api'
 import type {
   AnalysisResult, ExecutionPreview, ExecutionRecord, InstrumentCapability,
@@ -109,7 +108,7 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
       </button>
 
       <AnimatePresence>
-        {confirming && createPortal(
+        {confirming && (
           <motion.div
             className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -175,8 +174,7 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
                 </button>
               </div>
             </motion.div>
-          </motion.div>,
-          document.body,
+          </motion.div>
         )}
       </AnimatePresence>
     </>
