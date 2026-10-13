@@ -9,8 +9,8 @@ when it was chosen. It needs (1) a strategy that survived history, and (2) a
 live implementation that runs the same rules as the research code. Today
 neither exists:
 
-- No family has passed the research stretch (see `NSE_15M_RESEARCH_RESULTS.md`
-  for the run; if it is not there, the run has not happened yet).
+- No family passed the research stretch: all ten were rejected
+  (`NSE_15M_RESEARCH_RESULTS.md`).
 - The ten NSE candidates exist only as research code (`india_strategies.py`).
   `eligibility.evaluate` says so itself: *"exists only in research: there is
   no live implementation of it to review."*

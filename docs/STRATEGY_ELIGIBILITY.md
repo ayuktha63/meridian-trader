@@ -47,7 +47,7 @@ be computed is NOT EVALUABLE and holds the family back.
 | Live engine, any NSE stock or index future | **INSUFFICIENT EVIDENCE** at best | the walk-forwards on record: RELIANCE 19 trades (+0.65R, interval +0.21…+1.07R, `NO MEASURED EDGE`), NIFTY 0 trades; six RELIANCE named-play walk-forwards, none passing; all before the 13 Oct engine/cost changes, so stale by fingerprint. A fresh baseline on 25 stocks is running offline in another session |
 | Live engine, BANKNIFTY 1h | no evidence | a walk-forward at 09:54 recorded 0 bars |
 | Live engine, crypto | INELIGIBLE, archived | `docs/research/REPORT.md`; venue removed |
-| The ten NSE candidates | **not yet judged** — see `NSE_15M_RESEARCH_RESULTS.md` | protocol frozen at 12:00 |
+| The ten NSE candidates | **INELIGIBLE** (all ten REJECTED on the research stretch; 0 of 40 configurations positive net) | `NSE_15M_RESEARCH_RESULTS.md`; validation and holdout never opened |
 | Any of them as a *live* strategy | **cannot be eligible** | no live implementation exists (`live_capable=False`) |
 | Currency, commodity futures | blocked | CDS tick scale and MCX quantity unit unverified |
 | Options | unsupported | no execution path |
