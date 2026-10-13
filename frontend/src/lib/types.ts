@@ -15,8 +15,7 @@ export interface Candle {
 export interface SymbolInfo {
   symbol: string
   display: string
-  asset_class: 'fx' | 'metal' | 'crypto' | 'currency_fut' | 'index'
-    | 'commodity' | 'stock'
+  asset_class: 'currency_fut' | 'index' | 'commodity' | 'stock'
   digits: number
   pip_size: number
   contract_size: number
@@ -49,13 +48,24 @@ export interface Quote {
   day_low: number
   updated_at: number
   live: boolean
+  /** How old the quote was when the server read it, and whether that is too old to act on. */
+  age_seconds?: number
+  stale?: boolean
 }
+
+/** A quote older than this is not a current price — the same limit the server applies. */
+export const STALE_QUOTE_SECONDS = 20
 
 export interface MarketClock {
   utc_time: string
+  /** Exchange time (IST). */
+  ist_time?: string
   active_session: string
+  /** closed | normal | high */
   liquidity_regime: string
-  sessions: { name: string; open: boolean; opens_in_minutes?: number; closes_in_minutes?: number }[]
+  sessions: { name: string; open: boolean; opens_in_minutes?: number | null; closes_in_minutes?: number | null }[]
+  /** What "open" rests on: the clock, which does not know a holiday. */
+  basis?: string
 }
 
 // ── drawings ────────────────────────────────────────────────
@@ -793,7 +803,8 @@ export interface BacktestResult {
   folds?: Record<string, number>[]
   /** Walk-forward: the thresholds a live order has to clear. */
   next_parameters?: { min_confidence?: number; min_risk_reward?: number }
-  /** Where the bars came from: a venue's name, or "synthetic" — never evidence. */
+  /** Where the bars came from: the provider's name. "synthetic" marks generated
+   *  bars in a record from before the simulator was removed — never evidence. */
   data_source?: string
 }
 
@@ -879,16 +890,6 @@ export interface RuntimeSettings {
   claude_model: string
   claude_effort: string
   ai_auto_analysis_interval: number
-  market_provider: string
-  hybrid_crypto_live: boolean
-  twelvedata_api_key: string | null
-  twelvedata_api_key_set: boolean
-  zerodha_api_key: string | null
-  zerodha_api_secret: string | null
-  zerodha_api_secret_set: boolean
-  zerodha_access_token: string | null
-  zerodha_access_token_set: boolean
-  zerodha_token_issued_at: number | null
   account_balance: number
   risk_per_trade_pct: number
   account_currency: string
@@ -934,6 +935,9 @@ export interface AngelStatus {
   connected: boolean
   session_age_seconds: number | null
   last_error: string | null
+  /** Logins that have failed in a row, and seconds until the next automatic one (null: none pending). */
+  failed_logins?: number
+  login_retry_in_seconds?: number | null
   /** Angel One's real available cash — set only once LIVE, connected, and the read actually succeeded. */
   available_funds: number | null
 }

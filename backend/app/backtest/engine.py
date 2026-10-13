@@ -413,9 +413,18 @@ async def _frame(request: BacktestRequest) -> Optional[pd.DataFrame]:
     return store.frame(symbol, timeframe, wanted)
 
 
+#: The label generated bars carry. Nothing in the application produces them
+#: any more; a history handed in under that name is still never evidence.
 SIMULATED = "synthetic"
 NOT_EVIDENCE = ("Measured on simulated bars — a test of the software, not of a "
-                "market. Connect the venue that serves {} and run it again.")
+                "market. Connect Angel One for {} and run it again.")
+
+
+def _too_little(request: BacktestRequest, bars: int, needed: int) -> str:
+    if not bars and not feed.provider_for(request.symbol):
+        return ("No history for {}: Angel One is not connected, and bars come from "
+                "nowhere else.".format(request.symbol.upper()))
+    return "Not enough history to backtest ({} bars, need {})".format(bars, needed)
 
 
 def _data_source(request: BacktestRequest, history: Optional[History] = None) -> str:
@@ -460,6 +469,15 @@ def _first_tested(n: int, bars: int) -> int:
     return max(WARMUP, n - bars)
 
 
+def _bar_grid(request: BacktestRequest, history: Optional[History] = None):
+    """The session grid the tested bars are stamped on: the exchange's, when
+    they are Angel One's; the clock's otherwise. The live engine reads its
+    higher timeframes on the same grid (`analysis/engine.py`)."""
+    if _data_source(request, history) != "angelone":
+        return None
+    return sessions.bar_grid(get_instrument(request.symbol.upper()).asset_class)
+
+
 async def _prepare(request: BacktestRequest, df: pd.DataFrame,
                    history: Optional[History] = None) -> Prepared:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
@@ -473,7 +491,7 @@ async def _prepare(request: BacktestRequest, df: pd.DataFrame,
     signals = await asyncio.to_thread(
         replay.signals, symbol, timeframe, df, higher, instrument,
         range(start, len(df)), balance=request.starting_balance,
-        risk_pct=request.risk_pct)
+        risk_pct=request.risk_pct, grid=_bar_grid(request, history))
     return prepare(df, instrument, timeframe, signals, request.cost_profile)
 
 
@@ -532,8 +550,7 @@ async def run_backtest(request: BacktestRequest,
     result.data_source = _data_source(request, history)
     if df is None or len(df) < WARMUP + 50:
         result.notes.append(
-            "Not enough history to backtest ({} bars, need {})".format(
-                0 if df is None else len(df), WARMUP + 50))
+            _too_little(request, 0 if df is None else len(df), WARMUP + 50))
         return result
 
     started = time.perf_counter()

@@ -1,24 +1,13 @@
-"""FX session clock — drives liquidity weighting, synthetic volume and the UI."""
+"""Exchange hours: when each Indian segment is open, and the grid its bars
+sit on. Backs `is_market_open`, the live candle store and the market clock."""
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from ..schemas.market import MarketClock, MarketSession
-
-# name -> (open_hour_utc, close_hour_utc, liquidity weight)
-SESSIONS: Dict[str, Tuple[int, int, float]] = {
-    "sydney": (21, 6, 0.55),
-    "tokyo": (0, 9, 0.75),
-    "london": (7, 16, 1.25),
-    "newyork": (12, 21, 1.20),
-}
-
-
-def _in_window(hour: int, start: int, end: int) -> bool:
-    return start <= hour < end if start < end else (hour >= start or hour < end)
-
 
 #: Indian exchange hours in UTC (IST is UTC+5:30). Weekdays only.
 #: CDS currency futures 09:00-17:00 IST, NSE equity/F&O 09:15-15:30 IST,
@@ -36,6 +25,73 @@ def session_key(asset_class: str) -> str:
     return "equity" if asset_class == "stock" else asset_class
 
 
+#: India has no daylight saving, so its clock is a fixed distance from UTC.
+IST_OFFSET_SECONDS = 19_800
+DAY_SECONDS, WEEK_SECONDS = 86_400, 604_800
+
+
+@dataclass(frozen=True)
+class BarGrid:
+    """Where an exchange's bars open.
+
+    A market that never shuts has one rule: a bar opens on a multiple of its
+    length since the epoch. An exchange has a session, and its bars are
+    counted from the session's open — the NSE's hourly bars open at 09:15,
+    10:15 … local time, none of them "on the hour" in UTC — while its daily
+    bars are stamped at local midnight, which for India is 18:30 UTC the day
+    before. A live bar has to be opened where the venue's own history puts
+    it, or the two are different bars with the same name.
+    """
+    utc_offset: int
+    #: Seconds after local midnight.
+    open: int
+    close: int
+
+    def local_midnight(self, ts: float) -> int:
+        return ((int(ts) + self.utc_offset) // DAY_SECONDS) * DAY_SECONDS - self.utc_offset
+
+    def in_session(self, ts: float) -> bool:
+        """Whether the exchange's regular session is open at this time of
+        day. Says nothing of weekends or holidays: a tick that shows no
+        trading opens no bar whatever the clock says (`CandleSeries`)."""
+        return self.open <= int(ts) - self.local_midnight(ts) < self.close
+
+    def bucket(self, ts: float, tf_seconds: int) -> int:
+        """The open time of the bar of this length that `ts` falls in."""
+        midnight = self.local_midnight(ts)
+        if tf_seconds >= WEEK_SECONDS:
+            # Monday is 0; the epoch was a Thursday.
+            weekday = ((midnight + self.utc_offset) // DAY_SECONDS + 3) % 7
+            return midnight - weekday * DAY_SECONDS
+        if tf_seconds >= DAY_SECONDS:
+            return midnight
+        start = midnight + self.open
+        return start + ((int(ts) - start) // tf_seconds) * tf_seconds
+
+    def bar_end(self, open_time: float, tf_seconds: int) -> int:
+        """When the bar that opened at `open_time` is complete: its length
+        after it opened, or the close of the session if that comes first —
+        the NSE's last hourly bar is fifteen minutes long, and a daily bar
+        is finished at 15:30, not at the next midnight."""
+        midnight = self.local_midnight(open_time)
+        if tf_seconds >= WEEK_SECONDS:
+            return midnight + 4 * DAY_SECONDS + self.close      # Friday's close
+        if tf_seconds >= DAY_SECONDS:
+            return midnight + self.close
+        return min(int(open_time) + tf_seconds, midnight + self.close)
+
+
+def bar_grid(asset_class: str) -> Optional[BarGrid]:
+    """The grid for an Indian exchange segment, or None for a market that is
+    not one — which keeps the plain clock grid."""
+    hours = INDIA_HOURS.get(session_key(asset_class))
+    if hours is None:
+        return None
+    start, end = hours
+    return BarGrid(IST_OFFSET_SECONDS, int(round(start * 3600)) + IST_OFFSET_SECONDS,
+                   int(round(end * 3600)) + IST_OFFSET_SECONDS)
+
+
 def minutes_to_close(ts: float, asset_class: str) -> Optional[float]:
     """Minutes until this segment's session ends, for an Indian exchange
     instrument while its market is open. None otherwise — a market that never
@@ -49,14 +105,11 @@ def minutes_to_close(ts: float, asset_class: str) -> Optional[float]:
 
 
 def is_market_open(ts: float, asset_class: str = "fx") -> bool:
-    """Crypto never closes. FX/metals close Fri 21:00 UTC → Sun 21:00 UTC.
-
-    Indian exchange-traded instruments follow their own weekday sessions —
-    modelling them as 24/5 would put candles where no trading happened.
+    """Indian exchange-traded instruments follow their own weekday sessions,
+    by the clock — a holiday is not known here. Anything that is not an
+    exchange product (nothing the application lists; test fixtures only) is
+    treated as a market shut from Friday 21:00 UTC to Sunday 21:00 UTC.
     """
-    if asset_class == "crypto":
-        return True
-
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     weekday, hour = dt.weekday(), dt.hour  # Monday = 0
 
@@ -76,79 +129,65 @@ def is_market_open(ts: float, asset_class: str = "fx") -> bool:
     return True
 
 
-def liquidity_factor(ts: float, asset_class: str = "fx") -> float:
-    """Relative activity multiplier at `ts`; 1.0 is an average hour."""
-    if asset_class == "crypto":
-        hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
-        # Crypto is 24/7 but still peaks with US/EU hours.
-        return 0.85 + 0.35 * (1.0 if 12 <= hour < 22 else 0.35)
-    if not is_market_open(ts, asset_class):
-        return 0.05
+#: The segments Angel One trades, as the clock names them.
+SEGMENTS: Tuple[Tuple[str, str], ...] = (
+    ("NSE", "equity"), ("CDS", "currency_fut"), ("MCX", "commodity"))
 
-    if asset_class in INDIA_HOURS:
-        # Indian volume clusters at the open and again into the close.
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        start, end = INDIA_HOURS[asset_class]
-        clock = dt.hour + dt.minute / 60.0
-        progress = (clock - start) / max(end - start, 1e-6)
-        return 0.7 + 0.6 * (1.0 - abs(progress - 0.5) * 2) ** 0.5 + (
-            0.4 if progress < 0.12 or progress > 0.88 else 0.0)
+#: Minutes after the open and before the close in which an exchange's volume
+#: is concentrated — the two ends of the day's U.
+BUSY_MINUTES = 30
 
-    hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
-    factor = 0.35
-    for _, (start, end, weight) in SESSIONS.items():
-        if _in_window(hour, start, end):
-            factor += weight * 0.5
-    if 12 <= hour < 16:      # London / New York overlap
-        factor *= 1.25
-    return max(0.15, min(2.2, factor))
+CLOCK_BASIS = ("Exchange hours by the clock, Monday to Friday. Holidays and special "
+               "sessions are not known to it: on a holiday it says open, and nothing trades.")
 
 
-def active_sessions(ts: float) -> List[str]:
-    hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
-    return [
-        name for name, (start, end, _) in SESSIONS.items()
-        if _in_window(hour, start, end)
-    ]
+def market_clock(ts: Optional[float] = None, asset_class: Optional[str] = None) -> MarketClock:
+    """Which Indian exchange segments are open, by the clock.
 
-
-def market_clock(ts: float = None) -> MarketClock:
+    `asset_class` names the segment the caller cares about; the active
+    session and the liquidity reading are then that segment's alone.
+    Otherwise they are the NSE's, the segment almost everything here trades
+    on. (This was a forex clock — Sydney, Tokyo, London, New York — and the
+    analyst was being told which of those was open while it read an NSE
+    stock.)
+    """
     ts = ts if ts is not None else time.time()
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    hour = dt.hour
-    open_now = is_market_open(ts, "fx")
+    now = datetime.fromtimestamp(ts, tz=timezone.utc)
+    local = datetime.fromtimestamp(ts + IST_OFFSET_SECONDS, tz=timezone.utc)
 
     sessions: List[MarketSession] = []
-    for name, (start, end, _) in SESSIONS.items():
-        is_open = open_now and _in_window(hour, start, end)
-        if is_open:
-            closes = (end - hour) % 24
-            sessions.append(MarketSession(
-                name=name, open=True,
-                closes_in_minutes=int(closes * 60 - dt.minute),
-            ))
-        else:
-            opens = (start - hour) % 24
-            sessions.append(MarketSession(
-                name=name, open=False,
-                opens_in_minutes=int(opens * 60 - dt.minute),
-            ))
+    for name, key in SEGMENTS:
+        grid = bar_grid(key)
+        if is_market_open(ts, key):
+            left = int((grid.local_midnight(ts) + grid.close - ts) // 60)
+            sessions.append(MarketSession(name=name, open=True, closes_in_minutes=left))
+            continue
+        # The next weekday open: today's if it is still ahead, else the next.
+        midnight, opens = grid.local_midnight(ts), None
+        for ahead in range(8):
+            candidate = midnight + ahead * DAY_SECONDS + grid.open
+            weekday = ((candidate + IST_OFFSET_SECONDS) // DAY_SECONDS + 3) % 7
+            if candidate > ts and weekday < 5:
+                opens = int((candidate - ts) // 60)
+                break
+        sessions.append(MarketSession(name=name, open=False, opens_in_minutes=opens))
 
-    live = [s.name for s in sessions if s.open]
-    if not open_now:
+    wanted = session_key(asset_class) if asset_class else "equity"
+    by_key = {key: session for (_, key), session in zip(SEGMENTS, sessions)}
+    focus = by_key.get(wanted)
+    if focus is None or not focus.open:
         regime, active = "closed", "closed"
-    elif 12 <= hour < 16:
-        regime, active = "overlap", "london/newyork"
-    elif len(live) >= 2:
-        regime, active = "high", "/".join(live)
-    elif live:
-        regime, active = "normal", live[0]
     else:
-        regime, active = "thin", "interbank"
+        grid = bar_grid(wanted)
+        since_open = (ts - (grid.local_midnight(ts) + grid.open)) / 60.0
+        busy = since_open < BUSY_MINUTES or (focus.closes_in_minutes or 0) < BUSY_MINUTES
+        regime, active = ("high" if busy else "normal"), focus.name
 
     return MarketClock(
-        utc_time=dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        utc_time=now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        ist_time=local.strftime("%Y-%m-%d %H:%M:%S IST"),
         sessions=sessions,
         active_session=active,
         liquidity_regime=regime,
+        basis=CLOCK_BASIS,
     )

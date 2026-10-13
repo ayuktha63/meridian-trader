@@ -1,0 +1,394 @@
+{
+  "body": {
+    "account": {
+      "compounding": false,
+      "equity": 100000.0,
+      "leverage": 1.0,
+      "max_notional": null,
+      "product": "intraday",
+      "risk_fraction": 0.005,
+      "scenario": "conservative"
+    },
+    "audit_samples": 24,
+    "cost_multiples": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "cost_scenario_for_eligibility": "conservative",
+    "entry": "next bar's open, market order",
+    "limitations": [
+      "The universe is today's Nifty 50 members: stocks that survived and grew into the index. Every result on their past is flattered by that; there is no membership history to correct it.",
+      "Two years of 15-minute history were fetched. The research stretch is under nine months of one market's weather.",
+      "Spread and slippage are assumed (conservative scenario), not measured. No fill has ever been observed.",
+      "Positions are flat by the 15:00 bar's close; the live engine squares off 20 minutes before 15:30. Intraday leverage is not assumed: the account is sized at 1x.",
+      "Trades are sized against a fixed Rs 1,00,000 and do not compound.",
+      "Angel One's 15-minute history carries flat, zero-volume closing bars on some days (docs/research/ANGEL_ONE_DATA_QUALITY.md); VWAP uses volume, so those days are noisy.",
+      "Adjusted prices: a stock that has since split looks cheaper in its past than it was."
+    ],
+    "not_built": {
+      "cross_sectional_momentum": "Ranks stocks against each other at a timestamp; the per-stock Strategy interface cannot express it, and it needs a point-in-time universe the data does not have (the universe is today's index members).",
+      "daily_mean_reversion": "Daily bars on delivery; a separate study (delivery costs and a different holding period), not started."
+    },
+    "other_equities_reported": [
+      50000.0,
+      500000.0
+    ],
+    "protocol_version": "1",
+    "random_draws": 200,
+    "session": {
+      "flat_by": "15:00 bar close",
+      "last_entry": "13:30"
+    },
+    "strategies": [
+      {
+        "entry_rule": "The first bar after the opening range (`or_bars` bars from 09:15) to close above its high (below its low), before 13:30: enter at the next open.",
+        "exit_rule": "Stop at the far side of the range; target `rr` times that risk; out at the close of the 15:00 bar. One trade a day.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than entries at random bars with the same stops, targets and holding times.",
+        "grid": [
+          {
+            "or_bars": 2.0,
+            "rr": 1.5
+          },
+          {
+            "or_bars": 2.0,
+            "rr": 2.5
+          },
+          {
+            "or_bars": 4.0,
+            "rr": 1.5
+          },
+          {
+            "or_bars": 4.0,
+            "rr": 2.5
+          }
+        ],
+        "hypothesis": "The first minutes of the session set a range; a close beyond it, the first of the day, starts a move that carries.",
+        "name": "orb15"
+      },
+      {
+        "entry_rule": "Close beyond the previous N bars' high (low), with yesterday's close above (below) the EMA(20) of daily closes: enter at the next open.",
+        "exit_rule": "Stop k ATRs away, trailing k ATRs behind the best price; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random entries taken in the same direction.",
+        "grid": [
+          {
+            "k": 1.5,
+            "n": 16.0,
+            "vol_pct": 0.0
+          },
+          {
+            "k": 2.5,
+            "n": 16.0,
+            "vol_pct": 0.0
+          },
+          {
+            "k": 1.5,
+            "n": 32.0,
+            "vol_pct": 0.0
+          },
+          {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.0
+          }
+        ],
+        "hypothesis": "With the daily trend, a break of the last N bars' extreme continues further than it reverses.",
+        "name": "trend15"
+      },
+      {
+        "entry_rule": "Close beyond the previous N bars' high (low), with yesterday's close above (below) the EMA(20) of daily closes: enter at the next open. ATR/close must rank at or above the median of the last 500 bars.",
+        "exit_rule": "Stop k ATRs away, trailing k ATRs behind the best price; out at 15:15.",
+        "falsified_by": "Not better than `trend15` at the same N and k on the same stretch.",
+        "grid": [
+          {
+            "k": 1.5,
+            "n": 16.0,
+            "vol_pct": 0.5
+          },
+          {
+            "k": 2.5,
+            "n": 16.0,
+            "vol_pct": 0.5
+          },
+          {
+            "k": 1.5,
+            "n": 32.0,
+            "vol_pct": 0.5
+          },
+          {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.5
+          }
+        ],
+        "hypothesis": "The same trend rule, taken only when volatility is above its own median of the last 500 bars: a predeclared filter, tested beside the unfiltered rule rather than chosen from it.",
+        "name": "trend15_vol"
+      },
+      {
+        "entry_rule": "The Supertrend direction changes at a bar's close (ADX(14) at least `adx_min`): enter at the next open.",
+        "exit_rule": "Stop at the band's level at the flip; no target; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs; or the ADX filter not improving it.",
+        "grid": [
+          {
+            "adx_min": 0.0,
+            "mult": 2.0
+          },
+          {
+            "adx_min": 20.0,
+            "mult": 2.0
+          },
+          {
+            "adx_min": 0.0,
+            "mult": 3.0
+          },
+          {
+            "adx_min": 20.0,
+            "mult": 3.0
+          }
+        ],
+        "hypothesis": "A close through the Supertrend band (ATR 10) flips the trend and the new direction persists.",
+        "name": "supertrend15"
+      },
+      {
+        "entry_rule": "At least 5 bars into the session, ADX(14) at most `adx_max`, close `z` ATRs below (above) session VWAP: enter long (short) at the next open.",
+        "exit_rule": "Target the VWAP as it stood at the signal; stop 1.5 ATR beyond entry; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random.",
+        "grid": [
+          {
+            "adx_max": 25.0,
+            "z": 1.5
+          },
+          {
+            "adx_max": 35.0,
+            "z": 1.5
+          },
+          {
+            "adx_max": 25.0,
+            "z": 2.5
+          },
+          {
+            "adx_max": 35.0,
+            "z": 2.5
+          }
+        ],
+        "hypothesis": "Away from a trend, price stretched `z` ATRs from the session VWAP returns to it.",
+        "name": "vwap_reversion15"
+      },
+      {
+        "entry_rule": "Band width in its lowest `pct` of the last 200 bars on the previous bar, and a close beyond the previous 20-bar extreme: enter at the next open.",
+        "exit_rule": "Stop k ATRs away, trailing; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs; not better than `channel15`.",
+        "grid": [
+          {
+            "k": 1.5,
+            "pct": 0.15
+          },
+          {
+            "k": 2.5,
+            "pct": 0.15
+          },
+          {
+            "k": 1.5,
+            "pct": 0.3
+          },
+          {
+            "k": 2.5,
+            "pct": 0.3
+          }
+        ],
+        "hypothesis": "A break out of an unusually narrow Bollinger band starts a move larger than the range before it.",
+        "name": "bb_squeeze15"
+      },
+      {
+        "entry_rule": "RSI(14) crosses up through `level` (down through 100 minus it) with the close above (below) its 50-bar EMA: enter at the next open.",
+        "exit_rule": "Stop k ATRs away, trailing; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random.",
+        "grid": [
+          {
+            "k": 1.5,
+            "level": 55.0
+          },
+          {
+            "k": 2.5,
+            "level": 55.0
+          },
+          {
+            "k": 1.5,
+            "level": 60.0
+          },
+          {
+            "k": 2.5,
+            "level": 60.0
+          }
+        ],
+        "hypothesis": "RSI(14) crossing up through a high level, above the 50-bar EMA, is momentum that persists \u2014 not an overbought reading to sell.",
+        "name": "rsi_momentum15"
+      },
+      {
+        "entry_rule": "Close beyond the previous N bars' extreme: enter at the next open.",
+        "exit_rule": "Stop k ATRs away, trailing; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random.",
+        "grid": [
+          {
+            "k": 1.5,
+            "n": 20.0
+          },
+          {
+            "k": 2.5,
+            "n": 20.0
+          },
+          {
+            "k": 1.5,
+            "n": 40.0
+          },
+          {
+            "k": 2.5,
+            "n": 40.0
+          }
+        ],
+        "hypothesis": "A close beyond the highest high (lowest low) of the last N bars \u2014 the window shifted so the bar's own extreme is not in it \u2014 continues.",
+        "name": "channel15"
+      },
+      {
+        "entry_rule": "Today's open at least `gap` away from yesterday's close, and the close of the second bar (09:30) on the gap's side of the open: enter at the next open.",
+        "exit_rule": "Stop beyond the extreme of the first two bars; target `rr` times that risk; out at 15:15. One trade a day.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random.",
+        "grid": [
+          {
+            "gap": 0.003,
+            "rr": 1.5
+          },
+          {
+            "gap": 0.003,
+            "rr": 2.5
+          },
+          {
+            "gap": 0.007,
+            "rr": 1.5
+          },
+          {
+            "gap": 0.007,
+            "rr": 2.5
+          }
+        ],
+        "hypothesis": "A gap of at least `gap` that the first half hour confirms \u2014 price still on the gap's side of the open \u2014 keeps going.",
+        "name": "gap_trend15"
+      },
+      {
+        "entry_rule": "Gap at least `gap`, and at the close of bar `decide` (0 is 09:15, 1 is 09:30) price is back on the prior-close side of the open: enter against the gap at the next open.",
+        "exit_rule": "Target yesterday's close; stop beyond the day's extreme so far; out at 15:15.",
+        "falsified_by": "Net expectancy not above zero after costs, or no better than random; and not different from `gap_trend15` in the opposite direction.",
+        "grid": [
+          {
+            "decide": 0.0,
+            "gap": 0.004
+          },
+          {
+            "decide": 1.0,
+            "gap": 0.004
+          },
+          {
+            "decide": 0.0,
+            "gap": 0.008
+          },
+          {
+            "decide": 1.0,
+            "gap": 0.008
+          }
+        ],
+        "hypothesis": "A gap of at least `gap` whose first bars close back toward yesterday's close is being faded, and fills.",
+        "name": "gap_reversal15"
+      }
+    ],
+    "stretches": {
+      "holdout": [
+        1772303400.0,
+        1791829800.0
+      ],
+      "research": [
+        1728844200.0,
+        1751308200.0
+      ],
+      "validation": [
+        1751308200.0,
+        1772303400.0
+      ]
+    },
+    "stretches_text": {
+      "holdout": [
+        "2026-03-01",
+        "2026-10-13"
+      ],
+      "research": [
+        "2024-10-14",
+        "2025-07-01"
+      ],
+      "validation": [
+        "2025-07-01",
+        "2026-03-01"
+      ]
+    },
+    "threshold_source": "app/research/study.py (PROTOCOL_VERSION 2), unchanged",
+    "thresholds": {
+      "holdout": {
+        "interval_level": 0.9,
+        "market_min_trades": 20,
+        "min_trades": 100
+      },
+      "research": {
+        "cost_stress": 1.5,
+        "deflated_sharpe": 0.95,
+        "interval_level": 0.9,
+        "market_min_trades": 20,
+        "markets_positive": 0.6,
+        "min_trades": 200,
+        "neighbours_positive": 0.6,
+        "random_draws": 200,
+        "random_p_value": 0.05
+      },
+      "validation": {
+        "alpha": 0.05,
+        "interval_level": 0.9,
+        "market_min_trades": 10,
+        "markets_positive": 0.5,
+        "min_trades": 100
+      }
+    },
+    "timeframe": "15m",
+    "trials": 40,
+    "universe": {
+      "id": "nifty50",
+      "members": [
+        "HDFCBANK",
+        "BSE",
+        "RELIANCE",
+        "ICICIBANK",
+        "BHARTIARTL",
+        "INFY",
+        "ETERNAL",
+        "SBIN",
+        "BAJFINANCE",
+        "AXISBANK",
+        "TCS",
+        "M&M",
+        "KOTAKBANK",
+        "LT",
+        "MARUTI",
+        "SHRIRAMFIN",
+        "ADANIENT",
+        "TATASTEEL",
+        "ITC",
+        "BEL",
+        "ADANIPORTS",
+        "HINDALCO",
+        "TECHM",
+        "JIOFIN",
+        "TITAN"
+      ],
+      "membership": "current",
+      "survivorship_free": false
+    }
+  },
+  "frozen_at": 1791873026.546255,
+  "sha256": "795454e2c33543278776e9846ae64521e760f36d3c6e37510d752de67bbf8b4b"
+}

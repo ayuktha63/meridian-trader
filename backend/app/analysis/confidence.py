@@ -389,11 +389,15 @@ def decide(breakdown: ConfidenceBreakdown, mtf: Optional[MTFReport] = None) -> D
 
 
 def probability(breakdown: ConfidenceBreakdown, risk_reward: Optional[float] = None) -> float:
-    """Calibrated-ish hit probability.
+    """A heuristic score on a 30–72 scale. Not a probability.
 
-    Deliberately conservative: mapped into 38–72% because no discretionary
-    setup on a liquid FX pair reliably wins 90% of the time, and presenting a
-    number like that would be dishonest.
+    It is the confidence score squeezed into a narrower range and nudged by
+    the reward-to-risk ratio. Nothing has ever fitted it to outcomes, and
+    where it was checked it carried none: over 778 replayed setups about
+    three in ten won whether the score was under 50 or over 70 (Brier 0.343
+    against 0.210 for always guessing the base rate —
+    docs/research/BASELINE.md §7). The field is still called `probability`
+    for the stored records' sake; the interface must not call it one.
     """
     base = 38.0 + breakdown.final_confidence * 0.34
     if risk_reward and risk_reward > 0:

@@ -16,6 +16,10 @@ class AngelStatus(BaseModel):
     connected: bool
     session_age_seconds: Optional[float] = None
     last_error: Optional[str] = None
+    #: Logins that have failed in a row, and how long until the next
+    #: automatic one — None when one may be made now.
+    failed_logins: int = 0
+    login_retry_in_seconds: Optional[float] = None
     #: Angel One's own available-cash figure, set only once trading is LIVE,
     #: the session is connected, and the wallet read actually succeeded —
     #: never a stand-in for it, so the UI can tell "your money" from "not yet known".

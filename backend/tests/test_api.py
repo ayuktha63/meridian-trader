@@ -17,7 +17,7 @@ def test_health_reports_subsystems(client):
     assert body["status"] == "ok"
     assert body["database"] in ("sqlite", "postgres")
     assert body["cache"] in ("memory", "redis")
-    assert "EURUSD" in body["symbols"]
+    assert "NIFTY" in body["symbols"]
     assert "analyst" in body
     assert "risk-free" in body["disclaimer"]
 
@@ -25,10 +25,12 @@ def test_health_reports_subsystems(client):
 def test_symbol_and_timeframe_catalogue(client):
     symbols = client.get("/api/market/symbols").json()
     codes = {s["symbol"] for s in symbols}
-    assert {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-            "USDCAD", "XAUUSD", "BTCUSD", "ETHUSD"} <= codes
-    jpy = next(s for s in symbols if s["symbol"] == "USDJPY")
-    assert jpy["pip_size"] == 0.01 and jpy["digits"] == 3
+    assert {"USDINR", "EURINR", "GBPINR", "JPYINR", "NIFTY", "BANKNIFTY",
+            "MCXGOLD", "MCXSILVER", "MCXCRUDE", "RELIANCE"} <= codes
+    usdinr = next(s for s in symbols if s["symbol"] == "USDINR")
+    assert usdinr["pip_size"] == 0.0025 and usdinr["digits"] == 4
+    reliance = next(s for s in symbols if s["symbol"] == "RELIANCE")
+    assert reliance["contract_size"] == 500, "the lot the universe was given, not a table's"
 
     timeframes = {t["code"] for t in client.get("/api/market/timeframes").json()}
     assert {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"} <= timeframes
@@ -47,6 +49,29 @@ def test_candles_are_ordered_and_consistent(client):
         assert candle["low"] <= min(candle["open"], candle["close"])
 
 
+def test_a_chart_with_no_broker_session_is_empty_and_says_why(client, monkeypatch):
+    from app.data import feed as feed_module
+    from app.data.store import store
+
+    monkeypatch.setattr(feed_module.feed, "providers", {})
+    monkeypatch.setattr(feed_module, "build_providers", dict)
+    store.series("MCXCRUDE", "30m").replace([])
+    response = client.get("/api/market/candles",
+                          params={"symbol": "MCXCRUDE", "timeframe": "30m"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "No data for MCXCRUDE 30m: Angel One is not connected."
+
+
+def test_settings_name_angel_one_as_the_only_source(client):
+    body = client.get("/api/settings").json()
+    assert [provider["id"] for provider in body["providers"]] == ["angelone"]
+    assert body["providers"][0]["ready"] is False, "no session in a test"
+    assert not {"market_provider", "hybrid_crypto_live", "twelvedata_api_key",
+                "zerodha_api_key"} & set(body["settings"])
+    listed = {row["symbol"]: row for row in body["instruments"]}
+    assert listed["RELIANCE"]["lot_size"] == 500 and listed["NIFTY"]["venue"] == "NFO"
+
+
 def test_unknown_symbol_is_404(client):
     assert client.get("/api/market/candles",
                       params={"symbol": "NOPE", "timeframe": "15m"}).status_code == 404
@@ -55,8 +80,9 @@ def test_unknown_symbol_is_404(client):
 def test_market_clock(client):
     body = client.get("/api/market/clock").json()
     assert "utc_time" in body
-    assert body["liquidity_regime"] in ("thin", "normal", "high", "overlap", "closed")
-    assert len(body["sessions"]) == 4
+    assert body["liquidity_regime"] in ("closed", "normal", "high")
+    assert [session["name"] for session in body["sessions"]] == ["NSE", "CDS", "MCX"]
+    assert body["ist_time"].endswith("IST") and "Holidays" in body["basis"]
 
 
 def test_drawing_lifecycle_and_analytics(client):
@@ -123,18 +149,18 @@ def test_analysis_returns_full_payload(client):
 
 def test_analysis_is_cached_between_identical_requests(client):
     first = client.post("/api/analysis/run", json={
-        "symbol": "GBPUSD", "timeframe": "1h",
+        "symbol": "NIFTY", "timeframe": "1h",
         "include_ai": False, "force_refresh": True}).json()
     second = client.post("/api/analysis/run", json={
-        "symbol": "GBPUSD", "timeframe": "1h",
+        "symbol": "NIFTY", "timeframe": "1h",
         "include_ai": False, "force_refresh": False}).json()
     assert first["id"] == second["id"]
 
 
 def test_watchlist_covers_requested_symbols(client):
     body = client.get("/api/analysis/watchlist",
-                      params={"timeframe": "1h", "symbols": "EURUSD,BTCUSD"}).json()
-    assert {row["symbol"] for row in body} == {"EURUSD", "BTCUSD"}
+                      params={"timeframe": "1h", "symbols": "TATAMOTORS,USDINR"}).json()
+    assert {row["symbol"] for row in body} == {"TATAMOTORS", "USDINR"}
     for row in body:
         assert row["bias"] in ("bullish", "bearish", "neutral")
 

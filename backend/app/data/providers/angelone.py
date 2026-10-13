@@ -1,19 +1,15 @@
-"""Angel One SmartAPI market data — real NSE/BSE/NFO/CDS/MCX prices from the
-same broker connection already used for live execution.
+"""Angel One SmartAPI market data — NSE/BSE/NFO/CDS/MCX prices from the same
+broker connection that places the orders. It is the only market-data source
+there is: it needs no subscription of its own, it only exists while that
+session is connected, and nothing stands in for it when it has no data.
 
-Two things distinguish this from Zerodha's provider:
-
-* **No separate subscription.** This reuses the Angel One session set up in
-  Settings → Broker (see TRADING.md §2a) — no extra signup, no paid plan.
-  It only ever activates once that session is connected.
-* **Polling, not a websocket.** Angel One's SmartWebSocketV2 would give
-  tighter latency, but it needs its own reconnect/threading machinery on top
-  of what §2a already built. Polling `getMarketData` (a single batched
-  request for every symbol at once) every few seconds is simpler, well
-  within Angel One's REST rate limits for a normal watchlist, and gives the
-  same "live, not simulated" guarantee this platform cares about — the
-  number on screen is Angel One's actual last-traded price, just refreshed
-  every few seconds instead of every tick.
+**Polling, not a websocket.** Angel One's SmartWebSocketV2 would give
+tighter latency, but it needs its own reconnect/threading machinery on top
+of what TRADING.md §2a already built. Polling `getMarketData` (a single
+batched request for every symbol at once) every few seconds is simpler and
+well within Angel One's REST rate limits for a normal watchlist. The number
+on screen is Angel One's actual last-traded price, refreshed every few
+seconds instead of every tick.
 """
 from __future__ import annotations
 
@@ -21,12 +17,13 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from ...broker.angelone.auth import angel_auth
+from ...broker.angelone.auth import angel_auth, is_auth_failure
 from ...broker.angelone.instruments import InstrumentUnsupported, angel_instruments
 from ...broker.angelone.orders import IST
 from ...instruments import get_instrument, get_timeframe
+from ..sessions import BarGrid, bar_grid
 from .base import MarketDataProvider, ProviderTick, TickHandler, resample_rows
 
 log = logging.getLogger("meridian.angelone.marketdata")
@@ -58,6 +55,19 @@ WINDOW_PAUSE_SECONDS = 0.4
 
 POLL_SECONDS = 3.0
 
+#: Segments whose candles count volume in contracts while the quote's running
+#: total counts units. Measured on NIFTY27OCT26FUT (lot 65) on 13 October
+#: 2026: the history's 15-minute bars held 5,085 and 7,872, and the two bars
+#: built from quotes straight after them 79,930 and 63,830 — every live bar
+#: an apparent volume spike. Only NFO is listed because only NFO was
+#: measured; MCX and CDS are not known either way.
+VOLUME_IN_LOTS_EXCHANGES = frozenset({"NFO"})
+
+#: Half the spread assumed, as a fraction of price, for a quote that comes
+#: with no order book — an index, or any market outside its hours. Not zero:
+#: a spread of nothing would make every trade look free to the cost model.
+ASSUMED_HALF_SPREAD = 0.00025
+
 
 class AngelOneMarketDataProvider(MarketDataProvider):
     name = "angelone"
@@ -65,18 +75,32 @@ class AngelOneMarketDataProvider(MarketDataProvider):
 
     def __init__(self) -> None:
         self._last_error: Optional[str] = None
+        #: The day's traded volume as last reported, per symbol.
+        self._day_volume: Dict[str, float] = {}
+
+    async def prepare(self) -> None:
+        """Load the scrip master, which is what says which stocks exist."""
+        await angel_instruments.ensure_loaded()
 
     def supports(self, symbol: str) -> bool:
         try:
             instrument = get_instrument(symbol)
         except KeyError:
             return False
-        return (instrument.venue != "crypto" and instrument.tradable_in_india
-                and angel_auth.connected)
+        return instrument.tradable_in_india and angel_auth.connected
 
     @property
     def last_error(self) -> Optional[str]:
         return self._last_error
+
+    def bar_grid(self, symbol: str) -> Optional[BarGrid]:
+        """Angel One stamps a bar by its exchange's session: intraday bars
+        from the open (09:15, 10:15 … on the NSE), a daily bar at local
+        midnight. Bars built from its quotes are opened on the same grid."""
+        try:
+            return bar_grid(get_instrument(symbol).asset_class)
+        except KeyError:
+            return None
 
     # ── history ───────────────────────────────────────────────
 
@@ -87,7 +111,7 @@ class AngelOneMarketDataProvider(MarketDataProvider):
             target = get_timeframe(timeframe).seconds
             factor = target // get_timeframe(source).seconds
             fine = await self.history(symbol, source, bars * factor)
-            return resample_rows(fine, target)[-bars:]
+            return resample_rows(fine, target, self.bar_grid(symbol))[-bars:]
 
         interval = INTERVALS.get(timeframe)
         if interval is None:
@@ -142,6 +166,7 @@ class AngelOneMarketDataProvider(MarketDataProvider):
         if not response or not response.get("status"):
             self._last_error = (response or {}).get("message", "no data returned")
             log.debug("Angel One history for %s: %s", symbol, self._last_error)
+            self._drop_dead_session(response)
             return None
 
         rows: List[List[float]] = []
@@ -170,6 +195,7 @@ class AngelOneMarketDataProvider(MarketDataProvider):
     async def _poll_once(self, symbols: Sequence[str], handler: TickHandler) -> None:
         by_exchange: Dict[str, List[str]] = {}
         token_to_symbol: Dict[str, str] = {}
+        units_per_bar_unit: Dict[str, float] = {}
         for symbol in symbols:
             try:
                 match = await angel_instruments.resolve(symbol)
@@ -177,6 +203,8 @@ class AngelOneMarketDataProvider(MarketDataProvider):
                 continue
             by_exchange.setdefault(match.exchange, []).append(match.token)
             token_to_symbol[match.token] = symbol
+            lot = float(getattr(match, "lot_size", 1) or 1)
+            units_per_bar_unit[symbol] = lot if match.exchange in VOLUME_IN_LOTS_EXCHANGES else 1.0
 
         if not by_exchange:
             return
@@ -185,6 +213,7 @@ class AngelOneMarketDataProvider(MarketDataProvider):
         response = await asyncio.to_thread(client.getMarketData, "FULL", by_exchange)
         if not response or not response.get("status"):
             self._last_error = (response or {}).get("message", "no data returned")
+            self._drop_dead_session(response)
             return
         self._last_error = None
 
@@ -197,12 +226,51 @@ class AngelOneMarketDataProvider(MarketDataProvider):
                 ltp = float(row.get("ltp"))
             except (TypeError, ValueError):
                 continue
-            # This mode doesn't return a bid/ask — a tight synthetic spread
-            # keeps the rest of the platform's cost model from seeing a
-            # false zero-spread market, without inventing a real one.
-            half_spread = ltp * 0.00025
+            bid, ask = self._best_bid_ask(row, ltp)
+            # In the unit the venue's own candles count in, so a bar built
+            # from quotes can be read beside the ones before it.
+            traded = self._traded_since_last_poll(symbol, row.get("tradeVolume"))
             await handler(ProviderTick(
-                symbol=symbol, time=time.time(), price=ltp,
-                bid=ltp - half_spread, ask=ltp + half_spread,
-                volume=float(row.get("tradeVolume") or 0.0),
+                symbol=symbol, time=time.time(), price=ltp, bid=bid, ask=ask,
+                volume=traded / units_per_bar_unit.get(symbol, 1.0),
             ))
+
+    @staticmethod
+    def _drop_dead_session(response: object) -> None:
+        """A token the broker calls invalid is not used again: the session
+        is dropped, and the next request logs in (after whatever wait the
+        last failure left). Without this the poll went on presenting it."""
+        if is_auth_failure(response):
+            angel_auth.invalidate("Angel One no longer accepts the session token ({})."
+                                  .format((response or {}).get("message") or "no reason given"))
+
+    @staticmethod
+    def _best_bid_ask(row: dict, ltp: float) -> Tuple[float, float]:
+        """The top of Angel One's own order book. Where there is none to
+        read, a spread is assumed around the last trade and never left at
+        zero."""
+        depth = row.get("depth") or {}
+        try:
+            bid = float((depth.get("buy") or [{}])[0].get("price") or 0.0)
+            ask = float((depth.get("sell") or [{}])[0].get("price") or 0.0)
+        except (TypeError, ValueError, AttributeError, IndexError):
+            bid = ask = 0.0
+        if 0.0 < bid < ask:
+            return bid, ask
+        return ltp * (1.0 - ASSUMED_HALF_SPREAD), ltp * (1.0 + ASSUMED_HALF_SPREAD)
+
+    def _traded_since_last_poll(self, symbol: str, day_volume: object) -> float:
+        """`tradeVolume` is the day's running total, and the candle store adds
+        each tick's volume to the forming bar — passed through as it comes,
+        every poll would add the whole day again. What a tick carries is the
+        increase since the last one: nothing on the first sighting, and the
+        new total when the count has restarted for a new session."""
+        try:
+            total = float(day_volume or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        previous = self._day_volume.get(symbol)
+        self._day_volume[symbol] = total
+        if previous is None:
+            return 0.0
+        return total - previous if total >= previous else total

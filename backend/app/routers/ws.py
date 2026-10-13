@@ -356,6 +356,7 @@ async def _emit_paper_state(conn: Connection) -> None:
             closed = await paper_repo.list_trades(session, "closed", 200)
             price = feed.price(open_trade.symbol) if open_trade else None
             account = paper_repo.summarise(account, closed, open_trade, price)
+            account.blocked_reason = paper_repo.stranded(open_trade)
             conn.paper_trade = open_trade
         await conn.send({
             "type": "paper_state",
@@ -407,6 +408,15 @@ async def _auto_trade_entry(conn: Connection, result) -> None:
             quote.spread_pips if quote else None)
         if intent.action != "enter":
             conn.paper_status = intent.reason
+            return
+        if quote is None or quote.stale:
+            # A paper fill is a claim about what the market would have given.
+            # With no quote, or one from before the feed stopped or the
+            # market shut, there is nothing to make that claim from.
+            conn.paper_status = (
+                "No paper entry: there is no current quote for {} ({}).".format(
+                    symbol, "none received" if quote is None else
+                    "the last is {:.0f} s old".format(quote.age_seconds)))
             return
 
         trade = await paper_repo.open_trade(

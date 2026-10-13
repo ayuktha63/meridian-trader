@@ -26,11 +26,14 @@ log = logging.getLogger("meridian.feed")
 #: also the resolution of the exit alerts.
 QUOTE_PUBLISH_HZ = 4.0
 
-SYNTHETIC = "synthetic"
-#: A series standing in for an exchange that did not answer is tried again
-#: this often — not on every request, which would hammer a venue that is
-#: already struggling.
-REAL_SOURCE_RETRY_SECONDS = 60.0
+#: A quote older than this is not a price to act on. The poll is every three
+#: seconds, so this is six of them missed — the feed has stopped, the session
+#: has gone, or the market is shut.
+STALE_QUOTE_SECONDS = 20.0
+
+#: A series its source could not supply is asked for again this often — not
+#: on every request, which would hammer a venue that is already struggling.
+SOURCE_RETRY_SECONDS = 60.0
 
 
 class MarketFeed:
@@ -44,8 +47,8 @@ class MarketFeed:
         #: Series whose provider returned less than was asked for — as deep
         #: as that source goes.
         self._depth_reached: Set[Tuple[str, str]] = set()
-        #: When the real source for a series last failed to supply it.
-        self._real_source_failed: Dict[Tuple[str, str], float] = {}
+        #: When the source for a series last failed to supply it.
+        self._source_failed: Dict[Tuple[str, str], float] = {}
         self._last_quote_publish: Dict[str, float] = {}
         self._day_open: Dict[str, float] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -59,9 +62,15 @@ class MarketFeed:
         self._running = True
         self._loop = asyncio.get_running_loop()
         self.providers = build_providers()
-        # Only the default set is streamed at boot; the ~130 stocks
-        # hydrate on demand when the trader actually selects one.
-        symbols = symbols or DEFAULT_STREAM_SYMBOLS
+        for provider in self.providers.values():
+            try:
+                await provider.prepare()
+            except Exception as exc:  # noqa: BLE001 - it serves what it can without
+                log.warning("%s could not load its reference data: %s", provider.name, exc)
+        # Only the default set is streamed; every other stock hydrates on
+        # demand when the trader actually selects one. Read after `prepare`,
+        # which is what says which stocks there are.
+        symbols = symbols or list(DEFAULT_STREAM_SYMBOLS)
 
         assignments = provider_assignments(symbols, self.providers)
         log.info("provider assignments: %s", assignments)
@@ -81,12 +90,9 @@ class MarketFeed:
             )
 
     async def reload(self, reason: str = "settings changed") -> None:
-        """Rebuild providers and restart streaming after a settings change.
-
-        The candle store is cleared because bars from the simulator must never
-        be blended with real ones — a mixed series would silently corrupt every
-        downstream indicator.
-        """
+        """Rebuild providers and restart streaming after the broker session
+        changes. The candle store is cleared: bars held from before are not
+        kept under a connection that did not supply them."""
         log.info("reloading market feed (%s)", reason)
         await self.stop()
         store.clear()
@@ -94,7 +100,7 @@ class MarketFeed:
         self._day_open.clear()
         self._hydrate_locks.clear()
         self._depth_reached.clear()
-        self._real_source_failed.clear()
+        self._source_failed.clear()
         await self.start()
 
     async def stop(self) -> None:
@@ -158,47 +164,42 @@ class MarketFeed:
             # call would only hammer it for the same answer.
             enough = have >= min(wanted, 200)
             deeper = bars is not None and have < wanted and key not in self._depth_reached
-            provider = resolve_provider(symbol, self.providers or build_providers())
-            # Bars from the simulator standing in for a venue that did not
-            # answer: good enough to draw, never good enough to keep.
-            stand_in = have > 0 and series.source == SYNTHETIC and provider.name != SYNTHETIC
-            retry = stand_in and (time.time() - self._real_source_failed.get(key, 0.0)
-                                  >= REAL_SOURCE_RETRY_SECONDS)
-            if enough and not deeper and not retry:
+            if enough and not deeper:
                 return
-            if stand_in and not retry:
+            provider = resolve_provider(symbol, self.providers or build_providers())
+            if provider is None:
+                return          # nothing serves it: the series stays empty
+            if time.time() - self._source_failed.get(key, 0.0) < SOURCE_RETRY_SECONDS:
                 return
             rows = await provider.history(symbol, timeframe, wanted)
-            if rows:
-                self._real_source_failed.pop(key, None)
-                if len(rows) < wanted:
-                    self._depth_reached.add(key)
-                if len(rows) > have or stand_in:
-                    series.replace(rows, source=provider.name)
-                    self._seed_quote(symbol, series.last_close or 0.0)
+            if not rows:
+                # No bars are drawn in their place. The chart is empty until
+                # the venue answers, and it is asked again shortly.
+                self._source_failed[key] = time.time()
+                log.warning("%s returned no history for %s %s", provider.name,
+                            symbol, timeframe)
                 return
-            if provider.name == SYNTHETIC:
+            self._source_failed.pop(key, None)
+            if len(rows) < wanted:
                 self._depth_reached.add(key)
-                return
-            self._real_source_failed[key] = time.time()
-            if have == 0:
-                # Nothing to show at all. Simulated bars keep the chart alive,
-                # labelled as what they are; real quotes are not folded into
-                # them, and the venue is asked again shortly.
-                log.warning("%s returned no history for %s %s — showing SIMULATED "
-                            "bars until it does", provider.name, symbol, timeframe)
-                rows = await self.providers[SYNTHETIC].history(symbol, timeframe, wanted)
-                series.replace(rows, source=SYNTHETIC)
+            if len(rows) > have:
+                series.replace(rows, source=provider.name, grid=provider.bar_grid(symbol))
+                self._seed_quote(symbol, series.last_close or 0.0,
+                                 float(series.last_time or 0))
 
-    def _seed_quote(self, symbol: str, price: float) -> None:
+    def _seed_quote(self, symbol: str, price: float, seen_at: float = 0.0) -> None:
+        """A first quote from history's last close, until a real one arrives.
+        Stamped with the bar it was read from, not with now: a close taken
+        from history is not a quote that has just come in, and reads as
+        stale until one does."""
         if symbol in self.quotes or price <= 0:
             return
         inst = get_instrument(symbol)
         half = inst.from_pips(inst.typical_spread_pips) / 2
         self.quotes[symbol] = QuoteSnapshot(
             symbol=symbol, bid=price - half, ask=price + half, last=price,
-            spread_pips=inst.typical_spread_pips, updated_at=time.time(),
-            live=resolve_provider(symbol, self.providers).live if self.providers else False,
+            spread_pips=inst.typical_spread_pips, updated_at=seen_at,
+            live=self.is_live(symbol),
         )
 
     # ── tick handling ─────────────────────────────────────────
@@ -243,7 +244,7 @@ class MarketFeed:
             change_pct=round(change_pct, 3),
             day_high=day_high, day_low=day_low,
             updated_at=tick.time,
-            live=resolve_provider(symbol, self.providers).live,
+            live=self.is_live(symbol),
         )
         self.quotes[symbol] = quote
 
@@ -312,7 +313,20 @@ class MarketFeed:
     # ── accessors ─────────────────────────────────────────────
 
     def quote(self, symbol: str) -> Optional[QuoteSnapshot]:
-        return self.quotes.get(symbol.upper())
+        """The last quote, with how old it is as it is read."""
+        quote = self.quotes.get(symbol.upper())
+        if quote is None:
+            return None
+        age = max(0.0, time.time() - quote.updated_at)
+        return quote.model_copy(update={
+            "age_seconds": round(age, 1), "stale": age > STALE_QUOTE_SECONDS})
+
+    def fresh_quote(self, symbol: str) -> Optional[QuoteSnapshot]:
+        """The last quote if it is recent enough to act on, else None. What a
+        simulated fill is made at: a fill at a price from before the feed
+        stopped is not a fill anything could have got."""
+        quote = self.quote(symbol)
+        return quote if quote is not None and not quote.stale else None
 
     def price(self, symbol: str) -> Optional[float]:
         quote = self.quote(symbol)
@@ -322,15 +336,24 @@ class MarketFeed:
         return series.last_close
 
     def provider_for(self, symbol: str) -> str:
-        """The provider that *should* serve this symbol."""
-        if not self.providers:
-            return "synthetic"
-        return resolve_provider(symbol, self.providers).name
+        """The provider that serves this symbol, or "" when nothing does."""
+        provider = resolve_provider(symbol, self.providers)
+        return provider.name if provider is not None else ""
+
+    def is_live(self, symbol: str) -> bool:
+        provider = resolve_provider(symbol, self.providers)
+        return provider is not None and provider.live
+
+    def unsupplied(self) -> List[str]:
+        """Series a source was asked for and could not supply, and so are
+        empty: "SYMBOL:timeframe"."""
+        return sorted("{}:{}".format(symbol, timeframe)
+                      for symbol, timeframe in self._source_failed
+                      if not len(store.series(symbol, timeframe)))
 
     def source_of(self, symbol: str, timeframe: str) -> Optional[str]:
-        """Where the bars held for this series actually came from, or None if
-        nothing has been loaded. Not always `provider_for`: an exchange that
-        did not answer leaves simulated bars standing in for it."""
+        """Where the bars held for this series came from, or None if nothing
+        has been loaded."""
         if not store.has(symbol, timeframe):
             return None
         return store.series(symbol, timeframe).source
@@ -339,12 +362,15 @@ class MarketFeed:
         return {
             "running": self._running,
             "providers": sorted(self.providers.keys()),
-            "mode": settings.market_provider,
             "subscribers": len(self._subscribers),
             "watched": {"{}:{}".format(s, t): c
                         for (s, t), c in self._watch_counts.items() if c > 0},
             "series": {"{}:{}".format(s, t): len(store.series(s, t))
                        for (s, t) in store.keys()},
+            "stale_quotes": sorted(symbol for symbol in self.quotes
+                                   if (self.quote(symbol) or QuoteSnapshot(
+                                       symbol=symbol, bid=0, ask=0, last=0,
+                                       spread_pips=0)).stale),
         }
 
 

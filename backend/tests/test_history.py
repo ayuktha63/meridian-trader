@@ -10,10 +10,8 @@ import pytest
 
 from app.data.feed import MarketFeed
 from app.data.providers import angelone as angel_module
-from app.data.providers import coindcx as coindcx_module
 from app.data.providers.angelone import AngelOneMarketDataProvider
 from app.data.providers.base import MarketDataProvider, resample_rows
-from app.data.providers.coindcx import CoinDCXProvider
 from app.data.store import store
 
 HOUR = 3600
@@ -49,23 +47,23 @@ def feed_with(monkeypatch):
     def build(depth):
         feed, source = MarketFeed(), DeepSource(depth)
         feed.providers = {"synthetic": source}
-        store.series("DOTUSD", "1h").replace([])
+        store.series("JPYINR", "1h").replace([])
         return feed, source
     yield build
-    store.series("DOTUSD", "1h").replace([])
+    store.series("JPYINR", "1h").replace([])
 
 
 def test_a_chart_is_content_with_what_is_there_but_a_backtest_can_ask_for_more(feed_with):
     feed, source = feed_with(depth=10_000)
-    run(feed.ensure_history("DOTUSD", "1h"))
-    assert len(store.series("DOTUSD", "1h")) == 1500
-    run(feed.ensure_history("DOTUSD", "1h"))
+    run(feed.ensure_history("JPYINR", "1h"))
+    assert len(store.series("JPYINR", "1h")) == 1500
+    run(feed.ensure_history("JPYINR", "1h"))
     assert source.requests == [1500], "a chart never re-fetches a hydrated series"
 
-    run(feed.ensure_history("DOTUSD", "1h", 4000))
-    assert len(store.series("DOTUSD", "1h")) == 4000
-    run(feed.ensure_history("DOTUSD", "1h", 4000))
-    run(feed.ensure_history("DOTUSD", "1h", 3000))
+    run(feed.ensure_history("JPYINR", "1h", 4000))
+    assert len(store.series("JPYINR", "1h")) == 4000
+    run(feed.ensure_history("JPYINR", "1h", 4000))
+    run(feed.ensure_history("JPYINR", "1h", 3000))
     assert source.requests == [1500, 4000], "and what is already deep enough is left alone"
 
 
@@ -73,26 +71,61 @@ def test_a_source_that_has_run_out_is_not_asked_again(feed_with):
     """Asked for 4000, the provider had 1000. Asking again on every
     backtest would hammer it for the same answer."""
     feed, source = feed_with(depth=1000)
-    run(feed.ensure_history("DOTUSD", "1h"))
+    run(feed.ensure_history("JPYINR", "1h"))
     for _ in range(3):
-        run(feed.ensure_history("DOTUSD", "1h", 4000))
-    assert len(store.series("DOTUSD", "1h")) == 1000
+        run(feed.ensure_history("JPYINR", "1h", 4000))
+    assert len(store.series("JPYINR", "1h")) == 1000
     assert source.requests == [1500], "the first answer already showed how deep it goes"
 
 
 def test_a_deeper_request_never_shrinks_what_is_held(feed_with):
     feed, source = feed_with(depth=10_000)
-    run(feed.ensure_history("DOTUSD", "1h", 3000))
+    run(feed.ensure_history("JPYINR", "1h", 3000))
     source.depth = 50                       # the source has a bad moment
-    run(feed.ensure_history("DOTUSD", "1h", 5000))
-    assert len(store.series("DOTUSD", "1h")) == 3000
+    run(feed.ensure_history("JPYINR", "1h", 5000))
+    assert len(store.series("JPYINR", "1h")) == 3000
+
+
+def test_a_source_is_prepared_before_the_feed_decides_what_to_stream(monkeypatch):
+    """Angel One's scrip master is what says which stocks exist. It has to be
+    read before the default symbols are, or the stocks are never streamed."""
+    from app.data import feed as feed_module
+
+    order = []
+
+    class Source(DeepSource):
+        async def prepare(self):
+            order.append("prepare")
+            raise RuntimeError("the master could not be fetched")   # …and that is survivable
+
+        def supports(self, symbol):
+            order.append("supports")
+            return True
+
+        async def stream(self, symbols, handler):
+            order.append("stream " + ",".join(symbols))
+            await asyncio.sleep(3600)
+
+    async def go():
+        feed = MarketFeed()
+        monkeypatch.setattr(feed_module, "build_providers", lambda: {"synthetic": Source(300)})
+        await feed.start(["JPYINR"])
+        await asyncio.sleep(0)
+        await feed.stop()
+    try:
+        run(go())
+    finally:
+        for timeframe in ("1m", "5m", "15m", "1h", "4h", "1d"):
+            store.series("JPYINR", timeframe).replace([])
+    assert order[0] == "prepare"
+    assert "stream JPYINR" in order, "a source that could not prepare still serves what it can"
 
 
 def test_a_request_is_capped_at_what_the_store_can_hold(feed_with):
     feed, source = feed_with(depth=100_000)
-    run(feed.ensure_history("DOTUSD", "1h", 50_000))
+    run(feed.ensure_history("JPYINR", "1h", 50_000))
     assert source.requests == [6000]
-    assert len(store.series("DOTUSD", "1h")) == 6000
+    assert len(store.series("JPYINR", "1h")) == 6000
 
 
 # ── resampling ────────────────────────────────────────────────
@@ -113,90 +146,6 @@ def test_resampled_bars_line_up_with_bars_built_from_ticks():
         assert datetime.utcfromtimestamp(bar[0]).weekday() == 0, "weeks start on Monday"
         assert bar[0] == bar_open_time(bar[0], 7 * 86_400)
     assert resample_rows([], HOUR) == []
-
-
-# ── CoinDCX ───────────────────────────────────────────────────
-
-class FakeCoinDCX:
-    """The candles endpoint as probed live: at most 1000 a request, the
-    latest ones unless *both* ends of a window are given."""
-
-    def __init__(self, listed: int, step: int = HOUR) -> None:
-        self.step_ms = step * 1000
-        self.newest = 1_790_000_000_000 - 1_790_000_000_000 % self.step_ms
-        self.oldest = self.newest - (listed - 1) * self.step_ms
-        self.calls = []
-        #: Bar times the venue simply does not have — an outage.
-        self.missing = set()
-
-    async def get(self, url, params=None):
-        self.calls.append(dict(params))
-        limit = params["limit"]
-        assert limit <= 1000, "the real API answers 422"
-        end = self.newest
-        if "startTime" in params and "endTime" in params:
-            end = params["endTime"] - params["endTime"] % self.step_ms
-        times = [end - i * self.step_ms for i in range(limit)]
-        times = [t for t in times if t >= max(self.oldest, params.get("startTime", 0))
-                 and t not in self.missing]
-        body = [{"time": t, "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 3}
-                for t in times]                     # newest first, like the API
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
-
-
-def _coindcx(monkeypatch, listed):
-    monkeypatch.setattr(coindcx_module, "PAGE_PAUSE_SECONDS", 0.0)
-    provider, api = CoinDCXProvider(), FakeCoinDCX(listed)
-    provider._client.get = api.get  # noqa: SLF001
-    return provider, api
-
-
-def test_coindcx_history_walks_back_page_by_page(monkeypatch):
-    provider, api = _coindcx(monkeypatch, listed=50_000)
-    rows = run(provider.history("BTCUSD", "1h", 2500))
-    times = [r[0] for r in rows]
-    assert len(rows) == 2500
-    assert times == sorted(set(times)), "oldest first, no duplicates"
-    assert times[-1] * 1000 == api.newest
-    assert times[-1] - times[0] == 2499 * HOUR, "and no gaps between pages"
-    assert [c["limit"] for c in api.calls] == [1000, 1000, 500]
-    assert "endTime" not in api.calls[0]
-    assert all("startTime" in c and "endTime" in c for c in api.calls[1:]), \
-        "endTime alone is ignored by the API and returns the latest page again"
-
-
-def test_coindcx_history_stops_at_the_start_of_the_listing(monkeypatch):
-    provider, api = _coindcx(monkeypatch, listed=1300)
-    rows = run(provider.history("BTCUSD", "1h", 5000))
-    assert len(rows) == 1300
-    assert len(api.calls) == 4, "two pages of bars, then two empty windows"
-
-
-def test_coindcx_history_walks_past_a_hole_in_the_venues_own_data(monkeypatch):
-    """An outage leaves a window with fewer than a full page. That used to be
-    read as the start of the listing, and a market with eight years of
-    history came back with two."""
-    provider, api = _coindcx(monkeypatch, listed=50_000)
-    hole = [api.newest - i * api.step_ms for i in range(1500, 1530)]
-    api.missing = set(hole)
-    rows = run(provider.deep_history("BTCUSD", "1h", 4000))
-    times = [r[0] * 1000 for r in rows]
-    assert len(rows) == 4000
-    assert times[0] < min(hole), "it kept going on the far side"
-    assert not set(times) & api.missing
-
-
-def test_coindcx_chart_history_is_capped_but_research_history_is_not(monkeypatch):
-    provider, _ = _coindcx(monkeypatch, listed=50_000)
-    assert len(run(provider.history("BTCUSD", "1h", 20_000))) == coindcx_module.MAX_HISTORY
-    assert len(run(provider.deep_history("BTCUSD", "1h", 20_000))) == 20_000
-
-
-def test_coindcx_derived_timeframes_get_the_depth_they_need(monkeypatch):
-    provider, api = _coindcx(monkeypatch, listed=50_000)
-    rows = run(provider.history("BTCUSD", "4h", 1200))     # needs 4800 hourly bars
-    assert len(rows) == 1200
-    assert all(b[0] - a[0] == 4 * HOUR for a, b in zip(rows, rows[1:]))
 
 
 # ── Angel One ─────────────────────────────────────────────────
@@ -279,7 +228,11 @@ def test_angel_four_hour_bars_are_built_not_relabelled(angel):
     rows = run(provider.history("RELIANCE", "4h", 300))
     assert len(rows) == 300
     assert all(c["interval"] == "ONE_HOUR" for c in api.calls)
-    assert all(row[0] % (4 * HOUR) == 0 for row in rows), "on 4-hour boundaries"
+    # Counted from the session open — 09:15 and 13:15 in India — as the hourly
+    # bars they are made of are. They used to be cut on UTC's four-hour
+    # boundaries, which split the session 1 + 4 + 2 and matched nothing.
+    opens = {(int(row[0]) + 19_800) % 86_400 for row in rows}
+    assert opens == {9 * HOUR + 900, 13 * HOUR + 900}
     assert all(b[0] - a[0] >= 4 * HOUR for a, b in zip(rows, rows[1:]))
     assert max(row[5] for row in rows) > 1000, "several hourly bars in one"
 
@@ -288,3 +241,76 @@ def test_angel_has_no_guess_for_an_interval_it_does_not_offer(angel):
     provider, api = angel()
     assert run(provider.history("RELIANCE", "2h", 100)) == []
     assert api.calls == []
+
+
+
+# ── Angel One quotes ──────────────────────────────────────────
+
+class FakeQuotes:
+    """getMarketData in FULL mode, one prepared answer per poll."""
+
+    def __init__(self, *polls) -> None:
+        self.polls, self.calls = list(polls), []
+
+    def getMarketData(self, mode, tokens):  # noqa: N802 - the SDK's name
+        self.calls.append((mode, tokens))
+        return {"status": True, "data": {"fetched": [self.polls.pop(0)]}}
+
+
+def _quote(ltp, day_volume, bid=None, ask=None):
+    row = {"symbolToken": "2885", "ltp": ltp, "tradeVolume": day_volume}
+    if bid is not None:
+        row["depth"] = {"buy": [{"price": bid, "quantity": 40}, {"price": bid - 0.1, "quantity": 9}],
+                        "sell": [{"price": ask, "quantity": 25}, {"price": ask + 0.1, "quantity": 7}]}
+    return row
+
+
+def _polled(monkeypatch, *polls):
+    api = FakeQuotes(*polls)
+
+    async def resolve(symbol):
+        return SimpleNamespace(exchange="NSE", token="2885")
+    monkeypatch.setattr(angel_module.angel_instruments, "resolve", resolve)
+    monkeypatch.setattr(angel_module.angel_auth, "ensure", lambda: api)
+    provider, ticks = AngelOneMarketDataProvider(), []
+
+    async def handler(tick):
+        ticks.append(tick)
+    for _ in polls:
+        run(provider._poll_once(["RELIANCE"], handler))  # noqa: SLF001
+    assert all(call == ("FULL", {"NSE": ["2885"]}) for call in api.calls)
+    return ticks
+
+
+def test_an_angel_quote_carries_the_books_own_bid_and_ask(monkeypatch):
+    tick, = _polled(monkeypatch, _quote(1412.5, 900_000, bid=1412.4, ask=1412.6))
+    assert (tick.price, tick.bid, tick.ask) == (1412.5, 1412.4, 1412.6)
+
+
+def test_a_quote_with_no_book_is_given_a_spread_and_never_none(monkeypatch):
+    """An index has no order book, and a shut market has an empty one. A
+    spread of zero would make every trade look free to the cost model."""
+    no_book, empty_book, crossed = _polled(
+        monkeypatch, _quote(24_500.0, 0), _quote(24_500.0, 0, bid=0.0, ask=0.0),
+        _quote(24_500.0, 0, bid=24_501.0, ask=24_499.0))
+    for tick in (no_book, empty_book, crossed):
+        assert tick.bid < tick.price < tick.ask
+        assert tick.ask - tick.bid == pytest.approx(24_500.0 * 0.0005)
+
+
+def test_angel_never_reports_the_days_volume_as_a_ticks(monkeypatch):
+    """`tradeVolume` is the running total for the day, and the store adds a
+    tick's volume to the forming bar. Passed through, every three-second poll
+    added the whole day again and buried the histogram behind one bar."""
+    from app.data.store import CandleSeries
+
+    ticks = _polled(monkeypatch, _quote(100.0, 1_000_000), _quote(100.5, 1_000_400),
+                    _quote(100.5, 1_000_400), _quote(101.0, 1_002_000),
+                    _quote(99.0, 150))            # a new session: the count starts again
+    assert [tick.volume for tick in ticks] == [0.0, 400.0, 0.0, 1600.0, 150.0]
+
+    series = CandleSeries("RELIANCE", "1h")
+    series.replace([[1_700_000_000.0 // HOUR * HOUR, 100.0, 100.0, 100.0, 100.0, 0.0]])
+    for offset, tick in enumerate(ticks[:4]):
+        series.apply_price(series.last_time + 10 + offset, tick.price, tick.volume)
+    assert series.rows()[-1][5] == 2000.0, "what traded while it formed, and no more"

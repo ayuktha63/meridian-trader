@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
         log.info("alerts will also be sent to Telegram")
 
     cfg = runtime_settings.get()
-    log.info("ready — db=%s cache=%s provider=%s analyst=%s",
-             db_dialect, cache_backend, cfg.market_provider,
+    log.info("ready — db=%s cache=%s analyst=%s",
+             db_dialect, cache_backend,
              "claude:" + cfg.claude_model if runtime_settings.store.claude_enabled
              else "rule-engine")
     if not runtime_settings.store.claude_enabled:
@@ -73,10 +73,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Meridian — AI Forex Trading Analysis",
+    title="Meridian — Indian-market trading analysis (Angel One)",
     description=(
-        "Institutional-grade market analysis. Produces BUY / SELL / WAIT "
-        "recommendations with confidence, risk framing and full reasoning. "
+        "Market analysis for NSE and MCX instruments. Produces BUY / SELL / WAIT "
+        "readings with a heuristic score, risk framing and full reasoning. "
         "Paper trading by default; it can place real orders through Angel "
         "One only in LIVE mode, after the pre-trade risk gate."
     ),
