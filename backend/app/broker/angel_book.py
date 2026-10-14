@@ -72,6 +72,26 @@ def _order(row: Dict[str, Any]) -> BrokerOrder:
         updated_at=str(row.get("updatetime") or ""))
 
 
+def charges_on(orders: List[BrokerOrder]) -> float:
+    """Estimated charges on every order filled so far today."""
+    from .. import costs_india
+
+    total = 0.0
+    for order in orders:
+        if order.status != "complete" or order.filled <= 0:
+            continue
+        price = order.average_price or order.price
+        side = order.side.upper()
+        if not price or side not in (costs_india.BUY, costs_india.SELL):
+            continue
+        product = (costs_india.INTRADAY if order.product.upper() == "INTRADAY"
+                   else costs_india.DELIVERY)
+        total += costs_india.order_charges(
+            costs_india.schedule(product), side, order.filled * price,
+            debits_demat=False).total
+    return round(total, 2)
+
+
 async def read(managed: Optional[set] = None) -> Optional[BrokerBook]:
     """The broker's books now, or None when they could not be read."""
     if not angel_auth.connected:
@@ -95,4 +115,5 @@ async def read(managed: Optional[set] = None) -> Optional[BrokerBook]:
     orders = [_order(r) for r in cached["orders"]]
     return BrokerBook(positions=held, orders=orders, conditional=cached.get("conditional"),
                       realised_today=sum(_number(r.get("realised")) for r in cached["positions"]),
+                      charges_today=charges_on(orders),
                       as_of=cached["as_of"])

@@ -2,12 +2,17 @@
 sit on. Backs `is_market_open`, the live candle store and the market clock."""
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
+from . import holidays
 from ..schemas.market import MarketClock, MarketSession
+
+log = logging.getLogger("meridian.sessions")
+_warned_stale_calendar = False
 
 #: Indian exchange hours in UTC (IST is UTC+5:30). Weekdays only.
 #: CDS currency futures 09:00-17:00 IST, NSE equity/F&O 09:15-15:30 IST,
@@ -106,15 +111,29 @@ def minutes_to_close(ts: float, asset_class: str) -> Optional[float]:
 
 def is_market_open(ts: float, asset_class: str = "fx") -> bool:
     """Indian exchange-traded instruments follow their own weekday sessions,
-    by the clock — a holiday is not known here. Anything that is not an
-    exchange product (nothing the application lists; test fixtures only) is
-    treated as a market shut from Friday 21:00 UTC to Sunday 21:00 UTC.
+    by the clock, and are shut on the exchange's own full-day holidays
+    (`data/holidays.py`) — a hand-kept list, checked against the years it
+    actually covers; see that module for why and what it cannot represent
+    (MCX's morning-only closures). Anything that is not an exchange product
+    (nothing the application lists; test fixtures only) is treated as a
+    market shut from Friday 21:00 UTC to Sunday 21:00 UTC.
     """
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     weekday, hour = dt.weekday(), dt.hour  # Monday = 0
 
     if asset_class in INDIA_HOURS:
         if weekday >= 5:
+            return False
+        local_date = datetime.fromtimestamp(ts + IST_OFFSET_SECONDS, tz=timezone.utc).date()
+        if not holidays.covers(local_date.year):
+            global _warned_stale_calendar
+            if not _warned_stale_calendar:
+                _warned_stale_calendar = True
+                log.warning(
+                    "No holiday calendar loaded for %s — data/holidays.py only covers "
+                    "%s. A live order can go out on a day the exchange is actually "
+                    "shut until this is updated.", local_date.year, holidays.COVERS_YEARS)
+        elif holidays.is_full_holiday(local_date, session_key(asset_class)):
             return False
         start, end = INDIA_HOURS[asset_class]
         clock = hour + dt.minute / 60.0

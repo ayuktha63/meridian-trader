@@ -187,6 +187,52 @@ def test_index_resolves_to_the_nearest_unexpired_future_not_the_spot_row():
     assert "FUT" in match.trading_symbol
 
 
+def test_resolve_index_spot_gives_the_continuous_index_row_not_the_future():
+    """A chart should show NIFTY, not whichever month's future is nearest
+    expiry — the future carries its own basis and only ever has a few weeks
+    of real history. `resolve_index_spot` is a second, data-only lookup;
+    `resolve()` (above) still gives the tradable future, unchanged — a live
+    order can never be placed on an index itself."""
+    service = AngelOneInstrumentService()
+    near = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%d%b%Y").upper()
+    service._derivatives = {  # noqa: SLF001
+        ("NFO", "NIFTY", "FUTIDX"): [
+            {"token": "3", "symbol": f"NIFTY{near}FUT", "name": "NIFTY",
+             "expiry": near, "lotsize": "65", "instrumenttype": "FUTIDX",
+             "exch_seg": "NFO", "tick_size": "10"},
+        ],
+    }
+    service._index_spot = {  # noqa: SLF001
+        "NIFTY": {"token": "99926000", "symbol": "Nifty 50", "name": "NIFTY",
+                  "instrumenttype": "AMXIDX", "exch_seg": "NSE",
+                  "lotsize": "1", "tick_size": "0"},
+    }
+    service._loaded_at = 1e12  # noqa: SLF001
+
+    spot = _run(service.resolve_index_spot("NIFTY"))
+    assert spot.exchange == "NSE"
+    assert spot.token == "99926000"
+    assert spot.instrument_type == "AMXIDX"
+
+    future = _run(service.resolve("NIFTY"))
+    assert future.exchange == "NFO"
+    assert future.instrument_type == "FUTIDX"
+
+
+def test_resolve_index_spot_is_none_when_the_scrip_master_has_no_spot_row():
+    service = AngelOneInstrumentService()
+    service._index_spot = {}  # noqa: SLF001 - e.g. before the master has loaded it
+    service._loaded_at = 1e12  # noqa: SLF001
+    assert _run(service.resolve_index_spot("NIFTY")) is None
+
+
+def test_resolve_index_spot_is_none_for_a_non_index_instrument():
+    service = AngelOneInstrumentService()
+    service._index_spot = {"NIFTY": {"token": "99926000"}}  # noqa: SLF001
+    service._loaded_at = 1e12  # noqa: SLF001
+    assert _run(service.resolve_index_spot("RELIANCE")) is None
+
+
 def test_index_with_only_expired_contracts_is_unsupported():
     service = AngelOneInstrumentService()
     expired = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%d%b%Y").upper()

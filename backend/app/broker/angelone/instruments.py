@@ -64,6 +64,19 @@ DERIVATIVE_VENUE = {
 #: lot, is what the stock universe is read from.
 STOCK_FUTURE_TYPE = "FUTSTK"
 
+#: The index itself, as Angel One lists it on NSE — a continuous quote with
+#: no expiry, not a tradable row (lot size 1, tick size 0). `resolve()`
+#: above never touches this: you cannot place an order on an index, only on
+#: its future or an option, which is exactly why DERIVATIVE_VENUE resolves
+#: there instead. But a *chart* of NIFTY should show NIFTY, not whichever
+#: month's future happens to be nearest-expiry this week — a futures price
+#: carries its own basis (time value, financing, dividends) on top of the
+#: index, which drifts as the contract approaches expiry and jumps at every
+#: rollover, and a monthly contract is only ever a few weeks old, so history
+#: beyond that is simply unavailable through the futures token. See
+#: docs/RISK_CONTROL_AUDIT.md / REMAINING_BLOCKERS.md D12.
+INDEX_SPOT_TYPE = "AMXIDX"
+
 #: The exchange lists scrips of its own for testing — 011NSETEST and the like
 #: — with futures and a share, exactly as a company has. They are not stocks.
 TEST_SCRIP_SUFFIX = "NSETEST"
@@ -102,6 +115,9 @@ class AngelOneInstrumentService:
         #: contract, all expiries. Nearest unexpired one is picked at
         #: resolve time so a stale cache never quietly trades a dead contract.
         self._derivatives: Dict[tuple, List[dict]] = defaultdict(list)
+        #: Underlying name -> its NSE index-spot row, for data only — see
+        #: INDEX_SPOT_TYPE. Never consulted by `resolve()`.
+        self._index_spot: Dict[str, dict] = {}
         self._loaded_at: float = 0.0
         self._load_error: Optional[str] = None
 
@@ -140,6 +156,7 @@ class AngelOneInstrumentService:
 
         by_key = {}
         derivatives: Dict[tuple, List[dict]] = defaultdict(list)
+        index_spot: Dict[str, dict] = {}
         derivative_types = {t for _, t in DERIVATIVE_VENUE.values()} | {STOCK_FUTURE_TYPE}
         for row in rows:
             exch = row.get("exch_seg")
@@ -151,10 +168,13 @@ class AngelOneInstrumentService:
             if itype in derivative_types:
                 name = (row.get("name") or "").upper()
                 derivatives[(exch, name, itype)].append(row)
+            elif itype == INDEX_SPOT_TYPE and exch == "NSE":
+                index_spot[(row.get("name") or "").upper()] = row
 
         with self._lock:
             self._by_key = by_key
             self._derivatives = derivatives
+            self._index_spot = index_spot
             self._loaded_at = time.time()
             self._load_error = None
         log.info("Angel One scrip master loaded: %s instruments (%s derivative "
@@ -307,6 +327,37 @@ class AngelOneInstrumentService:
             instrument_type=row.get("instrumenttype", ""),
             expiry=row.get("expiry", ""),
         )
+
+    async def resolve_index_spot(self, symbol: str) -> Optional[AngelInstrumentMatch]:
+        """The index itself, for a chart or a quote — never for an order.
+
+        `resolve()` is the only path execution.py and the risk gate may use,
+        and it is unchanged: a live order is still sized and sent against the
+        nearest-unexpired future, because that is the only thing on this
+        instrument an order can actually be placed on. This is a second,
+        separate lookup, used only by the market-data provider, for an index
+        whose INDEX_SPOT_TYPE row Angel One happens to carry. None means
+        "fall back to the future for data too" — not every index this app
+        might one day list is guaranteed to have one.
+        """
+        instrument = get_instrument(symbol)
+        if instrument.asset_class != "index":
+            return None
+        # Best-effort only: unlike `resolve()`, this must never be what
+        # forces a scrip-master load — `resolve()` and `prepare()` already
+        # own that job for whoever actually needs it. Not loaded yet simply
+        # means "no spot row to offer right now", same as not finding one.
+        if not self.loaded:
+            return None
+        underlying = (instrument.broker_symbol or instrument.symbol).upper()
+        row = self._index_spot.get(underlying)
+        if row is None:
+            return None
+        return AngelInstrumentMatch(
+            symbol=symbol, exchange=row.get("exch_seg", "NSE"),
+            trading_symbol=row.get("symbol", ""), token=row.get("token", ""),
+            lot_size=1, tick_size=instrument.pip_size,
+            instrument_type=row.get("instrumenttype", ""))
 
     async def capability(self, symbol: str) -> dict:
         """Non-throwing version for the UI: can this be executed live, and why not."""

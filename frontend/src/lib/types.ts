@@ -1041,6 +1041,8 @@ export interface BrokerBook {
   /** Resting conditional (GTT / OCO) rules as Angel One returns them. */
   conditional: Record<string, unknown>[] | null
   realised_today: number
+  /** Estimated charges on today's filled orders. */
+  charges_today: number
   as_of: number
 }
 

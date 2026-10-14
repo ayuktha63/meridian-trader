@@ -363,6 +363,39 @@ def test_a_trade_on_a_market_that_was_removed_does_not_stop_the_demo_for_good(cl
     client.post("/api/paper/reset", json={"starting_balance": 10_000.0})
 
 
+def test_closing_by_hand_is_refused_without_a_fresh_quote(client):
+    """A live instrument with no current quote must not be closed at
+    `trade.entry` — that silently books a flat exit nobody asked for and
+    hides that there was never a real price behind it. See
+    docs/RISK_CONTROL_AUDIT.md, finding 7 (the live analogue), and
+    PAPER_LIVE_ISOLATION.md on what a paper fill may act on."""
+    import asyncio
+
+    from app.db.models import PaperTradeRow
+    from app.db.session import session_scope
+    from app.data.feed import feed
+
+    client.post("/api/paper/reset", json={"starting_balance": 10_000.0})
+    feed.quotes.pop("RELIANCE", None)        # exists as an instrument, no quote
+
+    async def open_trade():
+        async with session_scope() as session:
+            session.add(PaperTradeRow(
+                id="no-quote", account_id=paper.ACCOUNT_ID, symbol="RELIANCE",
+                timeframe="15m", side="LONG", status="open", entry=2500.0,
+                entry_at=1_791_818_773.0, stop_loss=2450.0, initial_stop=2450.0,
+                take_profit=2600.0, quantity=4.0, notional=10_000.0, entry_cost=5.0))
+    asyncio.run(open_trade())
+
+    response = client.post("/api/paper/close/no-quote")
+    assert response.status_code == 409
+    assert "no current price" in response.json()["detail"].lower()
+
+    # Refused, not silently closed — the trade is still open.
+    state = client.get("/api/paper").json()
+    assert state["open_trade"]["id"] == "no-quote"
+
+
 def test_config_rejects_reckless_risk(client):
     body = client.patch("/api/paper/config", json={"risk_per_trade_pct": 25})
     assert body.status_code == 422

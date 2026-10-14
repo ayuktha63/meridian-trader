@@ -7,6 +7,7 @@ import ChartCanvas from './components/chart/ChartCanvas'
 import DrawingLayer from './components/chart/DrawingLayer'
 import AIOverlay from './components/chart/AIOverlay'
 import BrokerLayer from './components/chart/BrokerLayer'
+import TodayPnl from './components/panels/TodayPnl'
 import TradeSetupLayer from './components/chart/TradeSetupLayer'
 import Toolbar from './components/chart/Toolbar'
 import LiveModeBanner from './components/layout/LiveModeBanner'
@@ -233,6 +234,8 @@ export default function App() {
             nothing on shorter screens. */}
         <aside className="w-[360px] shrink-0 flex flex-col gap-2 min-h-0 overflow-y-auto
                           overscroll-contain">
+          <TodayPnl />
+
           {/* Once a position is open, managing it outranks looking for the
               next entry — so the management card takes the top slot. */}
           {/* Account limits sit above everything. When they are breached the

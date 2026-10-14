@@ -143,6 +143,10 @@ class BrokerBook(BaseModel):
     conditional: Optional[List[dict]] = None
     #: Profit booked today across every position, open or already closed.
     realised_today: float = 0.0
+    #: Brokerage and statutory charges on the orders filled today, from the
+    #: cost model (an estimate — the contract note is the record). Counts only
+    #: what has been paid: a position still open has not paid its exit yet.
+    charges_today: float = 0.0
     as_of: float
 
 

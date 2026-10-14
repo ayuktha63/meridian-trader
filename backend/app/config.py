@@ -159,6 +159,28 @@ class Settings(BaseSettings):
     def _upper_trading_mode(cls, v):
         return v.upper() if isinstance(v, str) else v
 
+    @field_validator("live_daily_loss_limit", "live_max_order_value",
+                     "live_max_risk_pct_of_funds")
+    @classmethod
+    def _hard_limits_cannot_be_switched_off(cls, v, info):
+        """Every other LIVE_* limit treats 0 as "off" — a documented,
+        deliberate escape hatch (see .env.example). These three cannot mean
+        that: the daily loss limit is what trips the kill switch, the order
+        value cap is the last line against a fat-fingered size, and the
+        risk-from-funds cap is what stops a sizing bug from risking the
+        whole account instead of 1% of it. A `0` here is not "no limit", it
+        would be "every order of any size clears this check" — silently,
+        from a value nobody meant as a green light. Fail at boot instead of
+        trading on it. See docs/RISK_CONTROL_AUDIT.md, finding 2.
+        """
+        if v <= 0:
+            raise ValueError(
+                "{} must be greater than 0 — it cannot be switched off this way. "
+                "Setting it to 0 would remove the check silently rather than disable "
+                "it on purpose; if you truly want no limit here, that is a code "
+                "change, not a configuration value.".format(info.field_name.upper()))
+        return v
+
     @property
     def angel_configured(self) -> bool:
         return bool(self.angel_api_key and self.angel_client_code

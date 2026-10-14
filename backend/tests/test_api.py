@@ -406,3 +406,18 @@ def test_an_unreadable_book_is_not_an_empty_one(client, monkeypatch):
 def test_without_a_broker_session_there_is_no_book(client, monkeypatch):
     _broker(monkeypatch, [_broker_row()], connected=False)
     assert client.get("/api/trades/live/book").status_code == 503
+
+
+def test_todays_charges_are_estimated_from_the_orders_that_filled(client, monkeypatch):
+    """A rejected or still-working order has paid nothing; a filled one has
+    paid brokerage with its floor, and the sell side its STT."""
+    buy = _stop_order(orderid="B1", transactiontype="BUY", ordertype="MARKET", triggerprice=0.0,
+                      price=1050.5, averageprice=1050.5, filledshares="1", orderstatus="complete")
+    sell = _stop_order(orderid="B2", transactiontype="SELL", ordertype="MARKET", triggerprice=0.0,
+                       price=1057.75, averageprice=1057.75, filledshares="1",
+                       orderstatus="complete")
+    _broker(monkeypatch, [_broker_row(realised="7.25", unrealised="0.0", netqty="0")],
+            [buy, sell, _stop_order(orderid="B3", orderstatus="rejected"), _stop_order(orderid="B4")])
+    book = client.get("/api/trades/live/book").json()
+    assert book["realised_today"] == 7.25
+    assert 12.0 < book["charges_today"] < 12.4, "₹5 floor each way, GST, STT on the sell"

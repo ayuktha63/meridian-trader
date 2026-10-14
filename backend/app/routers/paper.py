@@ -93,8 +93,24 @@ async def close(trade_id: str,
         # A market that has been removed. There is no price to be had for it,
         # so it leaves where it came in — and the account is free again.
         instrument = None
-    quote = feed.quote(trade.symbol)
-    price = feed.price(trade.symbol) or trade.entry
+        quote = None
+        price = trade.entry
+    else:
+        # The same rule the analysis engine and auto-entry already follow
+        # (`feed.fresh_quote`, STALE_QUOTE_SECONDS): a fill at a price from
+        # before the feed stopped is not a fill anything could have got. A
+        # stale or missing quote used to fall back to `trade.entry`, which
+        # silently books the trade as a flat exit — invisible in the P&L,
+        # not a close anyone asked for. See docs/RISK_CONTROL_AUDIT.md,
+        # the paper-side analogue of finding 7.
+        quote = feed.fresh_quote(trade.symbol)
+        if quote is None:
+            raise HTTPException(
+                409, "No current price for {} — the feed's last quote is "
+                    "stale or missing, so this can't be filled at a real "
+                    "price right now. Try again once prices are moving "
+                    "again.".format(trade.symbol))
+        price = quote.last
     await repo.close_trade(
         session, trade_id,
         quote.bid if quote else price, quote.ask if quote else price, price,

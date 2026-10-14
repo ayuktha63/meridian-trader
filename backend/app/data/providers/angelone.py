@@ -102,6 +102,25 @@ class AngelOneMarketDataProvider(MarketDataProvider):
         except KeyError:
             return None
 
+    async def _resolve_for_data(self, symbol: str):
+        """The contract to read PRICE from — never to trade. For an index
+        this prefers Angel One's own continuous index-spot row over the
+        nearest-expiry future `resolve()` would give an order: the future's
+        price carries a basis on top of the index that drifts toward expiry
+        and jumps at every rollover, and a monthly contract is only ever a
+        few weeks old, so real history beyond that simply isn't there to
+        read through it. Falls back to `resolve()` for everything else, and
+        for an index Angel One's scrip master doesn't carry a spot row for.
+        """
+        try:
+            spot = await angel_instruments.resolve_index_spot(symbol)
+            if spot is not None:
+                return spot
+            return await angel_instruments.resolve(symbol)
+        except InstrumentUnsupported as exc:
+            self._last_error = str(exc)
+            return None
+
     # ── history ───────────────────────────────────────────────
 
     async def history(self, symbol: str, timeframe: str, bars: int) -> List[List[float]]:
@@ -116,10 +135,8 @@ class AngelOneMarketDataProvider(MarketDataProvider):
         interval = INTERVALS.get(timeframe)
         if interval is None:
             return []
-        try:
-            match = await angel_instruments.resolve(symbol)
-        except InstrumentUnsupported as exc:
-            self._last_error = str(exc)
+        match = await self._resolve_for_data(symbol)
+        if match is None:
             return []
 
         window = timedelta(days=LOOKBACK_DAYS.get(interval, 90))
@@ -197,9 +214,8 @@ class AngelOneMarketDataProvider(MarketDataProvider):
         token_to_symbol: Dict[str, str] = {}
         units_per_bar_unit: Dict[str, float] = {}
         for symbol in symbols:
-            try:
-                match = await angel_instruments.resolve(symbol)
-            except InstrumentUnsupported:
+            match = await self._resolve_for_data(symbol)
+            if match is None:
                 continue
             by_exchange.setdefault(match.exchange, []).append(match.token)
             token_to_symbol[match.token] = symbol
