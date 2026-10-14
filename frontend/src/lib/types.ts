@@ -1043,6 +1043,8 @@ export interface BrokerBook {
   realised_today: number
   /** Estimated charges on today's filled orders. */
   charges_today: number
+  /** Angel One's own debits for the day (booked losses + charges it has posted), if readable. */
+  broker_debits?: number | null
   as_of: number
 }
 

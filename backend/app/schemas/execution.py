@@ -147,6 +147,11 @@ class BrokerBook(BaseModel):
     #: cost model (an estimate — the contract note is the record). Counts only
     #: what has been paid: a position still open has not paid its exit yet.
     charges_today: float = 0.0
+    #: Angel One's own "utilised debits" for the day: what it has taken from the
+    #: account so far — losses booked plus the charges it has posted. A second
+    #: opinion on the figure above, not the same sum: the broker posts charges
+    #: on its own schedule. None if the funds could not be read.
+    broker_debits: Optional[float] = None
     as_of: float
 
 

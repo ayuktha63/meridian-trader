@@ -72,6 +72,12 @@ def _order(row: Dict[str, Any]) -> BrokerOrder:
         updated_at=str(row.get("updatetime") or ""))
 
 
+def _debits(funds: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(funds, dict) or funds.get("utiliseddebits") in (None, ""):
+        return None
+    return round(_number(funds.get("utiliseddebits")), 2)
+
+
 def charges_on(orders: List[BrokerOrder]) -> float:
     """Estimated charges on every order filled so far today."""
     from .. import costs_india
@@ -108,12 +114,17 @@ async def read(managed: Optional[set] = None) -> Optional[BrokerBook]:
             conditional = await angel_broker.get_conditional_orders()
         except Exception:  # noqa: BLE001 - optional: the rest of the book still stands
             conditional = None
+        try:
+            funds = await angel_broker.get_funds()
+        except Exception:  # noqa: BLE001 - optional second opinion
+            funds = None
         cached = {"positions": positions or [], "orders": orders or [],
-                  "conditional": conditional, "as_of": time.time()}
+                  "conditional": conditional, "funds": funds, "as_of": time.time()}
         await cache.set_json(CACHE_KEY, cached, ttl=CACHE_TTL_SECONDS)
     held: List[BrokerPosition] = [p for p in (_position(r, managed) for r in cached["positions"]) if p]
     orders = [_order(r) for r in cached["orders"]]
     return BrokerBook(positions=held, orders=orders, conditional=cached.get("conditional"),
                       realised_today=sum(_number(r.get("realised")) for r in cached["positions"]),
                       charges_today=charges_on(orders),
+                      broker_debits=_debits(cached.get("funds")),
                       as_of=cached["as_of"])

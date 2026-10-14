@@ -421,3 +421,24 @@ def test_todays_charges_are_estimated_from_the_orders_that_filled(client, monkey
     book = client.get("/api/trades/live/book").json()
     assert book["realised_today"] == 7.25
     assert 12.0 < book["charges_today"] < 12.4, "₹5 floor each way, GST, STT on the sell"
+
+
+def test_the_brokers_own_debits_are_shown_beside_the_estimate(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row(realised="-12.5", unrealised="0.0", netqty="0")], [])
+
+    async def funds():
+        return {"utiliseddebits": "17.9114", "availablecash": "420.4886"}
+    monkeypatch.setattr(__import__("app.broker.angel_book", fromlist=["x"]).angel_broker,
+                        "get_funds", funds)
+    book = client.get("/api/trades/live/book").json()
+    assert book["broker_debits"] == 17.91 and book["realised_today"] == -12.5
+
+
+def test_unreadable_funds_leave_the_debits_unknown_not_zero(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row()], [])
+
+    async def funds():
+        raise RuntimeError("Access denied because of exceeding access rate")
+    monkeypatch.setattr(__import__("app.broker.angel_book", fromlist=["x"]).angel_broker,
+                        "get_funds", funds)
+    assert client.get("/api/trades/live/book").json()["broker_debits"] is None

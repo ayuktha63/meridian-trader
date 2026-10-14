@@ -51,6 +51,8 @@ export default function TodayPnl() {
   const age = Math.max(0, Math.round(now - book.as_of))
   const stale = age > STALE_SECONDS
   const up = net >= 0
+  // Only comparable on a losing day: the broker's debits do not count profit.
+  const gap = book.broker_debits != null && net < 0 ? Math.abs(net) - book.broker_debits : 0
   const rupees = (n: number, digits = 2) =>
     `${n >= 0 ? '+' : '−'}₹${Math.abs(n).toLocaleString(undefined, {
       minimumFractionDigits: digits, maximumFractionDigits: digits })}`
@@ -79,6 +81,13 @@ export default function TodayPnl() {
       <div className="mt-1 text-[10px] text-faint">
         Before charges {rupees(gross)} · {book.positions.length} open · estimate, not the contract note
       </div>
+      {book.broker_debits != null && (
+        <div className={`mt-1 text-[10px] tnum ${gap > 1 ? 'text-warn' : 'text-faint'}`}
+             title="Angel One's own 'utilised debits' for today: losses booked plus the charges it has posted so far. It posts charges on its own schedule, so this can run behind the estimate.">
+          Angel One has debited −₹{book.broker_debits.toFixed(2)} so far
+          {gap > 1 ? ` · ${gap.toFixed(2)} less than this estimate — the contract note decides` : ''}
+        </div>
+      )}
     </div>
   )
 }
