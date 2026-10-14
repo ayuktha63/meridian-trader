@@ -333,3 +333,76 @@ def test_analysis_always_carries_account_risk(client):
     assert body["account_risk"] is not None
     assert body["account_risk"]["status"] in ("clear", "caution", "halt")
     assert len(body["account_risk"]["guardrails"]) == 4
+
+
+# ── what the broker holds ─────────────────────────────────────
+
+def _broker_row(**changes):
+    row = {"tradingsymbol": "INFY-EQ", "symbolname": "INFY", "exchange": "NSE",
+           "producttype": "INTRADAY", "netqty": "1", "buyavgprice": "1050.5",
+           "sellavgprice": "0.0", "ltp": "1057.75", "pnl": "7.25"}
+    row.update(changes)
+    return row
+
+
+def _stop_order(**changes):
+    row = {"orderid": "A1", "tradingsymbol": "INFY-EQ", "exchange": "NSE", "transactiontype": "SELL",
+           "ordertype": "STOPLOSS_MARKET", "producttype": "INTRADAY", "quantity": "1",
+           "filledshares": "0", "price": 0.0, "triggerprice": 1040.0, "averageprice": 0.0,
+           "orderstatus": "trigger pending", "text": "", "updatetime": "13-Oct-2026 12:30:00"}
+    row.update(changes)
+    return row
+
+
+def _broker(monkeypatch, positions, orders=None, connected=True):
+    import asyncio
+
+    from app.broker import angel_book
+    from app.cache import cache
+
+    async def get_positions():
+        if isinstance(positions, Exception):
+            raise positions
+        return positions
+
+    async def get_orders():
+        return orders or []
+
+    asyncio.run(cache.set_json(angel_book.CACHE_KEY, None, ttl=1))
+    monkeypatch.setattr(type(angel_book.angel_auth), "connected", property(lambda self: connected))
+    monkeypatch.setattr(angel_book.angel_broker, "get_positions", get_positions)
+    monkeypatch.setattr(angel_book.angel_broker, "get_orders", get_orders)
+
+
+def test_a_position_taken_in_the_brokers_own_app_is_shown(client, monkeypatch):
+    """The account holds more than Meridian placed, and a position it cannot
+    see is one nobody is watching."""
+    _broker(monkeypatch, [_broker_row(), _broker_row(tradingsymbol="SBIN-EQ", symbolname="SBIN",
+                                                      netqty="0")], [_stop_order()])
+    book = client.get("/api/trades/live/book").json()
+    held, = book["positions"]
+    assert (held["symbol"], held["chart_symbol"], held["net_quantity"]) == ("INFY", "INFY", 1.0)
+    assert held["buy_average"] == 1050.5 and held["pnl"] == 7.25, "a closed position is not listed"
+    stop, = book["orders"]
+    assert (stop["chart_symbol"], stop["side"], stop["trigger_price"], stop["working"]) == (
+        "INFY", "SELL", 1040.0, True)
+    overview = client.get("/api/trades/live/overview").json()
+    assert [p["symbol"] for p in overview["broker_positions"]] == ["INFY"]
+
+
+def test_finished_orders_are_not_working_ones(client, monkeypatch):
+    _broker(monkeypatch, [], [_stop_order(), _stop_order(orderid="A2", orderstatus="rejected"),
+                              _stop_order(orderid="A3", orderstatus="complete")])
+    working = {o["order_id"]: o["working"] for o in client.get("/api/trades/live/book").json()["orders"]}
+    assert working == {"A1": True, "A2": False, "A3": False}
+
+
+def test_an_unreadable_book_is_not_an_empty_one(client, monkeypatch):
+    _broker(monkeypatch, RuntimeError("Access denied because of exceeding access rate"))
+    assert client.get("/api/trades/live/book").status_code == 503
+    assert client.get("/api/trades/live/overview").json()["broker_positions"] is None
+
+
+def test_without_a_broker_session_there_is_no_book(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row()], connected=False)
+    assert client.get("/api/trades/live/book").status_code == 503

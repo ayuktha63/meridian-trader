@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { fmtPrice, timeAgo } from '../../lib/format'
 import { useStore } from '../../store/useStore'
-import type { ExecutionRecord, LiveTradingOverview, PaperState, PaperTrade } from '../../lib/types'
+import type { BrokerBook, BrokerOrder, BrokerPosition, ExecutionRecord, LiveTradingOverview, PaperState, PaperTrade } from '../../lib/types'
 import { Badge, EmptyState, Spinner, Stat } from '../ui'
 
 /**
@@ -24,7 +24,9 @@ import { Badge, EmptyState, Spinner, Stat } from '../ui'
 const POLL_MS = 5_000
 
 export default function LivePositionsPanel() {
-  const [open, setOpen] = useState(false)
+  const open = useStore((s) => s.positionsOpen)
+  const setOpen = useStore((s) => s.setPositionsOpen)
+  const book = useStore((s) => s.brokerBook)
   const isLive = useStore((s) => s.tradingMode?.mode) === 'LIVE'
   const [data, setData] = useState<LiveTradingOverview | null>(null)
   const [paper, setPaper] = useState<PaperState | null>(null)
@@ -131,9 +133,11 @@ export default function LivePositionsPanel() {
                             sub={data?.balance_source === 'angel_one' ? 'Angel One' : 'Settings'} />
                       <Stat label="Open risk" value={money(data?.open_risk)}
                             sub="if every stop hits" />
-                      <Stat label="Realised today" value={money(data?.realised_today)}
-                            tone={(data?.realised_today ?? 0) >= 0 ? 'text-bull' : 'text-bear'} />
-                      <Stat label="Trades today" value={`${data?.trades_today ?? 0}`} />
+                      <Stat label="Realised today" value={money(book ? book.realised_today : data?.realised_today)}
+                            tone={(book ? book.realised_today : data?.realised_today ?? 0) >= 0 ? 'text-bull' : 'text-bear'}
+                            sub={book ? 'as Angel One reports it' : undefined} />
+                      <Stat label="Orders filled today"
+                            value={`${book ? book.orders.filter((o) => o.status === 'complete' && o.filled > 0).length : data?.trades_today ?? 0}`} />
                     </div>
                   ) : (
                     <div className="shrink-0 grid grid-cols-4 gap-3 px-5 py-3 border-b border-hairline">
@@ -151,14 +155,7 @@ export default function LivePositionsPanel() {
 
                   <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2">
                     {isLive ? (
-                      !data?.open_positions.length ? (
-                        <EmptyState title="No open live positions"
-                                    hint="Every position you hold at Angel One, marked to the live price, will show up here the instant it fills." />
-                      ) : (
-                        data.open_positions.map((row) => (
-                          <PositionRow key={row.id} row={row} currency={data.currency} />
-                        ))
-                      )
+                      <LiveBook data={data} book={book} />
                     ) : !demoOpen.length ? (
                       <EmptyState title="No open demo positions"
                                   hint="Paper trades from the demo account show up here the moment they open." />
@@ -183,6 +180,101 @@ export default function LivePositionsPanel() {
         )}
       </AnimatePresence>
     </>
+  )
+}
+
+/**
+ * Angel One's own books — positions and working orders, however they were
+ * placed. Where they cannot be read, Meridian's own record of what it sent
+ * stands in, and says so.
+ */
+function LiveBook({ data, book }: { data: LiveTradingOverview | null; book: BrokerBook | null }) {
+  const currency = data?.currency ?? 'INR'
+  const positions = book?.positions ?? data?.broker_positions ?? null
+  const orders = (book?.orders ?? []).filter((o) => o.working)
+  if (positions === null) {
+    return (
+      <>
+        <p className="text-2xs text-warn">
+          Could not read Angel One's position book just now, so this is only what Meridian itself
+          sent. A trade taken in the Angel One app may be missing until the next refresh.
+        </p>
+        {data?.open_positions.map((row) => (
+          <PositionRow key={row.id} row={row} currency={currency} />
+        ))}
+      </>
+    )
+  }
+  if (!positions.length && !orders.length) {
+    return (
+      <EmptyState title="No open positions or orders at Angel One"
+                  hint="Everything Angel One holds — however it was placed — shows up here and on the chart." />
+    )
+  }
+  return (
+    <>
+      {positions.map((p) => (
+        <BrokerPositionRow key={p.exchange + p.trading_symbol + p.product}
+                           position={p} currency={currency} />
+      ))}
+      {orders.length > 0 && (
+        <h4 className="pt-1 text-[9px] uppercase tracking-wider text-faint">Working orders</h4>
+      )}
+      {orders.map((o, i) => <BrokerOrderRow key={o.order_id || `oco-${i}`} order={o} currency={currency} />)}
+    </>
+  )
+}
+
+function BrokerOrderRow({ order, currency }: { order: BrokerOrder; currency: string }) {
+  const sym = currency === 'INR' ? '₹' : '$'
+  const price = order.trigger_price ?? order.price
+  return (
+    <div className="rounded-lg border border-hairline bg-tint/[0.02] px-3 py-2">
+      <div className="flex items-center gap-2 text-xs">
+        <span className={`font-bold ${order.side === 'BUY' ? 'text-bull' : 'text-bear'}`}>{order.side}</span>
+        <span className="font-semibold text-ink">{order.symbol}</span>
+        <Badge tone="neutral">{order.order_type}</Badge>
+        <Badge tone="neutral">{order.status}</Badge>
+        <span className="flex-1" />
+        <span className="text-ink tnum">
+          {order.quantity - order.filled} @ {price != null ? `${sym}${price}`
+            : order.order_type.startsWith('OCO') ? 'levels set in Angel One' : 'market'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function BrokerPositionRow({ position, currency }: { position: BrokerPosition; currency: string }) {
+  const sym = currency === 'INR' ? '₹' : '$'
+  const money = (value: number | null | undefined) =>
+    value == null ? '—' : `${sym}${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+  const long = position.net_quantity > 0
+  const entry = long ? position.buy_average : position.sell_average
+  const up = (position.pnl ?? 0) >= 0
+
+  return (
+    <div className="rounded-lg border border-hairline bg-tint/[0.02] px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className={`text-xs font-bold ${long ? 'text-bull' : 'text-bear'}`}>
+          {long ? 'BUY' : 'SELL'}
+        </span>
+        <span className="text-xs font-semibold text-ink">{position.symbol}</span>
+        <Badge tone="neutral">{position.product}</Badge>
+        {position.managed && <Badge tone="accent">stop managed by Meridian</Badge>}
+        <span className="flex-1" />
+        {position.pnl != null && (
+          <span className={`text-sm font-bold tnum ${up ? 'text-bull' : 'text-bear'}`}>
+            {up ? '+' : '−'}{money(position.pnl)}
+          </span>
+        )}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-3 text-2xs text-faint">
+        <span>Qty <span className="text-ink tnum">{Math.abs(position.net_quantity)}</span></span>
+        <span>Entry <span className="text-ink tnum">{fmtPrice(entry, 2)}</span></span>
+        <span>Last <span className="text-ink tnum">{fmtPrice(position.last_price, 2)}</span></span>
+      </div>
+    </div>
   )
 }
 

@@ -1014,6 +1014,54 @@ export interface ExecutionRecord {
   updated_at: number
 }
 
+export interface BrokerOrder {
+  order_id: string
+  symbol: string
+  chart_symbol: string | null
+  exchange: string
+  side: string
+  order_type: string
+  product: string
+  quantity: number
+  filled: number
+  price: number | null
+  trigger_price: number | null
+  average_price: number | null
+  status: string
+  /** Still resting or waiting at the broker. */
+  working: boolean
+  message: string
+  updated_at: string
+}
+
+/** Angel One's own positions and orders, however they were placed. */
+export interface BrokerBook {
+  positions: BrokerPosition[]
+  orders: BrokerOrder[]
+  /** Resting conditional (GTT / OCO) rules as Angel One returns them. */
+  conditional: Record<string, unknown>[] | null
+  realised_today: number
+  as_of: number
+}
+
+export interface BrokerPosition {
+  symbol: string
+  chart_symbol: string | null
+  trading_symbol: string
+  exchange: string
+  product: string
+  net_quantity: number
+  buy_average: number
+  sell_average: number
+  last_price: number | null
+  pnl: number | null
+  realised: number | null
+  unrealised: number | null
+  buy_quantity: number
+  sell_quantity: number
+  managed: boolean
+}
+
 export interface LiveTradingOverview {
   balance: number
   balance_source: 'angel_one' | 'settings'
@@ -1023,6 +1071,8 @@ export interface LiveTradingOverview {
   trades_today: number
   open_positions: ExecutionRecord[]
   history: ExecutionRecord[]
+  /** What Angel One itself reports open; null when it could not be asked. */
+  broker_positions: BrokerPosition[] | null
 }
 
 // ── screener (best trades right now) ─────────────────────────

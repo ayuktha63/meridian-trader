@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 import { applyTheme, readStoredTheme, type Theme } from '../lib/theme'
 import { stream, type ConnectionStatus } from '../lib/ws'
 import type {
-  AngelStatus, AnalysisResult, Candle, Drawing, DrawingType, LiveTick, MarketClock, Point,
+  AngelStatus, AnalysisResult, BrokerBook, Candle, Drawing, DrawingType, LiveTick, MarketClock, Point,
   PaperState, PaperTrade, Quote, SymbolInfo, TimeframeInfo, TradingModeStatus,
 } from '../lib/types'
 
@@ -15,6 +15,7 @@ import type {
 //: resolves. This poll only catches drift: a restart, a session going stale,
 //: a second tab doing the switching.
 const TRADING_STATUS_POLL_MS = 15_000
+const BROKER_BOOK_POLL_MS = 5_000
 
 export type ToolId = DrawingType | 'cursor'
 
@@ -64,6 +65,11 @@ interface State {
   // wallet readout) sees a switch the instant it happens, not on its own poll
   tradingMode: TradingModeStatus | null
   angelStatus: AngelStatus | null
+  /** Angel One's positions and orders, kept in step with the broker. */
+  brokerBook: BrokerBook | null
+  /** The positions popup, opened from the top bar or from a marker on the chart. */
+  positionsOpen: boolean
+  setPositionsOpen: (open: boolean) => void
 
   // connection
   connection: ConnectionStatus
@@ -145,6 +151,8 @@ export const useStore = create<State>((set, get) => ({
 
   tradingMode: null,
   angelStatus: null,
+  brokerBook: null,
+  positionsOpen: false,
 
   connection: 'connecting',
   bootError: null,
@@ -188,6 +196,23 @@ export const useStore = create<State>((set, get) => ({
     }
     void pollTradingStatus()
     window.setInterval(pollTradingStatus, TRADING_STATUS_POLL_MS)
+
+    // The broker's own books, polled on a short clock while it is connected:
+    // a trade taken in the Angel One app shows on the chart within seconds.
+    // A refused read keeps the last good book rather than blanking the chart.
+    const pollBrokerBook = async () => {
+      if (!get().angelStatus?.connected) {
+        if (get().brokerBook) set({ brokerBook: null })
+        return
+      }
+      try {
+        set({ brokerBook: await api.brokerBook() })
+      } catch {
+        /* transient — the next poll retries */
+      }
+    }
+    void pollBrokerBook()
+    window.setInterval(pollBrokerBook, BROKER_BOOK_POLL_MS)
 
     stream.onStatus((connection) => set({ connection }))
     stream.onMessage((message) => {
@@ -433,6 +458,7 @@ export const useStore = create<State>((set, get) => ({
   setPaper: (paper) => set({ paper }),
   dismissPaperFill: () => set({ paperFill: null }),
   setTradingMode: (tradingMode) => set({ tradingMode }),
+  setPositionsOpen: (positionsOpen) => set({ positionsOpen }),
   setAngelStatus: (angelStatus) => {
     const before = get().angelStatus
     set({ angelStatus })

@@ -6,6 +6,7 @@ import SettingsModal from './components/SettingsModal'
 import ChartCanvas from './components/chart/ChartCanvas'
 import DrawingLayer from './components/chart/DrawingLayer'
 import AIOverlay from './components/chart/AIOverlay'
+import BrokerLayer from './components/chart/BrokerLayer'
 import Toolbar from './components/chart/Toolbar'
 import LiveModeBanner from './components/layout/LiveModeBanner'
 import StatusBar from './components/layout/StatusBar'
@@ -203,6 +204,8 @@ export default function App() {
                       digits={digits}
                     />
                   )}
+                  <BrokerLayer transform={transform} symbol={instrument?.symbol ?? ''}
+                               digits={digits} />
                   <DrawingLayer
                     transform={transform}
                     container={container}

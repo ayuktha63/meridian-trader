@@ -16,12 +16,13 @@ from ..broker.account_balance import effective_balance_with_source
 from ..broker.angelone.execution import (
     RecommendationNotExecutable, RecommendationNotFound, angel_execution,
 )
+from ..broker import angel_book
 from ..data.feed import feed
 from ..db.session import get_session
 from ..instruments import get_instrument
 from ..runtime_settings import get as get_runtime_settings
 from ..schemas.execution import (
-    ExecuteRequest, ExecutionPreview, ExecutionRecord, LiveTradingOverview,
+    BrokerBook, ExecuteRequest, ExecutionPreview, ExecutionRecord, LiveTradingOverview,
 )
 
 router = APIRouter(prefix="/api/trades", tags=["execution"])
@@ -54,6 +55,21 @@ def _unrealised_pnl(record: ExecutionRecord, last_price: Optional[float]) -> Opt
     return round(gross - charge, 2)
 
 
+async def _broker_positions(managed: set):
+    book = await angel_book.read(managed)
+    return None if book is None else book.positions
+
+
+@router.get("/live/book", response_model=BrokerBook)
+async def live_book() -> BrokerBook:
+    """Angel One's positions and orders as it reports them now — including a
+    trade taken in its own app. 503 when the broker cannot be read."""
+    book = await angel_book.read()
+    if book is None:
+        raise HTTPException(503, "Angel One is not connected, or refused the read.")
+    return book
+
+
 @router.get("/live/overview", response_model=LiveTradingOverview)
 async def live_overview(session: AsyncSession = Depends(get_session)) -> LiveTradingOverview:
     """Everything the live-trading screen shows in one call: the real
@@ -79,6 +95,7 @@ async def live_overview(session: AsyncSession = Depends(get_session)) -> LiveTra
     return LiveTradingOverview(
         balance=round(balance, 2), balance_source=source,
         currency=get_runtime_settings().account_currency,
+        broker_positions=await _broker_positions({r.trading_symbol for r in open_positions}),
         open_risk=round(ledger.open_risk, 2),
         realised_today=round(ledger.realised_today, 2),
         trades_today=ledger.trades_today,

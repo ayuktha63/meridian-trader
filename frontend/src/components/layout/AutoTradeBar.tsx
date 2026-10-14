@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { fmtSigned, timeAgo } from '../../lib/format'
-import type { ExecutionRecord, LiveTradingOverview, PaperAccount, PaperState } from '../../lib/types'
+import type { BrokerBook, ExecutionRecord, LiveTradingOverview, PaperAccount, PaperState } from '../../lib/types'
 import { useStore } from '../../store/useStore'
 
 /**
@@ -64,6 +64,7 @@ export default function AutoTradeBar() {
   // instant it resolves, with no second or two of lag from a separate poll.
   const mode = useStore((s) => s.tradingMode)
   const angel = useStore((s) => s.angelStatus)
+  const brokerBook = useStore((s) => s.brokerBook)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [live, setLive] = useState<LiveTradingOverview | null>(null)
@@ -218,7 +219,7 @@ export default function AutoTradeBar() {
           >
             {isLive ? (
               <LivePanel wallet={wallet} walletMoney={walletMoney}
-                         live={live} stats={liveStats} />
+                         live={live} stats={liveStats} book={brokerBook} />
             ) : (
               <DemoPanel account={account} paper={paper} money={money} busy={busy}
                          onReset={reset} onCloseOpenTrade={closeOpenTrade} />
@@ -230,7 +231,8 @@ export default function AutoTradeBar() {
   )
 }
 
-function LivePanel({ wallet, walletMoney, live, stats }: {
+function LivePanel({ wallet, walletMoney, live, stats, book }: {
+  book: BrokerBook | null
   wallet: number | null
   walletMoney: (value: number) => string
   live: LiveTradingOverview | null
@@ -240,6 +242,9 @@ function LivePanel({ wallet, walletMoney, live, stats }: {
     value == null ? '—' : `${live?.currency === 'INR' ? '₹' : '$'}${Math.abs(value)
       .toLocaleString(undefined, { maximumFractionDigits: 2 })}`
   const rOrDash = (value: number | null) => value == null ? '—' : `${fmtSigned(value, 2)}R`
+  const signedMoney = (value: number) => `${value >= 0 ? '+' : '−'}${money(value)}`
+  const openPnl = (book?.positions ?? []).reduce((sum, p) => sum + (p.unrealised ?? p.pnl ?? 0), 0)
+  const filled = (book?.orders ?? []).filter((o) => o.status === 'complete' && o.filled > 0)
 
   return (
     <>
@@ -252,15 +257,28 @@ function LivePanel({ wallet, walletMoney, live, stats }: {
       <div className="grid grid-cols-3 gap-2">
         <Stat label="Wallet" value={wallet != null ? walletMoney(wallet) : '—'}
               tone="text-bear" hint="Available funds — Angel One (rmsLimit)" />
-        <Stat label="Open risk" value={money(live?.open_risk)}
-              tone="text-warn" hint="What the open book loses if every stop is hit, charges included" />
-        <Stat label="Realised today" value={money(live?.realised_today)}
-              tone={(live?.realised_today ?? 0) >= 0 ? 'text-bull' : 'text-bear'}
-              hint="Today's closed P&L, net of estimated charges" />
+        <Stat label="Open P&L" value={book ? signedMoney(openPnl) : '—'}
+              tone={openPnl >= 0 ? 'text-bull' : 'text-bear'}
+              hint="Unrealised profit or loss on what Angel One says is open, before charges" />
+        <Stat label="Realised today" value={book ? signedMoney(book.realised_today) : '—'}
+              tone={(book?.realised_today ?? 0) >= 0 ? 'text-bull' : 'text-bear'}
+              hint="Profit booked today across every position, as Angel One reports it, before charges" />
       </div>
 
-      {stats && (
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="Open positions" value={book ? `${book.positions.length}` : '—'}
+              hint="Every position Angel One holds, however it was placed" />
+        <Stat label="Orders filled today" value={book ? `${filled.length}` : '—'}
+              hint="Completed orders in Angel One's order book today" />
+        <Stat label="Open risk" value={money(live?.open_risk)}
+              tone="text-warn" hint="What the positions Meridian placed lose if every stop is hit" />
+      </div>
+
+      {stats && stats.totalTrades > 0 && (
         <>
+          <h4 className="text-[9px] uppercase tracking-wider text-faint">
+            Trades Meridian placed
+          </h4>
           <div className="grid grid-cols-3 gap-2">
             <Stat label="Trades" value={`${stats.totalTrades}`}
                   sub={`${stats.wins}W / ${stats.losses}L`}
@@ -286,48 +304,49 @@ function LivePanel({ wallet, walletMoney, live, stats }: {
 
       <div className="border-t border-hairline pt-2">
         <h4 className="text-[9px] uppercase tracking-wider text-faint mb-1.5">
-          Trade history {live?.open_positions.length ? `(${live.open_positions.length} open)` : ''}
+          Today at Angel One {book?.positions.length ? `(${book.positions.length} open)` : ''}
         </h4>
         <div className="max-h-52 overflow-y-auto space-y-1 pr-0.5">
-          {live?.open_positions.map((p) => (
-            <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5
-                                        bg-accent/10 border border-accent/30">
+          {book?.positions.map((p) => (
+            <div key={p.exchange + p.trading_symbol + p.product}
+                 className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5
+                            bg-accent/10 border border-accent/30">
               <div className="min-w-0">
-                <span className={`text-2xs font-semibold ${
-                  p.side === 'BUY' ? 'text-bull' : 'text-bear'}`}>
-                  {p.side}
+                <span className={`text-2xs font-semibold ${p.net_quantity > 0 ? 'text-bull' : 'text-bear'}`}>
+                  {p.net_quantity > 0 ? 'BUY' : 'SELL'}
                 </span>
                 <span className="text-2xs font-semibold ml-1">{p.symbol}</span>
                 <span className="text-[9px] text-faint ml-1.5">
-                  @ {p.average_fill_price ?? p.requested_price} · {timeAgo(p.created_at)}
+                  {Math.abs(p.net_quantity)} @ {p.net_quantity > 0 ? p.buy_average : p.sell_average} · open
                 </span>
               </div>
-              <span className="text-[9px] font-semibold text-accent shrink-0">OPEN</span>
-            </div>
-          ))}
-          {stats?.closed.length ? stats.closed.slice(0, 10).map((t) => (
-            <div key={t.id}
-                 className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5
-                             ${(t.net_pnl ?? 0) >= 0 ? 'bg-bull/[0.06]' : 'bg-bear/[0.06]'}`}>
-              <div className="min-w-0">
-                <span className={`text-2xs font-semibold ${
-                  t.side === 'BUY' ? 'text-bull' : 'text-bear'}`}>
-                  {t.side}
-                </span>
-                <span className="text-2xs font-semibold ml-1">{t.symbol}</span>
-                <span className="text-[9px] text-faint ml-1.5">
-                  {t.closed_at ? timeAgo(t.closed_at) : ''} · {t.exit_reason ?? ''}
-                </span>
-              </div>
-              <span className={`text-2xs font-semibold tnum shrink-0 ${
-                (t.net_pnl ?? 0) >= 0 ? 'text-bull' : 'text-bear'}`}>
-                {fmtSigned(t.net_pnl ?? 0, 2)}
+              <span className={`text-2xs font-semibold tnum shrink-0 ${(p.pnl ?? 0) >= 0 ? 'text-bull' : 'text-bear'}`}>
+                {signedMoney(p.pnl ?? 0)}
               </span>
             </div>
-          )) : !live?.open_positions.length && (
+          ))}
+          {filled.map((o) => (
+            <div key={o.order_id}
+                 className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 bg-tint/[0.04]">
+              <div className="min-w-0">
+                <span className={`text-2xs font-semibold ${o.side === 'BUY' ? 'text-bull' : 'text-bear'}`}>
+                  {o.side}
+                </span>
+                <span className="text-2xs font-semibold ml-1">{o.symbol}</span>
+                <span className="text-[9px] text-faint ml-1.5">
+                  {o.filled} filled{o.average_price ? ` @ ${o.average_price}` : ''} · {o.updated_at.slice(12, 20)}
+                </span>
+              </div>
+              <span className="text-[9px] text-faint shrink-0">{o.order_type}</span>
+            </div>
+          ))}
+          {!book && (
             <p className="text-[10px] text-faint italic px-2 py-1">
-              {live ? 'No live trades yet.' : 'Loading…'}
+              {live ? 'Angel One\'s books could not be read just now.' : 'Loading…'}
             </p>
+          )}
+          {book && !book.positions.length && !filled.length && (
+            <p className="text-[10px] text-faint italic px-2 py-1">Nothing traded at Angel One today.</p>
           )}
         </div>
       </div>

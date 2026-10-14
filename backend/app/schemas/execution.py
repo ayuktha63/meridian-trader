@@ -89,6 +89,63 @@ class ExecutionRecord(BaseModel):
     updated_at: float
 
 
+class BrokerPosition(BaseModel):
+    """A position Angel One reports as open, however it was opened. Meridian
+    only manages what it placed; this is what the account actually holds,
+    including a trade taken in the broker's own app."""
+
+    symbol: str
+    #: The symbol this application charts it under; None if it does not list it.
+    chart_symbol: Optional[str] = None
+    trading_symbol: str
+    exchange: str
+    product: str
+    net_quantity: float
+    buy_average: float
+    sell_average: float
+    last_price: Optional[float] = None
+    pnl: Optional[float] = None
+    realised: Optional[float] = None
+    unrealised: Optional[float] = None
+    buy_quantity: float = 0.0
+    sell_quantity: float = 0.0
+    #: True when the open position is one Meridian placed and is supervising.
+    managed: bool = False
+
+
+class BrokerOrder(BaseModel):
+    """An order as the broker's order book has it."""
+
+    order_id: str
+    symbol: str
+    chart_symbol: Optional[str] = None
+    exchange: str
+    side: str
+    order_type: str
+    product: str
+    quantity: float
+    filled: float = 0.0
+    price: Optional[float] = None
+    trigger_price: Optional[float] = None
+    average_price: Optional[float] = None
+    status: str
+    #: Still resting or waiting at the broker.
+    working: bool
+    message: str = ""
+    updated_at: str = ""
+
+
+class BrokerBook(BaseModel):
+    positions: List[BrokerPosition]
+    orders: List[BrokerOrder]
+    #: Resting conditional (GTT / OCO) rules as the broker returns them, or
+    #: None if they could not be read.
+    conditional: Optional[List[dict]] = None
+    #: Profit booked today across every position, open or already closed.
+    realised_today: float = 0.0
+    as_of: float
+
+
 class LiveTradingOverview(BaseModel):
     """Everything the live-trading screen needs in one call: the real
     wallet, today's ledger (the same one the risk gate enforces against),
@@ -104,6 +161,8 @@ class LiveTradingOverview(BaseModel):
 
     open_positions: List[ExecutionRecord]
     history: List[ExecutionRecord]
+    #: What the broker itself says is open. None when it could not be asked.
+    broker_positions: Optional[List[BrokerPosition]] = None
 
 
 class ExecutionPreview(BaseModel):
