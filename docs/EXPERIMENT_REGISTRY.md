@@ -52,9 +52,16 @@ by anything, and why no configuration is eligible.
 
 `backtests` (the older table the UI reads) is not linked to the registry, so its
 22 rows cannot be fingerprinted; only `research_experiments` is. Reports should
-cite this table, not the `backtests` totals. The crypto runs use the crypto
-cost profiles recorded in each record; the 0.05% "generic" profile in
-`costs.py` is a placeholder and was used by the earliest runs only.
+cite this table, not the `backtests` totals.
+
+Cost profile by record (measured): crypto engine walk-forwards, 6 under the
+0.05%-a-side `generic` placeholder, 6 under `crypto_perp`, 6 under
+`crypto_spot`; NSE walk-forwards, 7 under `india:stock` and 2 under
+`india:index`; the NSE study under `india:stock:intraday`. The 6 `generic`
+records are crypto, outside the approved Angel One universe, and must not be
+cited as cost-realistic. The `india:index` profile prices index futures, and
+the repo's own audit (D10) says futures STT may be stale, so those 2 are not
+cost-verified either.
 
 ## Tests
 
