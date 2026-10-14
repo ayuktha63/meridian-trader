@@ -26,6 +26,7 @@ from ..broker import live_limits
 from ..broker.angelone.execution import (
     RecommendationNotExecutable, RecommendationNotFound, angel_execution,
 )
+from ..broker.risk_gate import blocked_for_good
 from ..broker.trading_mode import trading_mode
 from ..config import settings
 from ..data.feed import feed
@@ -455,6 +456,16 @@ async def _auto_trade_live_entry(conn: Connection, result) -> None:
     try:
         instrument = get_instrument(symbol)
     except KeyError:
+        return
+
+    # An instrument the gate refuses outright, whatever the signal, is not
+    # asked about: no refusal row per bar, one notice an hour instead. The
+    # gate still blocks a manual order for it.
+    blocked = blocked_for_good(symbol)
+    if blocked:
+        alerts.emit("info", "AUTO_LIVE_SKIPPED",
+                    "Auto-live skips {}: {}".format(symbol, blocked),
+                    throttle=3600.0, symbol=symbol)
         return
 
     async with session_scope() as session:

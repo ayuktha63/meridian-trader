@@ -43,6 +43,30 @@ UNTRUSTED_TICK_EXCHANGES = {"CDS"}
 UNVERIFIED_QUANTITY_EXCHANGES = {"MCX"}
 
 
+def blocked_for_good(symbol: str) -> Optional[str]:
+    """Why this instrument can never be ordered live right now, from local
+    facts alone (no network): its segment is one of the hard blocks. None if
+    the gate must decide. The gate itself still refuses these — this only
+    lets the unattended path stop asking, instead of recording the same
+    refusal on every bar."""
+    try:
+        asset = get_instrument(symbol).asset_class
+    except KeyError:
+        return "Unknown instrument."
+    exchange = DERIVATIVE_EXCHANGE.get(asset)
+    if exchange in UNTRUSTED_TICK_EXCHANGES:
+        return ("{} orders are blocked: Angel One's tick-size scale for this segment is "
+                "unverified.".format(exchange))
+    if exchange in UNVERIFIED_QUANTITY_EXCHANGES:
+        return ("{} orders are blocked: whether Angel One takes the quantity in lots or in "
+                "units is unverified.".format(exchange))
+    return None
+
+
+#: Where each derivative asset class trades (`angelone/instruments.DERIVATIVE_VENUE`).
+DERIVATIVE_EXCHANGE = {"index": "NFO", "currency_fut": "CDS", "commodity": "MCX"}
+
+
 @dataclass
 class Recommendation:
     """The server-derived facts about a trade candidate — never frontend input."""
