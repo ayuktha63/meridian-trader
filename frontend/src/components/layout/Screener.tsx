@@ -184,8 +184,9 @@ function RowGroup({ title, rows, onSelect, tone, now }: {
           >
             <span className="w-24 shrink-0 font-semibold text-xs truncate">{row.display}</span>
             <span className={`w-10 shrink-0 text-2xs font-bold ${toneText}`}>{row.decision}</span>
-            <span className="w-16 shrink-0 text-2xs tnum text-faint">
-              {row.confidence.toFixed(0)}%
+            <span className="w-16 shrink-0 text-2xs tnum text-faint"
+                  title="Signal score, 0-100 — a heuristic, not a probability of winning; not calibrated against results">
+              {row.confidence.toFixed(0)}
             </span>
             <span className="flex-1 text-2xs text-ink/70 truncate">{row.summary}</span>
             <span className={`w-16 shrink-0 text-2xs tnum text-right ${stale ? 'text-warn' : 'text-faint'}`}

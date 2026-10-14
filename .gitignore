@@ -12,7 +12,10 @@ backend/data/*.db-journal
 node_modules/
 dist/
 dist-electron/
-release/
+# electron-builder's packaged-installer output — anchored to the frontend
+# build, not unqualified: an unanchored "release/" also matched
+# docs/release/, silently dropping real documentation from every commit.
+frontend/release/
 .DS_Store
 *.log
 .vite/
