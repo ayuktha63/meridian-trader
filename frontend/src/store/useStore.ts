@@ -58,6 +58,8 @@ interface State {
   exitAlert: LiveTick | null
   alertSound: boolean
   showOverlays: boolean
+  /** Only the trade: entry, take profit and stop. Nothing else on the chart. */
+  tradeOnly: boolean
   autoAnalysis: boolean
   includeAi: boolean
 
@@ -96,6 +98,7 @@ interface State {
   requestAnalysis: () => void
   askQuestion: (question: string) => Promise<void>
   toggleOverlays: () => void
+  toggleTradeOnly: () => void
   toggleDrawingsVisible: () => void
   toggleAutoAnalysis: () => void
   toggleIncludeAi: () => void
@@ -146,6 +149,7 @@ export const useStore = create<State>((set, get) => ({
   exitAlert: null,
   alertSound: true,
   showOverlays: true,
+  tradeOnly: false,
   autoAnalysis: true,
   includeAi: true,
 
@@ -439,6 +443,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   toggleOverlays: () => set((prev) => ({ showOverlays: !prev.showOverlays })),
+  toggleTradeOnly: () => set((prev) => ({ tradeOnly: !prev.tradeOnly })),
   toggleDrawingsVisible: () => set((prev) => ({ showDrawings: !prev.showDrawings })),
 
   toggleAutoAnalysis: () => {

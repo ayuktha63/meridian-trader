@@ -7,6 +7,7 @@ import ChartCanvas from './components/chart/ChartCanvas'
 import DrawingLayer from './components/chart/DrawingLayer'
 import AIOverlay from './components/chart/AIOverlay'
 import BrokerLayer from './components/chart/BrokerLayer'
+import TradeSetupLayer from './components/chart/TradeSetupLayer'
 import Toolbar from './components/chart/Toolbar'
 import LiveModeBanner from './components/layout/LiveModeBanner'
 import StatusBar from './components/layout/StatusBar'
@@ -61,6 +62,7 @@ export default function App() {
   const noData = useStore((s) => s.noData)
   const analysis = useStore((s) => s.analysis)
   const showOverlays = useStore((s) => s.showOverlays)
+  const tradeOnly = useStore((s) => s.tradeOnly)
   const activePanel = useStore((s) => s.activePanel)
   const setActivePanel = useStore((s) => s.setActivePanel)
   const instrument = useActiveInstrument()
@@ -191,26 +193,35 @@ export default function App() {
             <ChartCanvas
               candles={candles}
               digits={digits}
-              showMovingAverages={showMovingAverages}
-              showVolume={showVolume}
+              showMovingAverages={showMovingAverages && !tradeOnly}
+              showVolume={showVolume && !tradeOnly}
               onCrosshair={setHovered}
             >
               {(transform, container) => (
                 <>
-                  {showOverlays && analysis && (
-                    <AIOverlay
-                      overlays={analysis.overlays}
-                      transform={transform}
-                      digits={digits}
-                    />
+                  {tradeOnly ? (
+                    analysis && (
+                      <TradeSetupLayer plan={analysis.plan} barTime={analysis.bar_time}
+                                       transform={transform} digits={digits} />
+                    )
+                  ) : (
+                    <>
+                      {showOverlays && analysis && (
+                        <AIOverlay
+                          overlays={analysis.overlays}
+                          transform={transform}
+                          digits={digits}
+                        />
+                      )}
+                      <BrokerLayer transform={transform} symbol={instrument?.symbol ?? ''}
+                                   digits={digits} />
+                      <DrawingLayer
+                        transform={transform}
+                        container={container}
+                        digits={digits}
+                      />
+                    </>
                   )}
-                  <BrokerLayer transform={transform} symbol={instrument?.symbol ?? ''}
-                               digits={digits} />
-                  <DrawingLayer
-                    transform={transform}
-                    container={container}
-                    digits={digits}
-                  />
                 </>
               )}
             </ChartCanvas>
