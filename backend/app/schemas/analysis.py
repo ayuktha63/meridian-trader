@@ -288,6 +288,13 @@ class ScreenerRow(BaseModel):
     take_profit: Optional[float] = None
     risk_reward: Optional[float] = None
     summary: str = ""
+    #: When this read was generated, and the bar it was generated from — a
+    #: screener result is a snapshot, not a stream, and nothing in the UI
+    #: could otherwise tell "just scanned" from "scanned twenty minutes ago,
+    #: before price moved past it". See docs/RISK_CONTROL_AUDIT.md's UX
+    #: findings.
+    generated_at: float = 0.0
+    bar_time: int = 0
     error: Optional[str] = None
     #: Which app this can actually be traded on, and the exact name to search
     #: for there — "Angel One" + "NIFTY25AUG26FUT". Absent when Angel One

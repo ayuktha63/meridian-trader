@@ -188,6 +188,31 @@ async def audit_log(limit: int = 200) -> list:
     return await audit.recent(min(max(limit, 1), 1000))
 
 
+@router.get("/api/trading/drawdown")
+async def drawdown_status() -> dict:
+    """The account's high-water mark, current drawdown from it, and whether
+    that drawdown has tripped the lock — separate from the daily-loss limit,
+    which resets at midnight and so never catches a losing week made of
+    individually-fine days. See broker/drawdown.py."""
+    from dataclasses import asdict
+
+    from ..broker.drawdown import drawdown_tracker
+    return asdict(drawdown_tracker.status())
+
+
+@router.post("/api/trading/drawdown/clear")
+async def clear_drawdown_lock() -> dict:
+    """Explicit recovery: a human looked at why the account fell, and is
+    choosing to resume. Does not touch the kill switch — clear that
+    separately if it's what's actually blocking new entries right now."""
+    from dataclasses import asdict
+
+    from ..broker.drawdown import drawdown_tracker
+    drawdown_tracker.clear()
+    await audit.record("drawdown_lock_cleared", "manual")
+    return asdict(drawdown_tracker.status())
+
+
 @router.get("/api/alerts")
 async def list_alerts(since: float = 0.0) -> list:
     return alerts.recent(since)

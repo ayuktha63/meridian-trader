@@ -183,3 +183,23 @@ def universe():
 @pytest.fixture
 def uptrend():
     return trending_df()
+
+
+@pytest.fixture(autouse=True)
+def _reset_drawdown_tracker():
+    """Global, unlike the per-file resets elsewhere in this suite: the
+    drawdown tracker's whole point is a peak that survives everything else
+    (restarts, day boundaries), which is exactly what makes it the one
+    process-wide singleton here that can silently leak a "peak" set by one
+    test's fake funds into an unrelated test's much smaller ones — read as a
+    99% drawdown that was never a real one. A file-local reset (as
+    test_execution.py and test_reconciler.py also carry, for the tests that
+    exercise it directly) is correct but easy to forget in a new file that
+    touches live funds; this is the backstop."""
+    from app.broker.drawdown import drawdown_tracker
+
+    drawdown_tracker._peak = drawdown_tracker._last = None  # noqa: SLF001
+    drawdown_tracker.clear()
+    yield
+    drawdown_tracker._peak = drawdown_tracker._last = None  # noqa: SLF001
+    drawdown_tracker.clear()

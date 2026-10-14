@@ -125,7 +125,8 @@ class PreTradeRiskGate:
     #: Checks 1-5: local state only, zero network calls. Run first, always.
     _CHEAP_CHECKS = (
         "_check_trading_mode", "_check_confirmation", "_check_angel_connection",
-        "_check_kill_switch", "_check_duplicate", "_check_recommendation_shape",
+        "_check_kill_switch", "_check_drawdown_lock", "_check_duplicate",
+        "_check_recommendation_shape",
     )
     #: Checks 6-10: need instrument resolution / broker funds already fetched
     #: into the context by the caller.
@@ -187,6 +188,16 @@ class PreTradeRiskGate:
             return RiskGateResult(
                 allowed=False, check="kill_switch",
                 reason="Live trading is disabled by the kill switch.")
+        return RiskGateResult(allowed=True)
+
+    # ── fail fast if the account is already past its drawdown line ──
+    def _check_drawdown_lock(self, ctx: GateContext) -> RiskGateResult:
+        from .drawdown import drawdown_tracker
+        status = drawdown_tracker.status()
+        if status.locked:
+            return RiskGateResult(
+                allowed=False, check="drawdown_lock",
+                reason=status.locked_reason or "Drawdown lock is active.")
         return RiskGateResult(allowed=True)
 
     # ── duplicate-order guard (recommendation-level) ─────────
@@ -481,11 +492,24 @@ class PreTradeRiskGate:
         if ctx.ledger is None:
             return _no("account_limits", "Live trade history was not loaded.")
         cfg = get_settings()
-        for limit in (self._daily_loss, self._activity, self._exposure):
+        for limit in (self._drawdown, self._daily_loss, self._activity, self._exposure):
             result = limit(ctx, ctx.ledger, cfg)
             if not result.allowed:
                 return result
         return RiskGateResult(allowed=True)
+
+    @staticmethod
+    def _drawdown(ctx: GateContext, ledger, cfg) -> RiskGateResult:
+        """Peak-to-trough, not reset at midnight. See drawdown.py."""
+        from .drawdown import drawdown_tracker
+        if ctx.available_funds is None:
+            return RiskGateResult(allowed=True)   # `_check_funds` already refuses this
+        equity = ctx.available_funds + ledger.unrealised_now
+        reason = drawdown_tracker.update(equity)
+        if reason is None:
+            return RiskGateResult(allowed=True)
+        trading_mode.activate_kill_switch(reason)
+        return _no("drawdown", reason)
 
     @staticmethod
     def _daily_loss(ctx: GateContext, ledger, cfg) -> RiskGateResult:

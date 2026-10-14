@@ -2,12 +2,20 @@ import type { TradePlan } from '../../lib/types'
 import { fmtPrice } from '../../lib/format'
 import type { Transform } from './geometry'
 
+/** Whether price has already gone through the stop or the target since this
+ * plan was generated — the one thing this overlay used to have no way to
+ * say, so a dead setup looked exactly as "live" as a fresh one until the
+ * next re-analysis happened to run. See docs/RISK_CONTROL_AUDIT.md's UX
+ * findings. */
+export type SetupStatus = 'stopped' | 'reached' | null
+
 interface Props {
   plan: TradePlan
   /** Open time of the last completed bar the plan was made from. */
   barTime: number
   transform: Transform
   digits: number
+  invalidated?: SetupStatus
 }
 
 /**
@@ -16,7 +24,7 @@ interface Props {
  * stop. It draws only what the engine's plan says; on WAIT there is no plan
  * and it says so instead of drawing one.
  */
-export default function TradeSetupLayer({ plan, barTime, transform, digits }: Props) {
+export default function TradeSetupLayer({ plan, barTime, transform, digits, invalidated }: Props) {
   const { entry, stop_loss: stop, take_profit: target } = plan
   const long = plan.decision === 'BUY'
   if (plan.decision === 'WAIT' || !entry || !stop || !target) {
@@ -40,9 +48,14 @@ export default function TradeSetupLayer({ plan, barTime, transform, digits }: Pr
     </div>
   )
   const reward = Math.abs(target - entry), risk = Math.abs(entry - stop)
+  // Dead rather than live: price already went through one of the two levels
+  // since this plan was made. The lines stay — losing that context would be
+  // worse — but desaturated, with no mistaking it for an actionable setup.
+  const dead = invalidated != null
+  const opacity = dead ? 0.35 : 1
   return (
     <div className="absolute left-0 top-0 pointer-events-none overflow-hidden"
-         style={{ width: transform.width, height: transform.height, zIndex: 4 }}>
+         style={{ width: transform.width, height: transform.height, zIndex: 4, opacity }}>
       <div className="absolute bg-bull/20" style={{ left, width, ...block(yEntry, yTarget) }} />
       <div className="absolute bg-bear/20" style={{ left, width, ...block(yEntry, yStop) }} />
       {[yEntry, yTarget, yStop].map((y, i) => (
@@ -54,8 +67,12 @@ export default function TradeSetupLayer({ plan, barTime, transform, digits }: Pr
       {tag(yTarget, `TP ${fmtPrice(target, digits)}`, '#2FD3A0')}
       {tag(yStop, `SL ${fmtPrice(stop, digits)}`, '#FF4D6A')}
       <div className="absolute left-3 top-3 rounded-md px-2 py-1 text-2xs text-muted
-                      bg-panel/80 border border-hairline">
-        Reward : risk {risk > 0 ? (reward / risk).toFixed(2) : '—'} · a heuristic reading, not a promise
+                      bg-panel/80 border border-hairline" style={{ opacity: 1 }}>
+        {dead
+          ? (invalidated === 'stopped'
+            ? '⚠ Setup invalidated — price already hit the stop since this read. Re-analyse for a fresh one.'
+            : '✓ Setup already reached target since this read. Re-analyse for a fresh one.')
+          : <>Reward : risk {risk > 0 ? (reward / risk).toFixed(2) : '—'} · a heuristic reading, not a promise</>}
       </div>
     </div>
   )

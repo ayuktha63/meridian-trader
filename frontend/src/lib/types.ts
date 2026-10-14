@@ -1093,6 +1093,10 @@ export interface ScreenerRow {
   take_profit: number | null
   risk_reward: number | null
   summary: string
+  /** When this read was generated, as a Unix timestamp (seconds). */
+  generated_at: number
+  /** Open time of the bar it was generated from. */
+  bar_time: number
   error?: string | null
   broker?: string | null
   broker_symbol?: string | null

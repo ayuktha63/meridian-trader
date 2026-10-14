@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     live_max_trades_per_day: int = 5
     #: Realised loss for the IST trading day at which the kill switch trips.
     live_daily_loss_limit: float = 2_000.0
+    #: Peak-to-trough: the daily limit above resets every midnight, so a
+    #: losing week made of individually-fine days never trips it. This
+    #: looks at the account's all-time high-water mark instead. Percent of
+    #: that peak; 0 disables (unlike the three limits above, 0 here is the
+    #: *stricter* direction, not a silent bypass, so it keeps the documented
+    #: 0-means-off convention). See docs/RISK_CONTROL_AUDIT.md finding 1.
+    live_max_drawdown_pct: float = 10.0
     live_max_symbol_exposure: float = 50_000.0
     live_max_sector_exposure: float = 100_000.0
     #: Furthest the entry may sit from the broker's last traded price, in
@@ -179,6 +186,15 @@ class Settings(BaseSettings):
                 "Setting it to 0 would remove the check silently rather than disable "
                 "it on purpose; if you truly want no limit here, that is a code "
                 "change, not a configuration value.".format(info.field_name.upper()))
+        return v
+
+    @field_validator("live_max_drawdown_pct")
+    @classmethod
+    def _drawdown_pct_is_a_sane_percentage(cls, v):
+        if v < 0 or v > 100:
+            raise ValueError(
+                "LIVE_MAX_DRAWDOWN_PCT must be between 0 and 100 (it's a percent "
+                "of the account's peak equity) — got {}.".format(v))
         return v
 
     @property

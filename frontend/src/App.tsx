@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ExitAlert from './components/ExitAlert'
 import PaperFillToast from './components/PaperFillToast'
 import SettingsModal from './components/SettingsModal'
@@ -67,6 +67,23 @@ export default function App() {
   const activePanel = useStore((s) => s.activePanel)
   const setActivePanel = useStore((s) => s.setActivePanel)
   const instrument = useActiveInstrument()
+
+  // Has price already gone through the stop or the target since this plan
+  // was generated? Checked against every bar's high/low from that point on,
+  // not just the latest tick — a stop that triggered intrabar and recovered
+  // before the next render must still read as dead, not live. See
+  // components/chart/TradeSetupLayer.tsx.
+  const setupStatus = useMemo(() => {
+    const plan = analysis?.plan
+    if (!plan || plan.decision === 'WAIT' || !plan.stop_loss || !plan.take_profit) return null
+    const since = candles.filter((c) => c.time >= analysis!.bar_time)
+    const long = plan.decision === 'BUY'
+    const stopHit = since.some((c) => (long ? c.low <= plan.stop_loss! : c.high >= plan.stop_loss!))
+    if (stopHit) return 'stopped' as const
+    const targetHit = since.some((c) =>
+      (long ? c.high >= plan.take_profit! : c.low <= plan.take_profit!))
+    return targetHit ? 'reached' as const : null
+  }, [analysis, candles])
   const digits = instrument?.digits ?? 5
 
   const management = analysis?.management ?? null
@@ -203,16 +220,34 @@ export default function App() {
                   {tradeOnly ? (
                     analysis && (
                       <TradeSetupLayer plan={analysis.plan} barTime={analysis.bar_time}
-                                       transform={transform} digits={digits} />
+                                       transform={transform} digits={digits}
+                                       invalidated={setupStatus} />
                     )
                   ) : (
                     <>
                       {showOverlays && analysis && (
-                        <AIOverlay
-                          overlays={analysis.overlays}
-                          transform={transform}
-                          digits={digits}
-                        />
+                        <>
+                          {/* Same rule as the Trade-only view's own layer:
+                              a setup whose stop or target has already been
+                              reached since this read is shown, not hidden —
+                              dimmed, so it can't be mistaken for current. */}
+                          <div style={{ opacity: setupStatus ? 0.3 : 1 }}>
+                            <AIOverlay
+                              overlays={analysis.overlays}
+                              transform={transform}
+                              digits={digits}
+                            />
+                          </div>
+                          {setupStatus && (
+                            <div className="absolute left-3 top-3 pointer-events-none rounded-md
+                                            px-2 py-1 text-2xs bg-panel/90 border border-warn/40
+                                            text-warn" style={{ zIndex: 5 }}>
+                              {setupStatus === 'stopped'
+                                ? '⚠ This read’s stop has already been hit — re-analyse for a fresh one.'
+                                : '✓ This read’s target has already been reached — re-analyse for a fresh one.'}
+                            </div>
+                          )}
+                        </>
                       )}
                       <BrokerLayer transform={transform} symbol={instrument?.symbol ?? ''}
                                    digits={digits} />

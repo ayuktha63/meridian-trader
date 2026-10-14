@@ -88,10 +88,15 @@ def _clean():
                     reconciler._corrected):                          # noqa: SLF001
         scratch.clear()
     reconciler._lock = None                                          # noqa: SLF001
+    from app.broker.drawdown import drawdown_tracker
+    drawdown_tracker._peak = drawdown_tracker._last = None            # noqa: SLF001
+    drawdown_tracker.clear()
     yield
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()
     angel_auth._session = None  # noqa: SLF001
+    drawdown_tracker._peak = drawdown_tracker._last = None            # noqa: SLF001
+    drawdown_tracker.clear()
 
 
 @pytest.fixture

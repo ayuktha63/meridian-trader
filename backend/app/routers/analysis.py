@@ -230,7 +230,7 @@ async def screener(
             entry=result.plan.entry, stop_loss=result.plan.stop_loss,
             take_profit=result.plan.take_profit, risk_reward=result.plan.risk_reward,
             summary=result.verdict.summary, broker=broker, broker_symbol=broker_symbol,
-            exchange=exchange,
+            exchange=exchange, generated_at=result.generated_at, bar_time=result.bar_time,
         )
 
     results = await asyncio.gather(
