@@ -1,5 +1,12 @@
 # Open-source strategy review
 
+> **Update, 14 October 2026:** five of the repositories this brief named
+> (EDGE, vectorbt-backtesting-skills, pandas-ta, nse-orb-backtest,
+> Options-Trading-Bot-India) *were* opened and read afterwards; see
+> `OPEN_SOURCE_REPOSITORY_AUDIT.md`. The statement below that no third-party
+> source file was opened is true of this document's own session and of the nine
+> repositories it lists.
+
 **Read this first.** In this session **no third-party source file was
 opened.** The brief asked for an inspection of nine repositories; what was
 done instead, and what that supports:
