@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from app.analysis import indicators as ind
 from app.analysis import mtf, patterns, candlesticks, strategies
@@ -167,12 +166,10 @@ def test_stocks_get_the_monthly_not_the_next_month():
     from app.analysis import derivatives as dv
 
     today = date(2026, 8, 6)
-    for symbol in ("NIFTY", "RELIANCE", "HDFCBANK"):
+    for symbol, price in (("NIFTY", 24_500.0), ("RELIANCE", 1_320.0), ("HDFCBANK", 1_680.0)):
         inst = get_instrument(symbol)
-        suggestion = dv.suggest(inst, "long", inst.base_price,
-                                inst.base_price * 0.985, inst.base_price * 1.03,
-                                atr=inst.base_price * 0.004, bar_seconds=900,
-                                today=today)
+        suggestion = dv.suggest(inst, "long", price, price * 0.985, price * 1.03,
+                                atr=price * 0.004, bar_seconds=900, today=today)
         monthly = next(c for c in suggestion.expiries if c.kind == "monthly")
         assert suggestion.options[0].expiry == monthly.date
         assert suggestion.futures_expiry == monthly.date
@@ -214,72 +211,3 @@ def test_expiry_is_always_in_the_future():
             assert choice.days_to_expiry >= 0
             assert choice.date > day.isoformat() or choice.days_to_expiry == 0
         day += timedelta(days=1)
-
-
-# ── providers ─────────────────────────────────────────────────
-
-def test_coindcx_never_reports_ticker_volume_as_tick_volume():
-    """The ticker's `volume` is a rolling 24-hour total and the store
-    accumulates tick volume into the forming bar. Passing it through adds a
-    day's volume every second, which buries the whole histogram behind one
-    impossible bar."""
-    import asyncio
-
-    from app.data.providers.coindcx import CoinDCXProvider
-
-    provider = CoinDCXProvider()
-    seen = []
-
-    async def handler(tick):
-        seen.append(tick)
-        raise asyncio.CancelledError  # one tick is enough
-
-    async def fake_ticker():
-        return {"BTCUSDT": {"market": "BTCUSDT", "last_price": "64000.0",
-                            "bid": "63999.0", "ask": "64001.0",
-                            "volume": "173970000000.0"}}
-
-    provider._ticker = fake_ticker  # noqa: SLF001
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(provider.stream(["BTCUSD"], handler))
-
-    assert len(seen) == 1
-    assert seen[0].volume == 0.0
-    assert seen[0].price == 64000.0
-    assert seen[0].bid == 63999.0
-
-
-def test_coindcx_history_is_oldest_first():
-    """CoinDCX returns candles newest-first with millisecond timestamps; the
-    store requires oldest-first seconds."""
-    import asyncio
-
-    from app.data.providers.coindcx import CoinDCXProvider
-
-    provider = CoinDCXProvider()
-
-    class FakeResponse:
-        @staticmethod
-        def raise_for_status():
-            return None
-
-        @staticmethod
-        def json():
-            return [
-                {"time": 1_700_000_120_000, "open": 3, "high": 4, "low": 2,
-                 "close": 3.5, "volume": 10},
-                {"time": 1_700_000_060_000, "open": 2, "high": 3, "low": 1,
-                 "close": 3, "volume": 20},
-                {"time": 1_700_000_000_000, "open": 1, "high": 2, "low": 0.5,
-                 "close": 2, "volume": 30},
-            ]
-
-    async def fake_get(_url, params=None):
-        return FakeResponse()
-
-    provider._client.get = fake_get  # noqa: SLF001
-    rows = asyncio.run(provider.history("BTCUSD", "1m", 100))
-
-    assert [r[0] for r in rows] == [1_700_000_000.0, 1_700_000_060.0, 1_700_000_120.0]
-    assert rows[0][4] == 2      # close of the oldest bar
-    assert rows[-1][4] == 3.5   # close of the newest

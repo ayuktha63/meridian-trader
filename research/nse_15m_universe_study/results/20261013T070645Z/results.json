@@ -1,0 +1,3158 @@
+{
+  "configurations_tried": 40,
+  "datasets": {
+    "ADANIENT": "c350828f629c5dc6",
+    "AXISBANK": "10bcd7e5e3f3ab82",
+    "BAJFINANCE": "78f0922fc9880dc0",
+    "BEL": "95b7e03a45bf097c",
+    "BHARTIARTL": "b58c1938b8b564c1",
+    "BSE": "4edd19c524520b76",
+    "ETERNAL": "1832f167820d7772",
+    "HDFCBANK": "30d8d1a8935b0d92",
+    "HINDALCO": "395b5815d70713d2",
+    "ICICIBANK": "d49d1c750f906fd1",
+    "INFY": "baf522b08fdece6c",
+    "ITC": "8cc08b4dea85a48d",
+    "JIOFIN": "789c22f80c572c34",
+    "KOTAKBANK": "d09478ec8edf0546",
+    "LT": "8ed59bbb5faa1b81",
+    "M&M": "47ca341a5122d11a",
+    "MARUTI": "fc9559f4b05dc51c",
+    "RELIANCE": "595a1eefd4c84415",
+    "SBIN": "16cd99e09ad73bda",
+    "SHRIRAMFIN": "9ae8e9146f52ad5f",
+    "TATASTEEL": "3664c65b33152a1b",
+    "TITAN": "83c171e096228562"
+  },
+  "experiment_id": "exp-20261013-070740-268fc6",
+  "families": [
+    {
+      "chosen": {
+        "or_bars": 4.0,
+        "rr": 1.5
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3662,
+          "gross_expectancy_r": -0.0024,
+          "label": "or_bars=2,rr=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "or_bars": 2.0,
+            "rr": 1.5
+          },
+          "trades": 2539
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3681,
+          "gross_expectancy_r": 0.0011,
+          "label": "or_bars=2,rr=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "or_bars": 2.0,
+            "rr": 2.5
+          },
+          "trades": 2539
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3364,
+          "gross_expectancy_r": 0.0084,
+          "label": "or_bars=4,rr=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "or_bars": 4.0,
+            "rr": 1.5
+          },
+          "trades": 1842
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3381,
+          "gross_expectancy_r": 0.0096,
+          "label": "or_bars=4,rr=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "or_bars": 4.0,
+            "rr": 2.5
+          },
+          "trades": 1842
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.336R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.509R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "orb15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "orb15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "orb15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.03,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.315,
+              "trades": 107
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.3676,
+              "trades": 81
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.2949,
+              "trades": 82
+            },
+            "BEL": {
+              "expectancy_r": -0.2705,
+              "trades": 74
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.4422,
+              "trades": 76
+            },
+            "BSE": {
+              "expectancy_r": -0.1024,
+              "trades": 60
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.1278,
+              "trades": 82
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.4734,
+              "trades": 88
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.3648,
+              "trades": 77
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.4815,
+              "trades": 93
+            },
+            "INFY": {
+              "expectancy_r": -0.3954,
+              "trades": 89
+            },
+            "ITC": {
+              "expectancy_r": -0.4465,
+              "trades": 103
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.2563,
+              "trades": 72
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.4324,
+              "trades": 84
+            },
+            "LT": {
+              "expectancy_r": -0.3579,
+              "trades": 80
+            },
+            "M&M": {
+              "expectancy_r": -0.2381,
+              "trades": 63
+            },
+            "MARUTI": {
+              "expectancy_r": -0.42,
+              "trades": 84
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.3942,
+              "trades": 107
+            },
+            "SBIN": {
+              "expectancy_r": -0.4397,
+              "trades": 90
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.074,
+              "trades": 80
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.2569,
+              "trades": 86
+            },
+            "TITAN": {
+              "expectancy_r": -0.2696,
+              "trades": 84
+            }
+          },
+          "charges": {
+            "brokerage": 71015.4,
+            "dp": 0.0,
+            "exchange": 2999.87,
+            "gst": 13340.36,
+            "ipft": 0.1,
+            "sebi": 97.72,
+            "stamp": 1465.68,
+            "stt": 12215.72
+          },
+          "cost_pct_of_turnover": 0.2107,
+          "cost_r": 0.3448,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1508,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.2305,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.3101,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.21,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.3191,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.4283,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.3364,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.5089,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 1842
+            },
+            {
+              "expectancy_r": -0.6813,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 1842
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.5089,
+          "expectancy_r": -0.3364,
+          "expectancy_rupees": -108.1,
+          "gross_expectancy_r": 0.0084,
+          "gross_pnl": 6817.67,
+          "interval": {
+            "high": -0.2978,
+            "level": 0.9,
+            "low": -0.3764,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 26,
+          "mae_r": -0.461,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 619.73,
+          "mfe_r": 0.469,
+          "neighbours_positive": 0.0,
+          "net_pnl": -199123.03,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.3926,
+              "not_sized": 14,
+              "trades": 1828
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.2237,
+              "not_sized": 0,
+              "trades": 1842
+            }
+          ],
+          "parameters": {
+            "or_bars": 4.0,
+            "rr": 1.5
+          },
+          "profit_factor": 0.265,
+          "signals_not_sized": 0,
+          "total_costs": 205940.7,
+          "trades": 1842,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2796
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "orb15"
+    },
+    {
+      "chosen": {
+        "k": 2.5,
+        "n": 32.0,
+        "vol_pct": 0.0
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.7097,
+          "gross_expectancy_r": 0.0424,
+          "label": "k=1.5,n=16,vol_pct=0",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 16.0,
+            "vol_pct": 0.0
+          },
+          "trades": 1419
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4083,
+          "gross_expectancy_r": 0.0306,
+          "label": "k=2.5,n=16,vol_pct=0",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 16.0,
+            "vol_pct": 0.0
+          },
+          "trades": 1303
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6746,
+          "gross_expectancy_r": 0.0725,
+          "label": "k=1.5,n=32,vol_pct=0",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 32.0,
+            "vol_pct": 0.0
+          },
+          "trades": 1129
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3906,
+          "gross_expectancy_r": 0.0477,
+          "label": "k=2.5,n=32,vol_pct=0",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.0
+          },
+          "trades": 1041
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.391R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.610R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15",
+              "warmup": []
+            },
+            {
+              "checked": 29,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.13,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.3029,
+              "trades": 53
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.3685,
+              "trades": 45
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.3454,
+              "trades": 55
+            },
+            "BEL": {
+              "expectancy_r": -0.2903,
+              "trades": 53
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.5236,
+              "trades": 42
+            },
+            "BSE": {
+              "expectancy_r": -0.1477,
+              "trades": 46
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.5214,
+              "trades": 45
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.5561,
+              "trades": 49
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.17,
+              "trades": 40
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.5996,
+              "trades": 48
+            },
+            "INFY": {
+              "expectancy_r": -0.4308,
+              "trades": 40
+            },
+            "ITC": {
+              "expectancy_r": -0.5431,
+              "trades": 46
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.0484,
+              "trades": 56
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.4561,
+              "trades": 47
+            },
+            "LT": {
+              "expectancy_r": -0.4488,
+              "trades": 44
+            },
+            "M&M": {
+              "expectancy_r": -0.4175,
+              "trades": 45
+            },
+            "MARUTI": {
+              "expectancy_r": -0.62,
+              "trades": 54
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.3954,
+              "trades": 45
+            },
+            "SBIN": {
+              "expectancy_r": -0.5666,
+              "trades": 51
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.0418,
+              "trades": 46
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.3801,
+              "trades": 45
+            },
+            "TITAN": {
+              "expectancy_r": -0.4441,
+              "trades": 46
+            }
+          },
+          "charges": {
+            "brokerage": 41105.6,
+            "dp": 0.0,
+            "exchange": 1885.51,
+            "gst": 7749.47,
+            "ipft": 0.06,
+            "sebi": 61.42,
+            "stamp": 921.02,
+            "stt": 7679.67
+          },
+          "cost_pct_of_turnover": 0.2332,
+          "cost_r": 0.4384,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1278,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.2156,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.3034,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.2074,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.3349,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.4625,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.3906,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.6098,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 1041
+            },
+            {
+              "expectancy_r": -0.829,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 1041
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.6098,
+          "expectancy_r": -0.3906,
+          "expectancy_rupees": -120.3,
+          "gross_expectancy_r": 0.0477,
+          "gross_pnl": 17988.06,
+          "interval": {
+            "high": -0.3266,
+            "level": 0.9,
+            "low": -0.4531,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 28,
+          "mae_r": -0.49,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 409.75,
+          "mfe_r": 0.652,
+          "neighbours_positive": 0.0,
+          "net_pnl": -125232.07,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.4656,
+              "not_sized": 4,
+              "trades": 1037
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.2705,
+              "not_sized": 0,
+              "trades": 1041
+            }
+          ],
+          "parameters": {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.0
+          },
+          "profit_factor": 0.302,
+          "signals_not_sized": 0,
+          "total_costs": 143220.12,
+          "trades": 1041,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2747
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "trend15"
+    },
+    {
+      "chosen": {
+        "k": 2.5,
+        "n": 32.0,
+        "vol_pct": 0.5
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.621,
+          "gross_expectancy_r": 0.0636,
+          "label": "k=1.5,n=16,vol_pct=0.5",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 16.0,
+            "vol_pct": 0.5
+          },
+          "trades": 769
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3662,
+          "gross_expectancy_r": 0.0385,
+          "label": "k=2.5,n=16,vol_pct=0.5",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 16.0,
+            "vol_pct": 0.5
+          },
+          "trades": 715
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.5916,
+          "gross_expectancy_r": 0.0934,
+          "label": "k=1.5,n=32,vol_pct=0.5",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 32.0,
+            "vol_pct": 0.5
+          },
+          "trades": 625
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.344,
+          "gross_expectancy_r": 0.0616,
+          "label": "k=2.5,n=32,vol_pct=0.5",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.5
+          },
+          "trades": 578
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.344R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 9% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.547R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15_vol",
+              "warmup": []
+            },
+            {
+              "checked": 24,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15_vol",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "trend15_vol",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.16,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.4075,
+              "trades": 24
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.2567,
+              "trades": 31
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.2035,
+              "trades": 29
+            },
+            "BEL": {
+              "expectancy_r": -0.2903,
+              "trades": 32
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.579,
+              "trades": 28
+            },
+            "BSE": {
+              "expectancy_r": 0.0409,
+              "trades": 21
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.5135,
+              "trades": 22
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.5287,
+              "trades": 28
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.1688,
+              "trades": 24
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.4443,
+              "trades": 27
+            },
+            "INFY": {
+              "expectancy_r": -0.3357,
+              "trades": 23
+            },
+            "ITC": {
+              "expectancy_r": -0.5992,
+              "trades": 24
+            },
+            "JIOFIN": {
+              "expectancy_r": 0.0497,
+              "trades": 26
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.244,
+              "trades": 20
+            },
+            "LT": {
+              "expectancy_r": -0.5024,
+              "trades": 27
+            },
+            "M&M": {
+              "expectancy_r": -0.326,
+              "trades": 24
+            },
+            "MARUTI": {
+              "expectancy_r": -0.6588,
+              "trades": 31
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.2305,
+              "trades": 27
+            },
+            "SBIN": {
+              "expectancy_r": -0.422,
+              "trades": 28
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.0902,
+              "trades": 24
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.3893,
+              "trades": 28
+            },
+            "TITAN": {
+              "expectancy_r": -0.3264,
+              "trades": 30
+            }
+          },
+          "charges": {
+            "brokerage": 22716.57,
+            "dp": 0.0,
+            "exchange": 972.55,
+            "gst": 4269.75,
+            "ipft": 0.03,
+            "sebi": 31.68,
+            "stamp": 475.01,
+            "stt": 3961.57
+          },
+          "cost_pct_of_turnover": 0.2399,
+          "cost_r": 0.4056,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1072,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.1916,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.2759,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.1788,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.2989,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.4191,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.344,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.5468,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 578
+            },
+            {
+              "expectancy_r": -0.7496,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 578
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.5468,
+          "expectancy_r": -0.344,
+          "expectancy_rupees": -109.82,
+          "gross_expectancy_r": 0.0616,
+          "gross_pnl": 12519.73,
+          "interval": {
+            "high": -0.2649,
+            "level": 0.9,
+            "low": -0.4228,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 34
+          },
+          "longest_losing_run": 24,
+          "mae_r": -0.479,
+          "markets_judged": 22,
+          "markets_positive": 0.091,
+          "max_drawdown_r": 204.7,
+          "mfe_r": 0.675,
+          "neighbours_positive": 0.0,
+          "net_pnl": -63475.4,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.4019,
+              "not_sized": 2,
+              "trades": 576
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.2278,
+              "not_sized": 0,
+              "trades": 578
+            }
+          ],
+          "parameters": {
+            "k": 2.5,
+            "n": 32.0,
+            "vol_pct": 0.5
+          },
+          "profit_factor": 0.346,
+          "signals_not_sized": 0,
+          "total_costs": 75995.13,
+          "trades": 578,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2993
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "trend15_vol"
+    },
+    {
+      "chosen": {
+        "adx_min": 20.0,
+        "mult": 3.0
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4308,
+          "gross_expectancy_r": -0.0119,
+          "label": "adx_min=0,mult=2",
+          "not_sized": 0,
+          "parameters": {
+            "adx_min": 0.0,
+            "mult": 2.0
+          },
+          "trades": 1886
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4231,
+          "gross_expectancy_r": -0.0184,
+          "label": "adx_min=20,mult=2",
+          "not_sized": 0,
+          "parameters": {
+            "adx_min": 20.0,
+            "mult": 2.0
+          },
+          "trades": 1272
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3066,
+          "gross_expectancy_r": 0.009,
+          "label": "adx_min=0,mult=3",
+          "not_sized": 0,
+          "parameters": {
+            "adx_min": 0.0,
+            "mult": 3.0
+          },
+          "trades": 1136
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.2971,
+          "gross_expectancy_r": 0.01,
+          "label": "adx_min=20,mult=3",
+          "not_sized": 0,
+          "parameters": {
+            "adx_min": 20.0,
+            "mult": 3.0
+          },
+          "trades": 700
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.297R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.451R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "supertrend15",
+              "warmup": []
+            },
+            {
+              "checked": 29,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "supertrend15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "supertrend15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.04,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.2221,
+              "trades": 38
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.4637,
+              "trades": 31
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.1936,
+              "trades": 42
+            },
+            "BEL": {
+              "expectancy_r": -0.2624,
+              "trades": 36
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.1903,
+              "trades": 41
+            },
+            "BSE": {
+              "expectancy_r": -0.1579,
+              "trades": 25
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.111,
+              "trades": 32
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.4356,
+              "trades": 30
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.3476,
+              "trades": 29
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.2119,
+              "trades": 28
+            },
+            "INFY": {
+              "expectancy_r": -0.5895,
+              "trades": 27
+            },
+            "ITC": {
+              "expectancy_r": -0.3568,
+              "trades": 29
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.3472,
+              "trades": 22
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.2629,
+              "trades": 30
+            },
+            "LT": {
+              "expectancy_r": -0.2452,
+              "trades": 31
+            },
+            "M&M": {
+              "expectancy_r": -0.2532,
+              "trades": 34
+            },
+            "MARUTI": {
+              "expectancy_r": -0.3974,
+              "trades": 29
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.3988,
+              "trades": 38
+            },
+            "SBIN": {
+              "expectancy_r": -0.4032,
+              "trades": 32
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.1794,
+              "trades": 29
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.3305,
+              "trades": 33
+            },
+            "TITAN": {
+              "expectancy_r": -0.2799,
+              "trades": 34
+            }
+          },
+          "charges": {
+            "brokerage": 26513.48,
+            "dp": 0.0,
+            "exchange": 1015.42,
+            "gst": 4961.16,
+            "ipft": 0.03,
+            "sebi": 33.08,
+            "stamp": 496.11,
+            "stt": 4134.9
+          },
+          "cost_pct_of_turnover": 0.2198,
+          "cost_r": 0.3071,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1401,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.2152,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.2902,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.1908,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.2912,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.3916,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.2971,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.4507,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 700
+            },
+            {
+              "expectancy_r": -0.6042,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 700
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.4507,
+          "expectancy_r": -0.2971,
+          "expectancy_rupees": -100.05,
+          "gross_expectancy_r": 0.01,
+          "gross_pnl": 2660.23,
+          "interval": {
+            "high": -0.2511,
+            "level": 0.9,
+            "low": -0.3459,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 16,
+          "mae_r": -0.437,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 207.99,
+          "mfe_r": 0.455,
+          "neighbours_positive": 0.0,
+          "net_pnl": -70035.03,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.3309,
+              "not_sized": 8,
+              "trades": 692
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.1907,
+              "not_sized": 0,
+              "trades": 700
+            }
+          ],
+          "parameters": {
+            "adx_min": 20.0,
+            "mult": 3.0
+          },
+          "profit_factor": 0.28,
+          "signals_not_sized": 0,
+          "total_costs": 72695.26,
+          "trades": 700,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2743
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "supertrend15"
+    },
+    {
+      "chosen": {
+        "adx_max": 35.0,
+        "z": 1.5
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.663,
+          "gross_expectancy_r": -0.0373,
+          "label": "adx_max=25,z=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "adx_max": 25.0,
+            "z": 1.5
+          },
+          "trades": 1397
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6374,
+          "gross_expectancy_r": -0.0271,
+          "label": "adx_max=35,z=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "adx_max": 35.0,
+            "z": 1.5
+          },
+          "trades": 2261
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6505,
+          "gross_expectancy_r": -0.0092,
+          "label": "adx_max=25,z=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "adx_max": 25.0,
+            "z": 2.5
+          },
+          "trades": 253
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6469,
+          "gross_expectancy_r": -0.0305,
+          "label": "adx_max=35,z=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "adx_max": 35.0,
+            "z": 2.5
+          },
+          "trades": 493
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.637R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.943R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "vwap_reversion15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "vwap_reversion15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "vwap_reversion15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.0,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.4832,
+              "trades": 120
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.6353,
+              "trades": 118
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.6817,
+              "trades": 115
+            },
+            "BEL": {
+              "expectancy_r": -0.4607,
+              "trades": 90
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.7408,
+              "trades": 101
+            },
+            "BSE": {
+              "expectancy_r": -0.543,
+              "trades": 83
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.5158,
+              "trades": 101
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.7172,
+              "trades": 104
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.4651,
+              "trades": 107
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.7281,
+              "trades": 111
+            },
+            "INFY": {
+              "expectancy_r": -0.5503,
+              "trades": 92
+            },
+            "ITC": {
+              "expectancy_r": -0.7207,
+              "trades": 75
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.7121,
+              "trades": 95
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.8408,
+              "trades": 101
+            },
+            "LT": {
+              "expectancy_r": -0.6829,
+              "trades": 98
+            },
+            "M&M": {
+              "expectancy_r": -0.5716,
+              "trades": 106
+            },
+            "MARUTI": {
+              "expectancy_r": -0.5698,
+              "trades": 104
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.6309,
+              "trades": 97
+            },
+            "SBIN": {
+              "expectancy_r": -0.7771,
+              "trades": 119
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.602,
+              "trades": 100
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.699,
+              "trades": 114
+            },
+            "TITAN": {
+              "expectancy_r": -0.6694,
+              "trades": 110
+            }
+          },
+          "charges": {
+            "brokerage": 90407.25,
+            "dp": 0.0,
+            "exchange": 5730.98,
+            "gst": 17338.52,
+            "ipft": 0.19,
+            "sebi": 186.68,
+            "stamp": 2800.49,
+            "stt": 23333.24
+          },
+          "cost_pct_of_turnover": 0.1907,
+          "cost_r": 0.6103,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.2435,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.3517,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.4599,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.3617,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.529,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.6963,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.6374,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -0.9426,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 2261
+            },
+            {
+              "expectancy_r": -1.2477,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 2261
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.9426,
+          "expectancy_r": -0.6374,
+          "expectancy_rupees": -164.87,
+          "gross_expectancy_r": -0.0271,
+          "gross_pnl": -16837.16,
+          "interval": {
+            "high": -0.5686,
+            "level": 0.9,
+            "low": -0.6996,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 23,
+          "mae_r": -0.758,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 1441.28,
+          "mfe_r": 0.595,
+          "neighbours_positive": 0.0,
+          "net_pnl": -372770.01,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.8241,
+              "not_sized": 0,
+              "trades": 2261
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.4902,
+              "not_sized": 0,
+              "trades": 2261
+            }
+          ],
+          "parameters": {
+            "adx_max": 35.0,
+            "z": 1.5
+          },
+          "profit_factor": 0.253,
+          "signals_not_sized": 0,
+          "total_costs": 355932.85,
+          "trades": 2261,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.3233
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "vwap_reversion15"
+    },
+    {
+      "chosen": {
+        "k": 2.5,
+        "pct": 0.3
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.8263,
+          "gross_expectancy_r": 0.0073,
+          "label": "k=1.5,pct=0.15",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "pct": 0.15
+          },
+          "trades": 476
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4737,
+          "gross_expectancy_r": 0.0121,
+          "label": "k=2.5,pct=0.15",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "pct": 0.15
+          },
+          "trades": 469
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.7425,
+          "gross_expectancy_r": 0.0749,
+          "label": "k=1.5,pct=0.3",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "pct": 0.3
+          },
+          "trades": 902
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4504,
+          "gross_expectancy_r": 0.0282,
+          "label": "k=2.5,pct=0.3",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "pct": 0.3
+          },
+          "trades": 876
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.450R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.690R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 22,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "bb_squeeze15",
+              "warmup": []
+            },
+            {
+              "checked": 19,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "bb_squeeze15",
+              "warmup": []
+            },
+            {
+              "checked": 20,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "bb_squeeze15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.06,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.5466,
+              "trades": 63
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.4694,
+              "trades": 38
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.3227,
+              "trades": 44
+            },
+            "BEL": {
+              "expectancy_r": -0.5549,
+              "trades": 37
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.6501,
+              "trades": 35
+            },
+            "BSE": {
+              "expectancy_r": -0.3065,
+              "trades": 29
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.2504,
+              "trades": 35
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.6689,
+              "trades": 40
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.4367,
+              "trades": 46
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.736,
+              "trades": 37
+            },
+            "INFY": {
+              "expectancy_r": -0.6803,
+              "trades": 22
+            },
+            "ITC": {
+              "expectancy_r": -0.723,
+              "trades": 47
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.0368,
+              "trades": 31
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.4661,
+              "trades": 35
+            },
+            "LT": {
+              "expectancy_r": -0.5318,
+              "trades": 33
+            },
+            "M&M": {
+              "expectancy_r": -0.3446,
+              "trades": 35
+            },
+            "MARUTI": {
+              "expectancy_r": -0.5208,
+              "trades": 39
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.3602,
+              "trades": 44
+            },
+            "SBIN": {
+              "expectancy_r": -0.4561,
+              "trades": 54
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.1592,
+              "trades": 40
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.3206,
+              "trades": 49
+            },
+            "TITAN": {
+              "expectancy_r": -0.3308,
+              "trades": 43
+            }
+          },
+          "charges": {
+            "brokerage": 34911.69,
+            "dp": 0.0,
+            "exchange": 1702.31,
+            "gst": 6600.51,
+            "ipft": 0.06,
+            "sebi": 55.45,
+            "stamp": 831.65,
+            "stt": 6932.5
+          },
+          "cost_pct_of_turnover": 0.2314,
+          "cost_r": 0.4786,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1553,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.247,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.3387,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.2441,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.3802,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.5163,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.4504,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.6898,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 876
+            },
+            {
+              "expectancy_r": -0.9291,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 876
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.6898,
+          "expectancy_r": -0.4504,
+          "expectancy_rupees": -137.08,
+          "gross_expectancy_r": 0.0282,
+          "gross_pnl": 8223.38,
+          "interval": {
+            "high": -0.3988,
+            "level": 0.9,
+            "low": -0.4978,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 36
+          },
+          "longest_losing_run": 17,
+          "mae_r": -0.5,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 395.48,
+          "mfe_r": 0.658,
+          "neighbours_positive": 0.0,
+          "net_pnl": -120083.27,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.5436,
+              "not_sized": 0,
+              "trades": 876
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.326,
+              "not_sized": 0,
+              "trades": 876
+            }
+          ],
+          "parameters": {
+            "k": 2.5,
+            "pct": 0.3
+          },
+          "profit_factor": 0.261,
+          "signals_not_sized": 0,
+          "total_costs": 128306.65,
+          "trades": 876,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.25
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "bb_squeeze15"
+    },
+    {
+      "chosen": {
+        "k": 2.5,
+        "level": 60.0
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.7346,
+          "gross_expectancy_r": 0.0364,
+          "label": "k=1.5,level=55",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "level": 55.0
+          },
+          "trades": 3424
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4313,
+          "gross_expectancy_r": 0.014,
+          "label": "k=2.5,level=55",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "level": 55.0
+          },
+          "trades": 2732
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.7004,
+          "gross_expectancy_r": 0.0652,
+          "label": "k=1.5,level=60",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "level": 60.0
+          },
+          "trades": 3010
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.394,
+          "gross_expectancy_r": 0.0472,
+          "label": "k=2.5,level=60",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "level": 60.0
+          },
+          "trades": 2646
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.394R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.615R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "rsi_momentum15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "rsi_momentum15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "rsi_momentum15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.11,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.2268,
+              "trades": 122
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.504,
+              "trades": 121
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.2798,
+              "trades": 128
+            },
+            "BEL": {
+              "expectancy_r": -0.3665,
+              "trades": 112
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.4236,
+              "trades": 117
+            },
+            "BSE": {
+              "expectancy_r": -0.1819,
+              "trades": 111
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.2734,
+              "trades": 108
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.6351,
+              "trades": 129
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.3421,
+              "trades": 119
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.6001,
+              "trades": 122
+            },
+            "INFY": {
+              "expectancy_r": -0.5854,
+              "trades": 102
+            },
+            "ITC": {
+              "expectancy_r": -0.5355,
+              "trades": 132
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.1764,
+              "trades": 107
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.4834,
+              "trades": 112
+            },
+            "LT": {
+              "expectancy_r": -0.346,
+              "trades": 129
+            },
+            "M&M": {
+              "expectancy_r": -0.3567,
+              "trades": 120
+            },
+            "MARUTI": {
+              "expectancy_r": -0.5127,
+              "trades": 129
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.398,
+              "trades": 122
+            },
+            "SBIN": {
+              "expectancy_r": -0.3851,
+              "trades": 134
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.1796,
+              "trades": 127
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.4392,
+              "trades": 122
+            },
+            "TITAN": {
+              "expectancy_r": -0.4004,
+              "trades": 121
+            }
+          },
+          "charges": {
+            "brokerage": 104708.27,
+            "dp": 0.0,
+            "exchange": 4909.19,
+            "gst": 19759.96,
+            "ipft": 0.16,
+            "sebi": 159.91,
+            "stamp": 2398.09,
+            "stt": 19994.35
+          },
+          "cost_pct_of_turnover": 0.2266,
+          "cost_r": 0.4413,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1295,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.2178,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.3062,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.2101,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.3387,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.4674,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.394,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.6147,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 2646
+            },
+            {
+              "expectancy_r": -0.8353,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 2646
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.6147,
+          "expectancy_r": -0.394,
+          "expectancy_rupees": -121.46,
+          "gross_expectancy_r": 0.0472,
+          "gross_pnl": 41045.71,
+          "interval": {
+            "high": -0.3598,
+            "level": 0.9,
+            "low": -0.4271,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 31,
+          "mae_r": -0.462,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 1042.8,
+          "mfe_r": 0.596,
+          "neighbours_positive": 0.0,
+          "net_pnl": -321393.73,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.4753,
+              "not_sized": 6,
+              "trades": 2640
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.2723,
+              "not_sized": 0,
+              "trades": 2646
+            }
+          ],
+          "parameters": {
+            "k": 2.5,
+            "level": 60.0
+          },
+          "profit_factor": 0.272,
+          "signals_not_sized": 0,
+          "total_costs": 362439.43,
+          "trades": 2646,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2736
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "rsi_momentum15"
+    },
+    {
+      "chosen": {
+        "k": 2.5,
+        "n": 40.0
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6948,
+          "gross_expectancy_r": 0.0595,
+          "label": "k=1.5,n=20",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 20.0
+          },
+          "trades": 2734
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3964,
+          "gross_expectancy_r": 0.0438,
+          "label": "k=2.5,n=20",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 20.0
+          },
+          "trades": 2487
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6875,
+          "gross_expectancy_r": 0.0654,
+          "label": "k=1.5,n=40",
+          "not_sized": 0,
+          "parameters": {
+            "k": 1.5,
+            "n": 40.0
+          },
+          "trades": 1936
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3956,
+          "gross_expectancy_r": 0.0443,
+          "label": "k=2.5,n=40",
+          "not_sized": 0,
+          "parameters": {
+            "k": 2.5,
+            "n": 40.0
+          },
+          "trades": 1765
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.396R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.615R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "channel15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "channel15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "channel15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.11,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.3587,
+              "trades": 92
+            },
+            "AXISBANK": {
+              "expectancy_r": -0.4166,
+              "trades": 86
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.3387,
+              "trades": 81
+            },
+            "BEL": {
+              "expectancy_r": -0.329,
+              "trades": 79
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.4212,
+              "trades": 77
+            },
+            "BSE": {
+              "expectancy_r": -0.142,
+              "trades": 76
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.311,
+              "trades": 70
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.5802,
+              "trades": 89
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.2728,
+              "trades": 78
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.6049,
+              "trades": 85
+            },
+            "INFY": {
+              "expectancy_r": -0.4813,
+              "trades": 66
+            },
+            "ITC": {
+              "expectancy_r": -0.4736,
+              "trades": 79
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.1464,
+              "trades": 82
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.5195,
+              "trades": 80
+            },
+            "LT": {
+              "expectancy_r": -0.4485,
+              "trades": 81
+            },
+            "M&M": {
+              "expectancy_r": -0.4131,
+              "trades": 75
+            },
+            "MARUTI": {
+              "expectancy_r": -0.6315,
+              "trades": 86
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.353,
+              "trades": 81
+            },
+            "SBIN": {
+              "expectancy_r": -0.4454,
+              "trades": 90
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.1144,
+              "trades": 74
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.4659,
+              "trades": 79
+            },
+            "TITAN": {
+              "expectancy_r": -0.358,
+              "trades": 79
+            }
+          },
+          "charges": {
+            "brokerage": 69720.59,
+            "dp": 0.0,
+            "exchange": 3205.64,
+            "gst": 13145.54,
+            "ipft": 0.1,
+            "sebi": 104.42,
+            "stamp": 1565.92,
+            "stt": 13056.06
+          },
+          "cost_pct_of_turnover": 0.2329,
+          "cost_r": 0.4398,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.1316,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.2195,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.3074,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.2114,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.3392,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.467,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.3956,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.6155,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 1765
+            },
+            {
+              "expectancy_r": -0.8354,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 1765
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.6155,
+          "expectancy_r": -0.3956,
+          "expectancy_rupees": -122.62,
+          "gross_expectancy_r": 0.0443,
+          "gross_pnl": 26802.19,
+          "interval": {
+            "high": -0.3474,
+            "level": 0.9,
+            "low": -0.4428,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 23,
+          "mae_r": -0.486,
+          "markets_judged": 22,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 699.61,
+          "mfe_r": 0.646,
+          "neighbours_positive": 0.0,
+          "net_pnl": -216424.09,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.4718,
+              "not_sized": 4,
+              "trades": 1761
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.2752,
+              "not_sized": 0,
+              "trades": 1765
+            }
+          ],
+          "parameters": {
+            "k": 2.5,
+            "n": 40.0
+          },
+          "profit_factor": 0.294,
+          "signals_not_sized": 0,
+          "total_costs": 243226.28,
+          "trades": 1765,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.2776
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "channel15"
+    },
+    {
+      "chosen": {
+        "gap": 0.007,
+        "rr": 2.5
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4526,
+          "gross_expectancy_r": 0.0524,
+          "label": "gap=0.003,rr=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "gap": 0.003,
+            "rr": 1.5
+          },
+          "trades": 813
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4481,
+          "gross_expectancy_r": 0.0821,
+          "label": "gap=0.003,rr=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "gap": 0.003,
+            "rr": 2.5
+          },
+          "trades": 813
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3378,
+          "gross_expectancy_r": 0.0836,
+          "label": "gap=0.007,rr=1.5",
+          "not_sized": 0,
+          "parameters": {
+            "gap": 0.007,
+            "rr": 1.5
+          },
+          "trades": 328
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.3092,
+          "gross_expectancy_r": 0.134,
+          "label": "gap=0.007,rr=2.5",
+          "not_sized": 0,
+          "parameters": {
+            "gap": 0.007,
+            "rr": 2.5
+          },
+          "trades": 328
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.309R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 25% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.531R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_trend15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_trend15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_trend15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.33,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.0632,
+              "trades": 15
+            },
+            "AXISBANK": {
+              "expectancy_r": 0.0758,
+              "trades": 13
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -0.3318,
+              "trades": 12
+            },
+            "BEL": {
+              "expectancy_r": -0.1979,
+              "trades": 17
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.795,
+              "trades": 11
+            },
+            "BSE": {
+              "expectancy_r": -0.0192,
+              "trades": 38
+            },
+            "ETERNAL": {
+              "expectancy_r": 0.0215,
+              "trades": 23
+            },
+            "HDFCBANK": {
+              "expectancy_r": -0.2079,
+              "trades": 9
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.5509,
+              "trades": 17
+            },
+            "ICICIBANK": {
+              "expectancy_r": -0.2669,
+              "trades": 8
+            },
+            "INFY": {
+              "expectancy_r": -0.5953,
+              "trades": 27
+            },
+            "ITC": {
+              "expectancy_r": -0.5187,
+              "trades": 4
+            },
+            "JIOFIN": {
+              "expectancy_r": 0.0822,
+              "trades": 17
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.7215,
+              "trades": 10
+            },
+            "LT": {
+              "expectancy_r": -0.2654,
+              "trades": 14
+            },
+            "M&M": {
+              "expectancy_r": -0.0826,
+              "trades": 16
+            },
+            "MARUTI": {
+              "expectancy_r": -0.1149,
+              "trades": 7
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.634,
+              "trades": 11
+            },
+            "SBIN": {
+              "expectancy_r": -0.4534,
+              "trades": 8
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": -0.4175,
+              "trades": 25
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.6209,
+              "trades": 18
+            },
+            "TITAN": {
+              "expectancy_r": -1.2183,
+              "trades": 8
+            }
+          },
+          "charges": {
+            "brokerage": 12393.78,
+            "dp": 0.0,
+            "exchange": 594.83,
+            "gst": 2341.44,
+            "ipft": 0.02,
+            "sebi": 19.38,
+            "stamp": 290.43,
+            "stt": 2423.77
+          },
+          "cost_pct_of_turnover": 0.2153,
+          "cost_r": 0.4432,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.0441,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.1331,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.2222,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.1237,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.2525,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.3814,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.3092,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.5309,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 328
+            },
+            {
+              "expectancy_r": -0.7525,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 328
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.5309,
+          "expectancy_r": -0.3092,
+          "expectancy_rupees": -84.69,
+          "gross_expectancy_r": 0.134,
+          "gross_pnl": 13936.43,
+          "interval": {
+            "high": -0.1446,
+            "level": 0.9,
+            "low": -0.4712,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 0.9994,
+            "weeks": 38
+          },
+          "longest_losing_run": 10,
+          "mae_r": -0.699,
+          "markets_judged": 4,
+          "markets_positive": 0.25,
+          "max_drawdown_r": 101.57,
+          "mfe_r": 0.82,
+          "neighbours_positive": 0.0,
+          "net_pnl": -27777.36,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.3946,
+              "not_sized": 1,
+              "trades": 327
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.1911,
+              "not_sized": 0,
+              "trades": 328
+            }
+          ],
+          "parameters": {
+            "gap": 0.007,
+            "rr": 2.5
+          },
+          "profit_factor": 0.552,
+          "signals_not_sized": 0,
+          "total_costs": 41713.8,
+          "trades": 328,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.3994
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "gap_trend15"
+    },
+    {
+      "chosen": {
+        "decide": 1.0,
+        "gap": 0.008
+      },
+      "grid": [
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.761,
+          "gross_expectancy_r": -0.0703,
+          "label": "decide=0,gap=0.004",
+          "not_sized": 0,
+          "parameters": {
+            "decide": 0.0,
+            "gap": 0.004
+          },
+          "trades": 610
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6156,
+          "gross_expectancy_r": -0.0047,
+          "label": "decide=1,gap=0.004",
+          "not_sized": 0,
+          "parameters": {
+            "decide": 1.0,
+            "gap": 0.004
+          },
+          "trades": 568
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.6052,
+          "gross_expectancy_r": -0.0669,
+          "label": "decide=0,gap=0.008",
+          "not_sized": 0,
+          "parameters": {
+            "decide": 0.0,
+            "gap": 0.008
+          },
+          "trades": 309
+        },
+        {
+          "dropped_spanning": 0,
+          "expectancy_r": -0.4952,
+          "gross_expectancy_r": -0.0106,
+          "label": "decide=1,gap=0.008",
+          "not_sized": 0,
+          "parameters": {
+            "decide": 1.0,
+            "gap": 0.008
+          },
+          "trades": 307
+        }
+      ],
+      "not_evaluable": [],
+      "reasons": [
+        "Net expectancy on the research stretch is -0.495R.",
+        "Deflated Sharpe 0.00 (need 0.95) after 40 configurations.",
+        "Only 0% of its own parameter grid made money (need 60%).",
+        "Positive on 0% of markets (need 60%).",
+        "Loses money with costs 1.5x the modelled ones (-0.738R)."
+      ],
+      "stages": {
+        "audit": {
+          "passed": true,
+          "reports": [
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_reversal15",
+              "warmup": []
+            },
+            {
+              "checked": 26,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_reversal15",
+              "warmup": []
+            },
+            {
+              "checked": 30,
+              "lookahead": [],
+              "passed": true,
+              "strategy": "gap_reversal15",
+              "warmup": []
+            }
+          ]
+        },
+        "research": {
+          "break_even_cost_multiple": 0.0,
+          "by_market": {
+            "ADANIENT": {
+              "expectancy_r": -0.5993,
+              "trades": 12
+            },
+            "AXISBANK": {
+              "expectancy_r": -1.081,
+              "trades": 12
+            },
+            "BAJFINANCE": {
+              "expectancy_r": -1.008,
+              "trades": 16
+            },
+            "BEL": {
+              "expectancy_r": -0.3553,
+              "trades": 15
+            },
+            "BHARTIARTL": {
+              "expectancy_r": -0.8347,
+              "trades": 14
+            },
+            "BSE": {
+              "expectancy_r": -0.2085,
+              "trades": 15
+            },
+            "ETERNAL": {
+              "expectancy_r": -0.2994,
+              "trades": 25
+            },
+            "HDFCBANK": {
+              "expectancy_r": -1.1743,
+              "trades": 13
+            },
+            "HINDALCO": {
+              "expectancy_r": -0.5307,
+              "trades": 20
+            },
+            "ICICIBANK": {
+              "expectancy_r": -1.2488,
+              "trades": 8
+            },
+            "INFY": {
+              "expectancy_r": -0.4343,
+              "trades": 16
+            },
+            "ITC": {
+              "expectancy_r": -1.1565,
+              "trades": 11
+            },
+            "JIOFIN": {
+              "expectancy_r": -0.6284,
+              "trades": 17
+            },
+            "KOTAKBANK": {
+              "expectancy_r": -0.7174,
+              "trades": 9
+            },
+            "LT": {
+              "expectancy_r": -0.1926,
+              "trades": 9
+            },
+            "M&M": {
+              "expectancy_r": 0.3361,
+              "trades": 16
+            },
+            "MARUTI": {
+              "expectancy_r": 0.1863,
+              "trades": 11
+            },
+            "RELIANCE": {
+              "expectancy_r": -0.7302,
+              "trades": 16
+            },
+            "SBIN": {
+              "expectancy_r": -0.5547,
+              "trades": 11
+            },
+            "SHRIRAMFIN": {
+              "expectancy_r": 0.0434,
+              "trades": 15
+            },
+            "TATASTEEL": {
+              "expectancy_r": -0.1299,
+              "trades": 18
+            },
+            "TITAN": {
+              "expectancy_r": -0.2068,
+              "trades": 8
+            }
+          },
+          "charges": {
+            "brokerage": 11939.47,
+            "dp": 0.0,
+            "exchange": 628.19,
+            "gst": 2265.87,
+            "ipft": 0.02,
+            "sebi": 20.46,
+            "stamp": 306.94,
+            "stt": 2557.84
+          },
+          "cost_pct_of_turnover": 0.1946,
+          "cost_r": 0.4846,
+          "cost_sensitivity": [
+            {
+              "expectancy_r": -0.2023,
+              "multiple": 1.0,
+              "scenario": "optimistic",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.2982,
+              "multiple": 1.5,
+              "scenario": "optimistic",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.394,
+              "multiple": 2.0,
+              "scenario": "optimistic",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.2889,
+              "multiple": 1.0,
+              "scenario": "base",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.428,
+              "multiple": 1.5,
+              "scenario": "base",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.5671,
+              "multiple": 2.0,
+              "scenario": "base",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.4952,
+              "multiple": 1.0,
+              "scenario": "conservative",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.7375,
+              "multiple": 1.5,
+              "scenario": "conservative",
+              "trades": 307
+            },
+            {
+              "expectancy_r": -0.9798,
+              "multiple": 2.0,
+              "scenario": "conservative",
+              "trades": 307
+            }
+          ],
+          "deflated_sharpe": 0.0,
+          "dropped_spanning_sessions": 0,
+          "expectancy_at_stressed_costs_r": -0.7375,
+          "expectancy_r": -0.4952,
+          "expectancy_rupees": -129.85,
+          "gross_expectancy_r": -0.0106,
+          "gross_pnl": -48.14,
+          "interval": {
+            "high": -0.3721,
+            "level": 0.9,
+            "low": -0.6216,
+            "method": "cluster bootstrap by exit week",
+            "p_value": 1.0,
+            "weeks": 38
+          },
+          "longest_losing_run": 9,
+          "mae_r": -0.65,
+          "markets_judged": 2,
+          "markets_positive": 0.0,
+          "max_drawdown_r": 153.74,
+          "mfe_r": 0.452,
+          "neighbours_positive": 0.0,
+          "net_pnl": -39864.23,
+          "other_accounts": [
+            {
+              "equity": 50000.0,
+              "expectancy_r": -0.6129,
+              "not_sized": 3,
+              "trades": 304
+            },
+            {
+              "equity": 500000.0,
+              "expectancy_r": -0.366,
+              "not_sized": 0,
+              "trades": 307
+            }
+          ],
+          "parameters": {
+            "decide": 1.0,
+            "gap": 0.008
+          },
+          "profit_factor": 0.264,
+          "signals_not_sized": 0,
+          "total_costs": 39816.09,
+          "trades": 307,
+          "trials_deflated_for": 40,
+          "weeks": 38,
+          "win_rate": 0.3648
+        }
+      },
+      "state": "REJECTED",
+      "strategy": "gap_reversal15"
+    }
+  ],
+  "left_out": [
+    {
+      "dataset_id": "9a144475411c0b39",
+      "reason": "Its history is incomplete: 2 of 13 requests failed (request raised DataException: Couldn't parse the JSON response received from the server: b'Access denied because of exceeding access rate').",
+      "symbol": "TCS"
+    },
+    {
+      "dataset_id": "dd97a1c543a29e64",
+      "reason": "Its history is incomplete: 2 of 13 requests failed (request raised DataException: Couldn't parse the JSON response received from the server: b'Access denied because of exceeding access rate').",
+      "symbol": "ADANIPORTS"
+    },
+    {
+      "dataset_id": "931990c5d2036334",
+      "reason": "Its history is incomplete: 1 of 13 requests failed (request raised DataException: Couldn't parse the JSON response received from the server: b'Access denied because of exceeding access rate').",
+      "symbol": "TECHM"
+    }
+  ],
+  "limitations": [
+    "The universe is today's Nifty 50 members: stocks that survived and grew into the index. Every result on their past is flattered by that; there is no membership history to correct it.",
+    "Two years of 15-minute history were fetched. The research stretch is under nine months of one market's weather.",
+    "Spread and slippage are assumed (conservative scenario), not measured. No fill has ever been observed.",
+    "Positions are flat by the 15:00 bar's close; the live engine squares off 20 minutes before 15:30. Intraday leverage is not assumed: the account is sized at 1x.",
+    "Trades are sized against a fixed Rs 1,00,000 and do not compound.",
+    "Angel One's 15-minute history carries flat, zero-volume closing bars on some days (docs/research/ANGEL_ONE_DATA_QUALITY.md); VWAP uses volume, so those days are noisy.",
+    "Adjusted prices: a stock that has since split looks cheaper in its past than it was."
+  ],
+  "markets_used": [
+    "HDFCBANK",
+    "BSE",
+    "RELIANCE",
+    "ICICIBANK",
+    "BHARTIARTL",
+    "INFY",
+    "ETERNAL",
+    "SBIN",
+    "BAJFINANCE",
+    "AXISBANK",
+    "M&M",
+    "KOTAKBANK",
+    "LT",
+    "MARUTI",
+    "SHRIRAMFIN",
+    "ADANIENT",
+    "TATASTEEL",
+    "ITC",
+    "BEL",
+    "HINDALCO",
+    "JIOFIN",
+    "TITAN"
+  ],
+  "not_built": {
+    "cross_sectional_momentum": "Ranks stocks against each other at a timestamp; the per-stock Strategy interface cannot express it, and it needs a point-in-time universe the data does not have (the universe is today's index members).",
+    "daily_mean_reversion": "Daily bars on delivery; a separate study (delivery costs and a different holding period), not started."
+  },
+  "universe": {
+    "id": "nifty50",
+    "members": [
+      "HDFCBANK",
+      "BSE",
+      "RELIANCE",
+      "ICICIBANK",
+      "BHARTIARTL",
+      "INFY",
+      "ETERNAL",
+      "SBIN",
+      "BAJFINANCE",
+      "AXISBANK",
+      "TCS",
+      "M&M",
+      "KOTAKBANK",
+      "LT",
+      "MARUTI",
+      "SHRIRAMFIN",
+      "ADANIENT",
+      "TATASTEEL",
+      "ITC",
+      "BEL",
+      "ADANIPORTS",
+      "HINDALCO",
+      "TECHM",
+      "JIOFIN",
+      "TITAN"
+    ],
+    "membership": "current",
+    "survivorship_free": false
+  }
+}

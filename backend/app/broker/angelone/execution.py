@@ -33,6 +33,7 @@ from ...schemas.execution import (
     ExecutionPreview, ExecutionRecord, ExecutionStatus, RiskGateResult,
 )
 from ...services.edge import latest_edge
+from ..account_balance import extract_available_funds
 from ..live_limits import estimated_charges, load_ledger
 from ..risk_gate import GateContext, Recommendation, risk_gate, stop_out_charges
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker
@@ -91,22 +92,6 @@ def _recommendation_from_row(row: AnalysisRow) -> Recommendation:
         confidence=confidence.get("final_confidence", row.confidence),
         timeframe=row.timeframe,
     )
-
-
-def _extract_available_funds(funds: Optional[dict]) -> Optional[float]:
-    """Angel One's rmsLimit response. `availablecash` is the conservative,
-    non-leveraged figure — deliberately not `net` or a margin-inclusive
-    number, per the spec's instruction to stay conservative."""
-    if not funds:
-        return None
-    for key in ("availablecash", "net"):
-        value = funds.get(key)
-        if value is not None:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                continue
-    return None
 
 
 class AngelOneExecutionService:
@@ -218,7 +203,7 @@ class AngelOneExecutionService:
         if ctx.match is not None:
             try:
                 funds = await angel_broker.get_funds()
-                ctx.available_funds = _extract_available_funds(funds)
+                ctx.available_funds = extract_available_funds(funds)
             except AngelOneOrderError:
                 ctx.available_funds = None
             # Prices and quantity first: the margin question is about *this*

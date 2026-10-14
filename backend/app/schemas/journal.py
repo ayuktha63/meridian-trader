@@ -88,6 +88,8 @@ class BacktestRequest(BaseModel):
     #: Charge spread, brokerage, statutory charges and stop slippage. Off only
     #: to see how much of a result the costs were.
     include_costs: bool = True
+    #: Which venue's charges (`costs.PROFILES`). None is the instrument's own.
+    cost_profile: Optional[str] = None
     #: Share of the bars, at the end, held out as the out-of-sample segment.
     oos_fraction: float = 0.3
     seed: int = 7
@@ -172,3 +174,7 @@ class BacktestResult(BaseModel):
     #: …and the ones fitted on the most recent stretch, to trade next. A live
     #: order must clear these to be the kind of trade the test measured.
     next_parameters: Dict[str, float] = Field(default_factory=dict)
+    #: Where the bars came from: the provider's name. "synthetic" marks
+    #: generated bars — a record from before the simulator was removed —
+    #: and those are never evidence about a market.
+    data_source: str = "unknown"

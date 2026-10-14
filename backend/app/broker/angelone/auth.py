@@ -33,6 +33,41 @@ log = logging.getLogger("meridian.angelone.auth")
 #: plausible server-side expiry rather than reacting to a 403 mid-order.
 SESSION_MAX_AGE_SECONDS = 6 * 3600
 
+#: After a login fails, the next *automatic* one waits — this long, then
+#: twice as long each time. The quote poll asks for a session every three
+#: seconds, and with nothing here it logged in every three seconds too: 154
+#: attempts in four minutes on 13 October 2026, while a DNS lookup was
+#: failing. Against a wrong PIN that is how an account gets locked.
+LOGIN_BACKOFF_BASE_SECONDS = 5.0
+#: The broker could not be reached. That mends itself, and a position may be
+#: waiting on it, so keep asking — every two minutes at the slowest.
+LOGIN_BACKOFF_MAX_UNREACHABLE = 120.0
+#: The broker answered and said no: a wrong PIN or TOTP, a revoked key. It
+#: will say no again until somebody changes something, so ask rarely.
+LOGIN_BACKOFF_MAX_REJECTED = 900.0
+#: A session the broker disowns sooner than this after granting it was not
+#: worth having, and counts as a failed login: otherwise "log in, be refused,
+#: log in" is the same storm by another route.
+MIN_SESSION_LIFE_SECONDS = 60.0
+
+#: SmartAPI's published codes for a token that is invalid, expired or
+#: missing, and for a session that has ended (the same ones
+#: `data/angel_history.py` retries on).
+AUTH_ERROR_CODES = frozenset({"AG8001", "AG8002", "AG8003", "AB1010", "AB1011"})
+
+
+def is_auth_failure(response: object) -> bool:
+    """Whether the broker's answer says the session is no longer one. The
+    SDK returns these as an ordinary response, not an exception — on 12
+    October 2026 the quote poll was told "Invalid Token" 559 times in half
+    an hour and went on using the token."""
+    if not isinstance(response, dict) or response.get("status"):
+        return False
+    code = str(response.get("errorcode") or response.get("errorCode") or "").upper()
+    message = str(response.get("message") or "").lower()
+    return code in AUTH_ERROR_CODES or "invalid token" in message or "token expired" in message
+
+
 _sdk_lock = threading.Lock()
 _smart_connect_cls = None
 
@@ -78,11 +113,15 @@ def _load_sdk():
         return _smart_connect_cls
 
 
-#: Request fields the SDK must never be allowed to write down.
+#: Request fields the SDK must never be allowed to write down. The last
+#: three are not credentials: they are this machine's public address, local
+#: address and network-card number, which the SDK sends in every request's
+#: headers and — when a request fails — writes to the log with them.
 _SECRET_KEYS = (
     "password", "totp", "authorization", "x-privatekey", "jwttoken",
     "refreshtoken", "feedtoken", "accesstoken", "access_token", "api_key",
     "clientcode",
+    "x-clientpublicip", "x-clientlocalip", "x-macaddress",
 )
 #: A quoted string as repr() writes it, either quote style, escapes included.
 _QUOTED = r"""(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"""
@@ -96,6 +135,13 @@ _BEARER = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{8,}")
 
 def redact_secrets(text: str) -> str:
     return _BEARER.sub("Bearer ***", _SECRET_FIELD.sub(r"\1'***'", text))
+
+
+def mask_identifier(value: object) -> str:
+    """An account identifier with all but its last two characters hidden —
+    enough to tell two accounts apart in a log, not enough to name one."""
+    text = str(value or "")
+    return "*" * max(len(text) - 2, 0) + text[-2:] if len(text) > 2 else "**"
 
 
 class _SecretRedactor(logging.Filter):
@@ -146,6 +192,11 @@ class AngelOneAuthError(RuntimeError):
     """Login failed or credentials are missing. Never carries the raw secret."""
 
 
+class AngelOneLoginBackoff(AngelOneAuthError):
+    """No session, and no login was attempted: the last one failed too
+    recently. Nothing was sent to the broker."""
+
+
 class AngelOneAuthService:
     """Owns the SmartAPI session. One account, one session, thread-safe."""
 
@@ -153,6 +204,13 @@ class AngelOneAuthService:
         self._lock = threading.RLock()
         self._session: Optional[AngelSession] = None
         self._last_error: Optional[str] = None
+        #: Attempts in a row that did not end in a session that lasted, and
+        #: the time before which no automatic one is made. A login that
+        #: succeeds does not clear the count by itself — a session has to
+        #: outlive `MIN_SESSION_LIFE_SECONDS` first — or "log in, be
+        #: disowned, log in" would start from nothing every time.
+        self._failures = 0
+        self._retry_at = 0.0
 
     @property
     def configured(self) -> bool:
@@ -181,10 +239,50 @@ class AngelOneAuthService:
                     round(self._session.age_seconds, 0) if self._session else None
                 ),
                 "last_error": self._last_error,
+                "failed_logins": 0 if self.connected else self._failures,
+                "login_retry_in_seconds": None if self.connected else self._retry_in(),
             }
 
+    # ── backing off ───────────────────────────────────────────
+
+    def _retry_in(self) -> Optional[float]:
+        """Seconds until the next automatic login, or None if one may be
+        made now."""
+        left = self._retry_at - time.time()
+        return round(left, 1) if left > 0 else None
+
+    def _login_failed(self, rejected: bool) -> None:
+        self._failures += 1
+        ceiling = LOGIN_BACKOFF_MAX_REJECTED if rejected else LOGIN_BACKOFF_MAX_UNREACHABLE
+        wait = min(LOGIN_BACKOFF_BASE_SECONDS * 2 ** (self._failures - 1), ceiling)
+        self._retry_at = time.time() + wait
+        log.warning("Angel One login has failed %s time(s) in a row; no automatic "
+                    "attempt for %.0f s", self._failures, wait)
+
+    def invalidate(self, reason: str) -> bool:
+        """Drop a session the broker has said is no longer valid, so that the
+        next `ensure` logs in again instead of going on presenting a dead
+        token. True if there was one to drop."""
+        with self._lock:
+            session = self._session
+            if session is None:
+                return False
+            self._session = None
+            self._last_error = reason
+            log.warning("Angel One session dropped after %.0f s: %s",
+                        session.age_seconds, reason)
+            if session.age_seconds < MIN_SESSION_LIFE_SECONDS:
+                self._login_failed(rejected=True)
+            else:
+                self._failures = 0          # it lasted: the next login is a first try
+            return True
+
     def login(self) -> AngelSession:
-        """Log in fresh, replacing any existing session. Raises on failure."""
+        """Log in fresh, replacing any existing session. Raises on failure.
+
+        Always makes the attempt: this is what the Connect button calls, and
+        a person asking is not a poll. A failure here still counts towards
+        the wait the automatic path (`ensure`) observes."""
         cfg = get_settings()
         if not cfg.angel_configured:
             raise AngelOneAuthError(
@@ -201,12 +299,14 @@ class AngelOneAuthService:
                 self._last_error = "login failed"
                 self._session = None
                 log.warning("Angel One login failed: %s", type(exc).__name__)
+                self._login_failed(rejected=False)
                 raise AngelOneAuthError("Angel One login failed") from exc
 
             if not data or not data.get("status"):
                 self._last_error = (data or {}).get("message", "login rejected")
                 self._session = None
                 log.warning("Angel One login rejected: %s", self._last_error)
+                self._login_failed(rejected=True)
                 raise AngelOneAuthError(
                     "Angel One rejected the login: {}".format(self._last_error))
 
@@ -217,15 +317,30 @@ class AngelOneAuthService:
                 refresh_token=profile.get("refreshToken", ""),
                 profile=profile, established_at=time.time())
             self._last_error = None
-            log.info("Angel One session established for %s", cfg.angel_client_code)
+            self._retry_at = 0.0
+            log.info("Angel One session established for %s",
+                     mask_identifier(cfg.angel_client_code))
             return self._session
 
     def ensure(self) -> SmartConnect:
-        """The authenticated client, logging in or refreshing as needed."""
+        """The authenticated client, logging in or refreshing as needed.
+
+        This is the automatic path — every poll and every history request
+        comes through it — so it is the one that waits after a failure. The
+        check and the login are one step under the lock: two callers that
+        find no session make one login between them, not one each."""
         with self._lock:
             if self._session is not None and not self._session.stale:
+                if self._failures and self._session.age_seconds >= MIN_SESSION_LIFE_SECONDS:
+                    self._failures = 0      # it lasted
                 return self._session.client
-        return self.login().client
+            wait = self._retry_in()
+            if wait is not None:
+                raise AngelOneLoginBackoff(
+                    "Angel One is not connected, and the last {} login attempt(s) failed "
+                    "— the next automatic one is in {:.0f} s. Connect by hand to try "
+                    "now.".format(self._failures, wait))
+            return self.login().client
 
     def logout(self) -> None:
         with self._lock:

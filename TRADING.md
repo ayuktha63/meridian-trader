@@ -1,7 +1,7 @@
 # Trading with Meridian
 
 This document is the honest version. It covers what you can legally trade from
-India, how to get live data in, how a signal becomes an order in Kite, what it
+India, how to get live data in, how a signal becomes an order, what it
 costs, and what actually has to be true before any of this makes money.
 
 **By default, Meridian never places an order.** It reads the market and hands
@@ -39,10 +39,10 @@ an offshore broker is not permitted**, regardless of how the platform markets
 itself. The RBI publishes an *Alert List* of unauthorised forex platforms, and
 banks are instructed to refuse remittances to them.
 
-So: the EURUSD chart in this app is for learning and for analysis. Do not fund
-an offshore forex account on the strength of it.
+So: this app lists none of them. What it lists is what Angel One trades on
+those exchanges, and nothing else.
 
-### What Zerodha gives you
+### What Angel One gives you
 
 | Instrument | Symbol here | Venue | Lot | One tick |
 | --- | --- | --- | --- | --- |
@@ -50,27 +50,29 @@ an offshore forex account on the strength of it.
 | EUR/INR future | `EURINR` | NSE-CDS | 1,000 EUR | ₹2.50 |
 | GBP/INR future | `GBPINR` | NSE-CDS | 1,000 GBP | ₹2.50 |
 | JPY/INR future | `JPYINR` | NSE-CDS | 100,000 JPY | ₹2.50 |
-| NIFTY 50 | `NIFTY` | NSE-NFO | 75 | ₹3.75 |
-| Bank NIFTY | `BANKNIFTY` | NSE-NFO | 30 | ₹1.50 |
+| NIFTY 50 | `NIFTY` | NSE-NFO | 65 | ₹6.50 |
+| Bank NIFTY | `BANKNIFTY` | NSE-NFO | 30 | ₹6.00 |
 | Gold | `MCXGOLD` | MCX | 100 g | ₹100 |
 | Silver | `MCXSILVER` | MCX | 30 kg | ₹30 |
 | Crude oil | `MCXCRUDE` | MCX | 100 bbl | ₹100 |
 
-Plus **122 NSE F&O stocks** — every name with a listed futures and options
-contract, from `RELIANCE` and `HDFCBANK` down to the mid-caps. Each can be
-traded three ways: cash equity, the stock future, or an option. Search the
-symbol picker by ticker, company name, sector or venue.
+Plus **every NSE stock with a listed future** — about 210 of them, from
+`RELIANCE` and `HDFCBANK` down to the mid-caps. That list is not written into
+Meridian: it is read from Angel One's instrument master, with each stock's
+current lot and tick, so a new listing or a revised lot arrives on its own.
+Each can be traded three ways: cash equity, the stock future, or an option.
+Search the symbol picker by ticker, company name, sector or venue. (About half
+of them have a company name and sector on file here; the rest show under
+their ticker.)
 
 > **Verify every lot size before you trade it.** Exchanges revise them — NIFTY's
 > lot size has changed several times, and stock lots change roughly twice a
-> year. The contract page on the NSE/MCX site is the authority; the numbers
-> here are defaults so the sizing maths has something to work with. When Kite
-> is connected, Meridian adopts the broker's instrument dump instead, which is
-> authoritative.
-
-**Crypto** is legal in India but not available through Zerodha — use CoinDCX
-(see §2). It is taxed at a flat **30% on gains, with 1% TDS on each sale and no
-loss set-off** — the worst tax treatment of anything on this list.
+> year. The contract page on the NSE/MCX site is the authority. The index
+> rows above are what Angel One listed in October 2026; once it is connected,
+> Meridian takes the lot and tick of every stock and of both indices from its
+> instrument master. The currency and commodity rows stay as written: that
+> file counts those contracts in lots rather than units, and Meridian does not
+> guess the conversion.
 
 ### Futures or options?
 
@@ -107,55 +109,26 @@ placing anything.
 
 ## 2. Getting live data in
 
-Open **Settings** (gear icon, top right).
+There is one source: **Angel One**. Every price on a chart, every bar a
+backtest runs on, and the list of stocks itself come from the connection
+described in §2a. Until it is made the charts are empty and the engine has
+nothing to analyse. Nothing is simulated to fill the gap, and no other feed
+is wired in.
 
-### Crypto — works immediately, via CoinDCX
+It is also the only connection that can place an order, which is why §2a is
+long. Connecting it does not arm anything: the application stays in PAPER
+until you switch it yourself.
 
-Nothing to configure. Seventeen pairs stream live from CoinDCX's public
-endpoints with no credentials: twelve USDT books (BTC, ETH, SOL, XRP, DOGE,
-BNB, ADA, AVAX, LINK, DOT, LTC, TRX) and five INR books (BTC, ETH, SOL, XRP,
-DOGE). This is the fastest way to see the platform working on real, moving
-prices — and it is the venue you already hold an account on.
+Two things about the data it supplies:
 
-Meridian reads market data only. It has no order API wired to CoinDCX and
-never will; you place every trade yourself in their app.
-
-**Trade the USDT books, not the INR books.** Measured live, the difference is
-brutal:
-
-| Book | Spread to cross | Round trip |
-|---|---|---|
-| BTCUSDT | ~0.00% | negligible |
-| SOLUSDT | 0.013% | 0.03% |
-| BTCINR | 0.37% | **0.74%** |
-| SOLINR | 0.55% | **1.10%** |
-| DOGEINR | 0.63% | **1.26%** |
-
-An INR-book scalp needs the market to move more than 1% in your favour before
-you break even. The same trade on the USDT book needs 0.03%. That is a
-30–60× handicap, and it is invisible until you count it. Use the INR pairs
-only for multi-day positions where a 1% cost is small against the move, or
-when you specifically need rupee settlement.
-
-Meridian encodes these spreads per instrument, so the cost model and the
-sizing already reflect them.
-
-### Zerodha — for everything Indian
-
-1. **Get a Kite Connect app.** Sign in at
-   [developers.kite.trade](https://developers.kite.trade), create an app, and
-   set the redirect URL to `http://localhost:5173`.
-2. **Subscribe.** Live quotes and historical candles require the **paid** Kite
-   Connect plan. The free personal tier can place orders but returns no market
-   data, which makes it useless for this platform. Check current pricing on
-   [zerodha.com/products/api](https://zerodha.com/products/api/).
-3. **Save your key and secret** in Settings → Zerodha.
-4. **Log in daily.** Click *Open Kite login*, approve, then copy the
-   `request_token=…` value out of the redirect URL and paste it back. Meridian
-   exchanges it for the day's access token and reconnects the feed.
-
-Kite access tokens **expire every morning around 06:00 IST**. That is a broker
-rule. Step 4 is a daily ritual, roughly fifteen seconds.
+- **Quotes are polled every three seconds**, not streamed tick by tick. The
+  bid and ask are the top of Angel One's own order book. An index has no
+  book, so it is given an assumed spread (0.05% of its price) rather than
+  none — a spread of zero would make every trade look free.
+- **History is fetched a window at a time, up to eight windows back**: about
+  four years of hourly bars, or forty days of one-minute bars. Deep enough
+  for the walk-forward in §3a; not deep enough for the multi-year study
+  behind §7, which has not been run on these markets.
 
 ### Adding your Claude key
 
@@ -170,14 +143,16 @@ Watch the cost: analysis runs on every bar close *and* on the interval you set.
 On a 1-minute chart at a 15-second interval that is ~240 calls an hour. Set the
 interval to match how fast you actually trade — on a 15m chart, 120s is plenty.
 
-### 2a. Angel One — optional, real orders, off by default
+### 2a. Angel One — the data, and optionally real orders
 
-Everything above is analysis. This is the one integration that can touch real
-money, so read this section fully before you connect it.
+This is the connection the charts run on, and it is also the one integration
+that can touch real money — so read this section fully before you connect it.
+Connecting it gives you data and nothing more: real orders stay off until you
+switch to LIVE yourself.
 
 **What it is.** Angel One SmartAPI lets Meridian submit a real order — after
 you review and confirm it — instead of you retyping the plan into a broker's
-terminal. It does not replace the manual Kite/CoinDCX workflow in §3; it's an
+terminal. It does not replace the manual workflow in §3; it's an
 alternative for the same recommendation, gated behind explicit confirmation
 at every step.
 
@@ -201,7 +176,12 @@ at every step.
 5. Optional but worth it: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, so a
    stop that could not be placed reaches your phone and not just the screen.
 6. Run a **walk-forward test** (Backtest tab) on each symbol and timeframe
-   you mean to trade. Without a passing one, Execute Live stays refused.
+   you mean to trade. Without a passing one, Execute Live stays refused —
+   and a passing one is no longer enough by itself (§3a, *What the evidence
+   has to be*).
+7. When you have placed one minimum-size order and watched it end to end in
+   Angel One's own app, set `LIVE_BROKER_VALIDATED=true`. Until then nothing
+   becomes eligible for live review: the order path itself is unverified.
 
 **The limits.** Read once at startup, never editable from the UI — a limit
 you can raise with a click while you are losing is not a limit. Changing one
@@ -238,8 +218,7 @@ Two rules have no setting, because there is no safe way to switch them off:
   open stops could still lose. The contract note is the record; the limit
   errs on the side of stopping early.
 
-**Why credentials live in `.env` and not Settings, unlike Zerodha's.**
-Zerodha's keys in this app are read-only market data. Angel One's can place
+**Why credentials live in `.env` and not Settings.** They can place
 an order, so they're boot-time environment variables only — never accepted
 over the API, never returned by any endpoint even masked, never touched by
 the frontend. If you've read `backend/app/broker/angelone/`, that boundary is
@@ -258,10 +237,7 @@ open positions is a separate, explicit button beside it (**Flatten N live
 positions**), which asks first. The kill switch also trips itself: when the
 daily loss limit is reached, and when a stop order cannot be placed.
 
-**Instrument support is checked, not assumed.** Angel One does not support
-crypto at all — BTCUSD, ETHUSD and every other CoinDCX pair simply cannot be
-live-traded through it, full stop, and the UI says so rather than silently
-falling back to something else. For everything else, Meridian resolves the
+**Instrument support is checked, not assumed.** Meridian resolves the
 real, current contract (exchange, trading symbol, token, lot size, expiry)
 from Angel One's own instrument master before ever showing you an
 **Execute Live** button — never a hard-coded guess.
@@ -295,11 +271,8 @@ The whole loop, in the order you do it.
   the ones with a live BUY or SELL right now, sorted by confidence, instead
   of you opening 30 charts one at a time to find out the same thing. Click a
   row to jump straight to that chart and timeframe.
-- **It's filtered to what you can actually trade.** By default the screener
-  drops spot FX and metals (EURUSD, XAUUSD, …) — analysis-only for Indian
-  residents, see §1 — and shows only instruments live on CoinDCX or Angel
-  One. Every row is tagged with exactly which one and the real trading name
-  to search for there: CoinDCX's own pair (`BTCUSDT`), or Angel One's
+- **It's filtered to what Angel One has a contract for right now.** Every
+  row is tagged with the real trading name to search for there — its
   currently-resolved contract (`NIFTY25AUG26FUT`, not a guessed name — the
   same resolution the live-execution path uses, see §2a). No translation
   step between "the screener says X" and "what do I type into the app."
@@ -374,16 +347,17 @@ that strategy's thesis is correct. Nothing in this platform knows the future.
 The paths exist so you can see what each read implies and how far apart they
 are, not so you can pick the prettiest line.
 
-### Placing the order in Kite
+### Placing the order by hand
 
-Meridian gives you levels; Kite needs an order. For a long USDINR future:
+Meridian gives you levels; Angel One's app needs an order. For a long USDINR
+future:
 
-1. Search **USDINR** in Kite and pick the **current-month contract** — the
+1. Search **USDINR** there and pick the **current-month contract** — the
    nearest expiry, which is where the liquidity is. Meridian resolves this for
-   you (Settings → Zerodha shows the resolved contract), but confirm it.
-2. **Buy → NRML** for a positional trade, **MIS** for intraday. MIS gives more
-   leverage and is auto-squared-off in the afternoon; NRML needs full margin
-   and can be held to expiry.
+   you (the screener row names the contract), but confirm it.
+2. **Buy → carry-forward (NRML)** for a positional trade, **intraday (MIS)**
+   for intraday. Intraday gives more leverage and is squared off automatically
+   before the close; carry-forward needs full margin and can be held to expiry.
 3. **Quantity in lots**, not units. If Meridian says 3 lots, enter `3` in the
    lots field.
 4. Order type **Limit** at the entry price, or **Market** if you're taking the
@@ -391,8 +365,8 @@ Meridian gives you levels; Kite needs an order. For a long USDINR future:
 5. **Place the stop-loss immediately after the fill.** Use a separate **SL-M**
    order in the opposite direction at the stop price. Not a mental stop. Not
    "I'll watch it." An order in the book.
-6. Set the target as a **Limit** order, or use a **GTT OCO** so the stop and
-   target cancel each other.
+6. Set the target as a **Limit** order, or use an OCO order, where the app
+   offers one, so the stop and target cancel each other.
 
 If you skip step 5, nothing else in this document matters.
 
@@ -400,7 +374,7 @@ If you skip step 5, nothing else in this document matters.
 
 If you've connected Angel One (§2a) and switched to LIVE, the trade panel
 shows an **Execute Live** button next to **Log to journal** instead of making
-you retype the plan into Kite. It's only enabled when Angel One is connected,
+you retype the plan into its app. It's only enabled when Angel One is connected,
 LIVE mode is confirmed, the kill switch is off, and the instrument is
 actually supported — otherwise it's disabled with the exact reason shown, not
 just greyed out.
@@ -443,9 +417,37 @@ any one of them refuses the order with its reason:
   order (one at a time per instrument, §2a);
 - if this order *and every stop already open* were hit, the day would still
   be inside `LIVE_DAILY_LOSS_LIMIT`, charges included;
-- a walk-forward test of this symbol and timeframe says there is an edge
-  (§7), and this recommendation is the kind of trade that test took — at or
-  above the confidence and reward:risk it traded.
+- the evidence for this symbol and timeframe is in order, and a person has
+  approved it (below) — and this recommendation is the kind of trade that
+  was tested: at or above the confidence and reward:risk it traded.
+
+**What the evidence has to be.** A passing walk-forward test used to be the
+whole of it. It is now the first of several, and each of them refuses on
+its own:
+
+- the test is on record as an experiment whose hash still matches, less
+  than 30 days old, with at least 30 out-of-sample trades and an interval
+  above zero;
+- it ran on a **real venue's data** that passed its quality checks — never
+  on generated bars. (The application no longer produces any; a test recorded
+  when it did still does not count.)
+- it was run by **the code that is running now**. Change the engine, the
+  execution model or the cost model and the test is about something that no
+  longer exists;
+- it was charged as the venue this market trades on;
+- it did better than its own trades moved to **random bars**, and does not
+  hang on one parameter setting;
+- it is not the seventh attempt at the same question in a month;
+- **twenty closed paper trades** on this market agree with it;
+- the broker path has been validated (`LIVE_BROKER_VALIDATED`).
+
+When all of that holds, the state is **ELIGIBLE FOR HUMAN REVIEW** — and the
+order is still refused. A person has to record an approval
+(`POST /api/research/approvals`, with a name and an explicit confirmation)
+for that version of the code on that market. Edit the engine afterwards and
+the approval is for code that no longer runs. The Backtest panel shows the
+current state and every reason for it; so does
+`/api/research/eligibility?symbol=…&timeframe=…`.
 
 **After the order is sent** Meridian supervises it — every few seconds, and
 again from scratch after a restart:
@@ -553,7 +555,7 @@ you are already out; if it was a mental stop, close it now and do not re-enter
 to "get it back".
 
 The same applies to adjusting a stop: moving it in this panel updates the
-tracker only. Move it in Kite or CoinDCX too, or the protection is imaginary.
+tracker only. Move it in Angel One's app too, or the protection is imaginary.
 Stops may only ever be **tightened** through the API — widening a stop on a
 losing trade is the single most reliable way to turn a small loss into a large
 one, so it is not permitted.
@@ -585,8 +587,8 @@ outcome than one stopped at +0.5R.
 
 **Breakeven is not the entry price.** You paid the spread getting in and pay it
 again getting out, so a stop at exactly your entry books a small *loss*. The
-breakeven rung sits at entry plus the measured round-trip cost. On a CoinDCX
-INR pair that gap is substantial — see §2.
+breakeven rung sits at entry plus the measured round-trip cost. On a thinly
+traded stock that gap is substantial.
 
 **Rungs are gated on ATR as well as R.** Price has to be a full ATR clear of the
 stop a rung would set before it arms. Moving to breakeven too early does not
@@ -605,10 +607,9 @@ previous stop simply stays where it was.
 
 ### ⚠ The one thing that can go badly wrong
 
-**For a position you placed by hand — in Kite, in CoinDCX, or in Angel One's
-own app — Meridian moves its own tracked stop. It cannot move yours.** There
-is no order connection to Kite or CoinDCX, deliberately, and a position
-Meridian did not open is not one it will touch.
+**For a position you placed by hand in Angel One's own app, Meridian moves
+its own tracked stop. It cannot move yours.** A position Meridian did not
+open is not one it will touch.
 
 When the tracked stop and your broker's stop drift apart, the card turns red
 and says so, because a screen reading **SAFE** while the original stop is still
@@ -699,12 +700,13 @@ ten-loss number live as you move the slider; look at it.
 
 This is where most retail edges die, and it is arithmetic, not opinion.
 
-Zerodha charges roughly **₹20 or 0.03% per executed order, whichever is lower**
-on intraday equity, F&O, currency and commodity. On top: exchange transaction
-charges, SEBI fees, GST at 18% on (brokerage + transaction charges), stamp duty,
-and STT/CTT where applicable. Run your exact numbers through the
-[Zerodha brokerage calculator](https://zerodha.com/brokerage-calculator) — rates
-change and I am not going to quote stale ones at you.
+A discount broker charges roughly **₹20 or 0.03% per executed order, whichever
+is lower** on intraday equity, F&O, currency and commodity — the figure the
+cost model here assumes. On top: exchange transaction charges, SEBI fees, GST
+at 18% on (brokerage + transaction charges), stamp duty, and STT/CTT where
+applicable. Angel One's own schedule is the one you pay: check it, and your
+contract note, against that assumption — rates change and I am not going to
+quote stale ones at you.
 
 **The number that matters.** A round trip on a small currency-futures position
 costs on the order of ₹50–70 all-in. At ₹2.50 per tick per lot, that is
@@ -733,7 +735,6 @@ after them:
 | Index futures | 0.049% | ≈ 0.097% |
 | Commodity futures | 0.044% | ≈ 0.088% |
 | Currency futures | 0.036% | ≈ 0.072% |
-| Crypto (CoinDCX taker) | 0.050% | ≈ 0.100% |
 
 Plus the spread for each side that crosses it, and slippage on a stop. Those
 figures are brokerage at 0.03% (the flat ₹20 cap is ignored, which overstates
@@ -756,8 +757,6 @@ so rarely survive a backtest that charges honestly.
   income. A tax audit may apply above certain turnover thresholds.
 - **Intraday equity** — speculative business income; losses only offset
   speculative gains, carry forward 4 years.
-- **Crypto** — flat 30% on gains, 1% TDS per sale, **no loss set-off against
-  anything**, not even other crypto losses.
 
 Keep the journal. It doubles as your trade register at filing time. Talk to a
 CA before your first filing season as a trader — the audit rules are genuinely
@@ -807,6 +806,11 @@ deterministic analyst stands in, as it does live whenever Claude is off), your
 own drawings, and the timeframes below the chart's in the multi-timeframe
 read.
 
+> **These were not the markets Meridian trades now.** The tests below ran on
+> CoinDCX's crypto books, a venue the application has since dropped. They
+> stand as what was measured, and they cannot be re-run from this code.
+> Nothing has yet been measured on anything Angel One trades.
+
 **What it said when it was run — 12 October 2026.** Four crypto markets on
 CoinDCX history, 4,000 bars out of sample each (167 days of hourly bars, 42
 days of 15-minute bars), every cost charged. First the engine — the thing
@@ -841,9 +845,40 @@ It does not say nothing here can work. It says **nothing here has been shown
 to**, and that on these markets the signals as they stand do not beat their
 own costs. The live gate was built to refuse on that answer, and it does.
 
+**A correction to that table, made the same day.** Those runs charged 0.05%
+a side — the futures fee — and simulated short sales on books that cannot be
+shorted. They reproduce exactly from frozen data, so they are a true account
+of what was measured; it was the wrong venue. Charged as the spot books they
+are, long only:
+
+| Market | As above | As the spot book |
+|---|---|---|
+| BTCUSD 1h | −0.11R on 112 trades | **−0.73R on 16** — interval wholly below zero |
+| ETHUSD 1h | +0.22R on 51 | **−0.48R on 35** — interval wholly below zero |
+| SOLUSD 1h | −0.14R on 86 | **−0.11R on 31** |
+
+The one positive number is gone. And the confidence figure beside every
+signal turned out to say nothing: across 778 setups, about three in ten won
+whether it read 50 or 70.
+
+**A wider search, also 12 October 2026.** Five simpler ideas — trend
+following, momentum, fading a range, buying dips, breaking out of a squeeze
+— on nine coins with up to eight years of hourly history, 198 configurations
+declared before any was run, and the last two years of history set aside
+unseen. Everything on hourly bars lost to its costs. Nothing passed. One
+idea came close: a slow trend-follower on 4-hour bars (+0.25R to +0.37R on
+600 to 1,000 trades, profitable on eight coins of nine), which cleared every
+bar but the one that discounts a result for the number of things tried. It
+was rejected, the unseen history was left unseen, and it is now being
+watched on new bars instead. The whole account is in
+[docs/research/REPORT.md](docs/research/REPORT.md).
+
 Run it yourself before believing either this table or a better one: Backtest
 tab → **Walk-forward test**. The first pass over a market takes three or four
-minutes, because it really does run the engine once per bar.
+minutes, because it really does run the engine once per bar. It now fetches
+its own snapshot of history and records the run as an experiment, so the
+same test can be repeated on the same bars; `python -m app.research.run
+experiments` lists them.
 
 If the verdict is "no measured edge", stop here. That is the cheapest this
 lesson will ever be, and changing the instrument or the timeframe and testing
@@ -885,19 +920,21 @@ afterwards — which, if you actually read it, is worth more than the signals.
 
 Stated plainly so there's no confusion:
 
-- It **cannot place, modify, or cancel an order on Kite or CoinDCX.** No
-  broker order API is wired to either, deliberately.
+- It **cannot touch a position it did not open.** One you placed yourself in
+  Angel One's app is yours to manage there.
 - **On Angel One it trades only what you confirm, one order at a time, and
   one position per instrument.** It places the entry you approved and then
   manages that position — stop, target, ladder, square-off, flatten — but it
   never opens a position on its own: there is no live auto-trader, and the
   demo account's auto-trading never touches the broker. It trades **intraday only** and cannot carry a
   position overnight; it cannot trade options, currency or commodity
-  futures (both blocked until a number each depends on is verified, §2a) or
-  crypto; and none of it has been run against a real account yet (§3a).
-- It **cannot predict price.** It weighs evidence and reports a probability,
-  and it is capped at 72% because nothing on a liquid market reliably wins more
-  often than that.
+  futures (both blocked until a number each depends on is verified, §2a);
+  and none of it has been run against a real account yet (§3a).
+- It **cannot predict price.** It weighs evidence and reports a confidence
+  *score*, capped at 72. That number is a weighted count of indicators that
+  agree. It is not a probability, and it has been measured: over 778 setups
+  on three markets, about 30% won whether the score was under 50 or over 70.
+  Do not size a trade by it.
 - It **has no news, no fundamentals, no order book, no positioning data.** It
   sees candles and what you drew.
 - Its **backtest is not a forecast.** It replays the live engine over the
@@ -913,7 +950,7 @@ Stated plainly so there's no confusion:
 
 ---
 
-*Trading currency futures, index derivatives, commodities and crypto involves
+*Trading stocks, currency futures, index derivatives and commodities involves
 substantial risk of loss. This software is an analysis tool for research and
 education. It is not investment advice, it is not a recommendation to trade,
 and nothing in it is a guarantee of any outcome.*

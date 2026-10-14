@@ -62,6 +62,7 @@ from ...config import settings
 from ...db.models import LiveExecutionRow
 from ...db.session import session_scope
 from ...schemas.execution import ExecutionStatus as S
+from .. import order_states  # noqa: F401 - registers the status-change check
 from ..live_limits import load_ledger, trading_day_start
 from ..trading_mode import trading_mode
 from .client import AngelOneAmbiguousError, AngelOneOrderError, angel_broker

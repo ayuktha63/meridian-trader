@@ -1,13 +1,17 @@
-"""Session-aware synthetic market.
+"""A generated market, for the test suite only.
 
-This is not noise. The generator produces the structure the analysis engine
-exists to read: persistent trends, ranging regimes, volatility clustering,
-liquidity sweeps at prior extremes, and volume that tracks the FX session
-clock. That means every detector — BOS, order blocks, FVGs, patterns — has
-something real to find with no API key present.
+The application has one source of prices, Angel One, and nothing behind it.
+A test cannot have a broker session, so the suite installs this in its place
+(see conftest.py): deterministic bars with the structure the analysis engine
+exists to read — persistent trends, ranging regimes, volatility clustering
+and volume that follows the session clock.
+
+It answers to the name "synthetic", which is the name the evidence checks
+refuse. Bars made here must never count as a measurement of a market, in a
+test as anywhere else.
 
 Each timeframe is generated from a deterministic per-symbol seed and then
-rescaled so all timeframes terminate on the same live price.
+rescaled so all timeframes terminate on the same price.
 """
 from __future__ import annotations
 
@@ -15,22 +19,79 @@ import asyncio
 import math
 import time
 import zlib
-from typing import Dict, List, Sequence
+from datetime import datetime, timezone
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from ...config import settings
-from ...instruments import get_instrument, get_timeframe
-from ..sessions import is_market_open, liquidity_factor
-from ..store import bar_open_time
-from .base import MarketDataProvider, ProviderTick, TickHandler
+from app.data.providers.base import MarketDataProvider, ProviderTick, TickHandler
+from app.data.sessions import INDIA_HOURS, is_market_open
+from app.data.store import bar_open_time
+from app.instruments import get_instrument, get_timeframe
+
+TICK_HZ = 2.0
+
+#: Activity by hour for the one made-up market here that is not an exchange
+#: product: name -> (open hour UTC, close hour UTC, weight). The application
+#: itself has no such clock any more; its markets are Indian exchanges.
+SESSIONS: Dict[str, Tuple[int, int, float]] = {
+    "sydney": (21, 6, 0.55), "tokyo": (0, 9, 0.75),
+    "london": (7, 16, 1.25), "newyork": (12, 21, 1.20),
+}
+
+
+def _in_window(hour: int, start: int, end: int) -> bool:
+    return start <= hour < end if start < end else (hour >= start or hour < end)
+
+#: symbol -> (price to start from, daily sigma in percent). Made up, and only
+#: ever read here.
+SEEDS: Dict[str, Tuple[float, float]] = {
+    "EURUSD": (1.0850, 0.45),
+    "USDINR": (83.20, 0.30), "EURINR": (90.10, 0.45),
+    "GBPINR": (105.60, 0.55), "JPYINR": (55.20, 0.50),
+    "NIFTY": (24_500.0, 0.85), "BANKNIFTY": (52_000.0, 1.10),
+    "MCXGOLD": (71_500.0, 0.95), "MCXSILVER": (88_000.0, 1.60),
+    "MCXCRUDE": (6_400.0, 2.10),
+    "RELIANCE": (1_320.0, 1.5), "HDFCBANK": (1_680.0, 1.5), "INFY": (1_880.0, 1.5),
+    "TATAMOTORS": (760.0, 1.5), "SBIN": (820.0, 1.5), "TCS": (4_100.0, 1.2),
+    "ITC": (420.0, 1.5),
+}
+DEFAULT_SEED = (100.0, 1.5)
+
+
+def seed_of(symbol: str) -> Tuple[float, float]:
+    return SEEDS.get(symbol.upper(), DEFAULT_SEED)
+
+
+def liquidity_factor(ts: float, asset_class: str = "fx") -> float:
+    """Relative activity multiplier at `ts`; 1.0 is an average hour."""
+    if not is_market_open(ts, asset_class):
+        return 0.05
+
+    if asset_class in INDIA_HOURS:
+        # Indian volume clusters at the open and again into the close.
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        start, end = INDIA_HOURS[asset_class]
+        clock = dt.hour + dt.minute / 60.0
+        progress = (clock - start) / max(end - start, 1e-6)
+        return 0.7 + 0.6 * (1.0 - abs(progress - 0.5) * 2) ** 0.5 + (
+            0.4 if progress < 0.12 or progress > 0.88 else 0.0)
+
+    hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
+    factor = 0.35
+    for _, (start, end, weight) in SESSIONS.items():
+        if _in_window(hour, start, end):
+            factor += weight * 0.5
+    if 12 <= hour < 16:      # London / New York overlap
+        factor *= 1.25
+    return max(0.15, min(2.2, factor))
 
 
 def _seed(*parts) -> int:
     return zlib.crc32("|".join(str(p) for p in parts).encode()) & 0xFFFF_FFFF
 
 
-class SyntheticProvider(MarketDataProvider):
+class SimulatedProvider(MarketDataProvider):
     name = "synthetic"
     live = False
 
@@ -43,6 +104,10 @@ class SyntheticProvider(MarketDataProvider):
     # ── helpers ───────────────────────────────────────────────
 
     def supports(self, symbol: str) -> bool:
+        try:
+            get_instrument(symbol)
+        except KeyError:
+            return False
         return True
 
     def anchor_price(self, symbol: str) -> float:
@@ -53,8 +118,9 @@ class SyntheticProvider(MarketDataProvider):
         day = int(time.time() // 86400)
         rng = np.random.default_rng(_seed(symbol, day))
         # Random walk across days from the instrument's reference price.
-        drift = float(np.sum(rng.normal(0, inst.daily_vol_pct / 100.0, size=12)))
-        price = inst.base_price * math.exp(drift)
+        base_price, daily_vol_pct = seed_of(symbol)
+        drift = float(np.sum(rng.normal(0, daily_vol_pct / 100.0, size=12)))
+        price = base_price * math.exp(drift)
         self._price[symbol] = round(price, inst.digits)
         return self._price[symbol]
 
@@ -67,7 +133,7 @@ class SyntheticProvider(MarketDataProvider):
         guard = bars * 6 + 512
         while len(out) < bars and guard > 0:
             guard -= 1
-            if asset_class == "crypto" or is_market_open(cursor, asset_class) or tf >= 604_800:
+            if is_market_open(cursor, asset_class) or tf >= 604_800:
                 out.append(int(cursor))
             cursor -= tf
         return sorted(out)
@@ -89,7 +155,7 @@ class SyntheticProvider(MarketDataProvider):
 
         # Per-bar sigma scaled from the instrument's daily vol.
         bars_per_day = max(1.0, 86400.0 / tf.seconds)
-        base_sigma = (inst.daily_vol_pct / 100.0) / math.sqrt(bars_per_day)
+        base_sigma = (seed_of(symbol)[1] / 100.0) / math.sqrt(bars_per_day)
 
         # Regime process: slow OU drift + GARCH-style vol clustering.
         drift = 0.0
@@ -158,7 +224,7 @@ class SyntheticProvider(MarketDataProvider):
     # ── live stream ───────────────────────────────────────────
 
     async def stream(self, symbols: Sequence[str], handler: TickHandler) -> None:
-        hz = max(0.2, float(settings.feed_tick_hz))
+        hz = TICK_HZ
         interval = 1.0 / hz
         for sym in symbols:
             self.anchor_price(sym)
@@ -177,13 +243,14 @@ class SyntheticProvider(MarketDataProvider):
         liq = liquidity_factor(now, inst.asset_class)
 
         # Per-second sigma from the instrument's daily vol, scaled by session.
-        sec_sigma = (inst.daily_vol_pct / 100.0) / math.sqrt(86400.0) * (0.5 + liq)
+        base_price, daily_vol_pct = seed_of(symbol)
+        sec_sigma = (daily_vol_pct / 100.0) / math.sqrt(86400.0) * (0.5 + liq)
         step = float(self._rng.normal(0.0, sec_sigma * math.sqrt(dt_seconds)))
         drift = self._drift_state.get(symbol, 0.0) * 0.00002
         price = price * math.exp(step + drift)
 
         # Keep the simulated market tethered to a plausible band.
-        anchor = inst.base_price
+        anchor = base_price
         if price > anchor * 1.30:
             price = anchor * 1.30
         elif price < anchor * 0.70:

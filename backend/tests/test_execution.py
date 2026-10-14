@@ -33,6 +33,14 @@ def client():
         yield test_client
 
 
+def _reset_drawdown():
+    from app.broker.drawdown import drawdown_tracker
+
+    drawdown_tracker._peak = None  # noqa: SLF001 - test-only reset of the singleton
+    drawdown_tracker._last = None  # noqa: SLF001
+    drawdown_tracker.clear()
+
+
 @pytest.fixture(autouse=True)
 def _reset_broker_state():
     """Every test starts from a clean slate: PAPER, disconnected, no kill switch."""
@@ -40,10 +48,12 @@ def _reset_broker_state():
     trading_mode.deactivate_kill_switch()   # no longer implied by PAPER
     _run(_wipe_executions())                # the live limits count what is open
     angel_auth._session = None  # noqa: SLF001 - test-only reset of the singleton
+    _reset_drawdown()
     yield
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()
     angel_auth._session = None  # noqa: SLF001
+    _reset_drawdown()
 
 
 async def _wipe_executions():
@@ -146,6 +156,38 @@ def test_kill_switch_blocks_execution(client, fake):
     assert fake.placed == []
 
 
+def test_a_locked_drawdown_blocks_execution_before_any_broker_call(client, fake):
+    """Same shape as the kill switch: fails at the cheap check, before
+    instrument resolution or a funds call ever happens."""
+    from app.broker.drawdown import drawdown_tracker
+
+    drawdown_tracker.update(10_000.0)
+    drawdown_tracker.update(8_000.0)  # past the 10% default — locks
+    try:
+        assert execute(client, _run(_seed_recommendation())).json()["status"] == "REJECTED"
+        assert fake.placed == []
+    finally:
+        drawdown_tracker.clear()
+
+
+def test_a_fresh_drawdown_breach_trips_the_kill_switch_too(client, fake, monkeypatch):
+    """The drawdown check doesn't only refuse this one order — like the
+    daily-loss check, breaching it for the first time trips the kill switch,
+    so every *subsequent* order is refused too, not just this one."""
+    from app.broker.drawdown import drawdown_tracker
+
+    monkeypatch.setattr(settings, "live_max_drawdown_pct", 10.0, raising=False)
+    drawdown_tracker.update(10_000.0)   # the peak, set before the breach
+    fake.funds = 8_000.0                # 20% below that peak — past the 10% limit
+
+    assert not trading_mode.kill_switch_active
+    try:
+        execute(client, _run(_seed_recommendation()))
+        assert trading_mode.kill_switch_active
+    finally:
+        drawdown_tracker.clear()
+
+
 def test_wait_recommendation_is_not_executable(client, fake):
     assert execute(client, _run(_seed_recommendation(decision="WAIT"))).status_code == 422
 
@@ -156,12 +198,12 @@ def test_unknown_recommendation_404s(client, fake):
 
 def test_unsupported_instrument_is_rejected(client, fake, monkeypatch):
     async def resolve(symbol):
-        raise InstrumentUnsupported("Angel One does not support crypto trading.")
+        raise InstrumentUnsupported("No matching Angel One contract found for it.")
     monkeypatch.setattr(angel_instruments, "resolve", resolve)
 
-    body = execute(client, _run(_seed_recommendation(symbol="BTCUSD"))).json()
+    body = execute(client, _run(_seed_recommendation(symbol="ITC"))).json()
     assert body["status"] == "REJECTED"
-    assert "crypto" in body["error_message"].lower()
+    assert "no matching angel one contract" in body["error_message"].lower()
 
 
 def test_untrusted_cds_tick_conversion_blocks_execution(client, fake, monkeypatch):
@@ -308,7 +350,10 @@ def test_preview_shows_the_exact_order_and_places_nothing(client, fake):
     assert (body["quantity"], body["entry_price"], body["stop_price"]) == (100, 250.0, 248.0)
     assert (body["order_value"], body["risk"], body["margin_required"]) == (
         25_000.0, 200.0, 5_000.0)
-    assert body["charges"] == pytest.approx(26.41, abs=0.01), "and what the round trip costs"
+    # 25,000 in and 24,800 out, intraday, at Angel One's published rates: Rs 20
+    # brokerage a side (0.1%, capped), 1.58 to the exchange and SEBI, 7.48 GST,
+    # and 6.99 of STT and stamp duty. (A rate of 0.053% a side said 26.41.)
+    assert body["charges"] == pytest.approx(56.06, abs=0.01), "and what the round trip costs"
     assert body["trading_symbol"] == "RELIANCE-EQ"
     assert fake.placed == []
     assert client.get(f"/api/trades/{rec_id}/execution").status_code == 404, "nothing recorded"

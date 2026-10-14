@@ -88,10 +88,15 @@ def _clean():
                     reconciler._corrected):                          # noqa: SLF001
         scratch.clear()
     reconciler._lock = None                                          # noqa: SLF001
+    from app.broker.drawdown import drawdown_tracker
+    drawdown_tracker._peak = drawdown_tracker._last = None            # noqa: SLF001
+    drawdown_tracker.clear()
     yield
     trading_mode.set_mode(PAPER)
     trading_mode.deactivate_kill_switch()
     angel_auth._session = None  # noqa: SLF001
+    drawdown_tracker._peak = drawdown_tracker._last = None            # noqa: SLF001
+    drawdown_tracker.clear()
 
 
 @pytest.fixture
@@ -907,6 +912,19 @@ def test_symbol_exposure_limit(client, fake, monkeypatch):
     assert attempt(client)["status"] == "OPEN"
 
 
+def test_sector_exposure_limit_adds_up_a_sector(client, fake, monkeypatch):
+    """Two banks are one sector; a bank and a software exporter are not.
+    Their futures trade in different lots, which has nothing to do with it."""
+    monkeypatch.setattr(settings, "live_max_symbol_exposure", 0.0)
+    monkeypatch.setattr(settings, "live_max_sector_exposure", 40_000.0)
+    assert attempt(client, symbol="HDFCBANK")["status"] == "OPEN"        # 25,000
+    second = attempt(client, symbol="SBIN")                              # 25,000 more
+    assert second["status"] == "REJECTED"
+    assert "Financials sector exposure would be 50000.00" in second["error_message"]
+    assert attempt(client, symbol="INFY")["status"] == "OPEN", "IT has its own room"
+    assert len(fake.placed) == 2
+
+
 def test_one_live_execution_per_instrument(client, fake):
     """Angel One nets every order in an instrument into one position, so a
     second — adding to it or reversing it — cannot be protected on its own."""
@@ -960,7 +978,7 @@ def test_minutes_to_close_follows_the_segments_own_hours():
     assert sessions.minutes_to_close(ts, "stock") == pytest.approx(60.0)
     assert sessions.minutes_to_close(ts, "index") == pytest.approx(60.0)
     assert sessions.minutes_to_close(ts, "commodity") == pytest.approx(540.0)
-    assert sessions.minutes_to_close(ts, "crypto") is None, "never closes"
+    assert sessions.minutes_to_close(ts, "fx") is None, "not an exchange session"
     assert sessions.minutes_to_close(ts + 3 * 3600, "stock") is None, "already shut"
     assert sessions.minutes_to_close(ts + 3 * 86_400, "stock") is None, "Saturday"
 
@@ -1000,7 +1018,9 @@ def test_a_stop_at_breakeven_frees_the_risk_it_was_holding(client, fake, monkeyp
 
 
 def test_daily_loss_limit_trips_the_kill_switch_as_the_loss_lands(client, fake, monkeypatch):
-    monkeypatch.setattr(settings, "live_daily_loss_limit", 250.0)
+    # Room for the order as planned (200 at the stop and 56 in charges), and
+    # none for the one it turns into.
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 260.0)
     rec_id, _ = filled(client, fake)
     fake.fill(row(rec_id).stop_order_id, price=2470.0)    # slipped: -30 x 10 = -300
     tick()
@@ -1013,25 +1033,25 @@ def test_daily_loss_limit_trips_the_kill_switch_as_the_loss_lands(client, fake, 
 
 
 def test_the_daily_limit_counts_what_the_broker_and_exchange_take(client, fake, monkeypatch):
-    """Stopped exactly at the stop is 200 lost on price — and about 26 more
-    in brokerage and statutory charges. The day's limit is on what is gone."""
+    """Stopped exactly at the stop is 200 lost on price — and 56 more in
+    brokerage and statutory charges. The day's limit is on what is gone."""
     rec_id, _ = filled(client, fake)
     monkeypatch.setattr(settings, "live_daily_loss_limit", 215.0)
     fake.fill(row(rec_id).stop_order_id, price=2480.0)
     tick()
     assert row(rec_id).gross_pnl == pytest.approx(-200.0)
     assert trading_mode.kill_switch_active
-    assert "226.41 lost today" in trading_mode.kill_switch_reason
+    assert "256.06 lost today" in trading_mode.kill_switch_reason
 
 
 def test_the_days_worst_case_includes_the_charges(client, fake, monkeypatch):
     """An order that fits the limit on price alone, and not once its round
     trip is paid for, does not fit."""
     monkeypatch.setattr(settings, "live_daily_loss_limit", 215.0)
-    body = attempt(client)                                # 200 at the stop + ~26
+    body = attempt(client)                                # 200 at the stop + 56
     assert body["status"] == "REJECTED"
     assert "daily loss limit" in body["error_message"]
-    monkeypatch.setattr(settings, "live_daily_loss_limit", 230.0)
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 260.0)
     assert attempt(client)["status"] == "OPEN"
 
 
@@ -1039,9 +1059,9 @@ def test_a_breakeven_stop_still_owes_the_round_trip(client, fake, monkeypatch):
     """Out at the entry price is not out for free."""
     rec_id, _ = filled(client, fake)
     update(rec_id, stop_price=2500.0)
-    monkeypatch.setattr(settings, "live_daily_loss_limit", 240.0)
-    # The next order would lose 226 at its stop: inside 240 alone, outside it
-    # with the 27 the open trade still owes.
+    monkeypatch.setattr(settings, "live_daily_loss_limit", 290.0)
+    # The next order would lose 256 at its stop: inside 290 alone, outside it
+    # with the 56 the open trade still owes.
     assert "daily loss limit" in attempt(client, symbol="TCS")["error_message"]
 
 
@@ -1051,9 +1071,11 @@ def test_a_closed_trade_reports_its_charges_and_what_is_left(client, fake):
     tick()
     record = client.get("/api/trades/live").json()[0]
     assert record["gross_pnl"] == pytest.approx(600.0)
-    # Equity intraday: about 0.053% a side, on 25,000 in and 25,600 out.
-    assert record["charges"] == pytest.approx(26.83, abs=0.01)
-    assert record["net_pnl"] == pytest.approx(600.0 - 26.83, abs=0.01)
+    # Equity intraday on 25,000 in and 25,600 out, as Angel One charges it:
+    # 20 + 20 brokerage, 1.60 exchange and SEBI, 7.49 GST, 6.40 STT on the
+    # sale and 0.75 stamp duty on the purchase.
+    assert record["charges"] == pytest.approx(56.24, abs=0.01)
+    assert record["net_pnl"] == pytest.approx(600.0 - 56.24, abs=0.01)
 
 
 def test_the_trading_day_starts_at_midnight_ist():

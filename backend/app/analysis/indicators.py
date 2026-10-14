@@ -1,9 +1,12 @@
 """Technical indicator engine.
 
 Implemented natively in NumPy/Pandas so the platform never hard-depends on a
-C toolchain (TA-Lib) that half of macOS installs fail to build. Where
-pandas-ta or TA-Lib are installed they are only used for cross-validation in
-the test suite — never at runtime, so results are identical everywhere.
+C toolchain (TA-Lib) that half of macOS installs fail to build. Neither
+pandas-ta nor TA-Lib is a dependency or is installed here; the functions are
+checked against textbook definitions written longhand in
+tests/test_indicator_references.py. Wilder's smoothing is seeded with the first
+value, not the mean of the first n; the two converge geometrically, and the
+test measures how fast.
 
 Every function takes and returns pandas objects aligned to the input index.
 """

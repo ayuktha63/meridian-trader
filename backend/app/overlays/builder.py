@@ -55,11 +55,21 @@ def _future_time(last_time: int, timeframe: str, bars: int = 14) -> int:
     return int(last_time + get_timeframe(timeframe).seconds * bars)
 
 
+#: The model's own entry, stop and target are a prediction, not an order. They
+#: are drawn dotted, thin and faded and labelled "AI", so they can never be
+#: read as a level that is actually set at the broker (solid, on the chart's
+#: broker layer).
+PREDICTED_DASH = [2, 5]
+PREDICTED_OPACITY = 0.6
+
+
 def _level(idx: str, role: str, price: float, start: int, end: int, label: str,
-           color: str, dash: Optional[List[int]] = None, width: int = 1) -> OverlayObject:
+           color: str, dash: Optional[List[int]] = None, width: int = 1,
+           opacity: float = 1.0) -> OverlayObject:
     return OverlayObject(
         id=idx, kind="line", role=role, color=color, price=price,
         start_time=start, end_time=end, label=label, dash=dash, width=width,
+        opacity=opacity,
         points=[{"time": float(start), "price": price},
                 {"time": float(end), "price": price}],
     )
@@ -196,23 +206,25 @@ def build_overlays(verdict: AIVerdict, plan: TradePlan, structure: MarketStructu
 
         overlays.append(_level(
             nid("entry"), "entry", entry, last_time, horizon,
-            "{} @ {:.{d}f}".format(verdict.decision.value, entry, d=d),
-            PALETTE["entry"], width=2,
+            "AI {} @ {:.{d}f}".format(verdict.decision.value, entry, d=d),
+            PALETTE["entry"], dash=PREDICTED_DASH, opacity=PREDICTED_OPACITY,
         ))
         overlays.append(_level(
             nid("stop"), "stop", stop, last_time, horizon,
-            "SL {:.{d}f}".format(stop, d=d), PALETTE["stop"], dash=[5, 3], width=2,
+            "AI SL {:.{d}f}".format(stop, d=d), PALETTE["stop"],
+            dash=PREDICTED_DASH, opacity=PREDICTED_OPACITY,
         ))
         if target is not None:
             overlays.append(_level(
                 nid("tp"), "target", target, last_time, horizon,
-                "TP1 {:.{d}f}".format(target, d=d), PALETTE["target"], dash=[5, 3], width=2,
+                "AI TP1 {:.{d}f}".format(target, d=d), PALETTE["target"],
+                dash=PREDICTED_DASH, opacity=PREDICTED_OPACITY,
             ))
         if plan.take_profit_2 is not None:
             overlays.append(_level(
                 nid("tp2"), "target", plan.take_profit_2, last_time, horizon,
-                "TP2 {:.{d}f}".format(plan.take_profit_2, d=d),
-                PALETTE["target"], dash=[2, 6],
+                "AI TP2 {:.{d}f}".format(plan.take_profit_2, d=d),
+                PALETTE["target"], dash=PREDICTED_DASH, opacity=PREDICTED_OPACITY,
             ))
 
         # Expected path: entry → target, drawn as a projection arrow.

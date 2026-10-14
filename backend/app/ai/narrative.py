@@ -242,7 +242,7 @@ def build_narrative(symbol: str, timeframe: str, inst: Instrument, price: float,
                     drawing_stats: List[DrawingAnalytics],
                     confidence: ConfidenceBreakdown, bars: int) -> str:
     d = inst.digits
-    clock = market_clock()
+    clock = market_clock(asset_class=inst.asset_class)
 
     header = [
         "{} ({}) on the {} timeframe.".format(inst.display, symbol, timeframe),
@@ -253,7 +253,7 @@ def build_narrative(symbol: str, timeframe: str, inst: Instrument, price: float,
     if quote and quote.change_pct:
         header.append("Session change {:+.2f}% ({:+.5f}).".format(
             quote.change_pct, quote.change_abs))
-    header.append("Session: {} ({} liquidity). {} bars of history analysed.".format(
+    header.append("Exchange session: {} ({} liquidity). {} bars of history analysed.".format(
         clock.active_session, clock.liquidity_regime, bars))
 
     sections = [
@@ -299,7 +299,7 @@ def build_evidence(symbol: str, timeframe: str, inst: Instrument, price: float,
                    drawing_stats: List[DrawingAnalytics],
                    confidence: ConfidenceBreakdown) -> Dict[str, Any]:
     d = inst.digits
-    clock = market_clock()
+    clock = market_clock(asset_class=inst.asset_class)
 
     return {
         "instrument": {

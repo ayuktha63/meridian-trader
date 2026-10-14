@@ -1,10 +1,15 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import { fmtPriceCcy } from '../../lib/format'
+import { fmtPriceCcy, timeAgo } from '../../lib/format'
 import type { ScreenerRow } from '../../lib/types'
 import { useStore } from '../../store/useStore'
 import { Spinner } from '../ui'
+
+/** Past this, a row is old enough that the market has likely moved past the
+ * setup it describes — shown as a warning, not removed: it's still useful
+ * context, just no longer "take this now". */
+const STALE_SECONDS = 5 * 60
 
 /**
  * "What's actually worth trading right now" — one click, every instrument,
@@ -18,15 +23,28 @@ export default function Screener() {
   const [rows, setRows] = useState<ScreenerRow[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [scannedAt, setScannedAt] = useState<number | null>(null)
+  const [now, setNow] = useState(() => Date.now() / 1000)
   const timeframe = useStore((s) => s.timeframe)
   const setSymbol = useStore((s) => s.setSymbol)
   const setTimeframe = useStore((s) => s.setTimeframe)
+
+  // A plain snapshot otherwise never tells you it's gone stale while the
+  // panel sits open — this is what makes "as of" and the staleness tell
+  // below actually count up instead of being frozen at open-time.
+  useEffect(() => {
+    if (!open) return
+    const id = window.setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => window.clearInterval(id)
+  }, [open])
 
   const run = async () => {
     setLoading(true)
     setError(null)
     try {
-      setRows(await api.screener(timeframe))
+      const result = await api.screener(timeframe)
+      setRows(result)
+      setScannedAt(Date.now() / 1000)
     } catch (exc) {
       setError(exc instanceof ApiError ? exc.message : 'Screener request failed.')
     } finally {
@@ -62,7 +80,7 @@ export default function Screener() {
       <AnimatePresence>
         {open && (
           <motion.div
-            className="fixed inset-0 z-[210] flex items-start justify-center bg-black/60 px-6 pt-20"
+            className="fixed inset-0 z-[210] flex items-start justify-center bg-black/60 px-4 sm:px-6 pt-20"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setOpen(false)}
           >
@@ -75,6 +93,12 @@ export default function Screener() {
               <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline">
                 <h2 className="text-sm font-bold tracking-tight">Best trades right now</h2>
                 <span className="text-2xs text-faint">· {timeframe}</span>
+                {scannedAt && (
+                  <span className="text-2xs text-faint tabular-nums"
+                        title="This is a snapshot, not a live stream — it only updates on Refresh">
+                    · scanned {timeAgo(scannedAt)}
+                  </span>
+                )}
                 <span className="flex-1" />
                 <button type="button" className="chip !py-0.5" onClick={run} disabled={loading}
                         title="Re-scan">
@@ -115,10 +139,10 @@ export default function Screener() {
                 {rows && rows.length > 0 && (
                   <div className="space-y-4 py-1">
                     {buys.length > 0 && (
-                      <RowGroup title="BUY" rows={buys} onSelect={openFor} tone="bull" />
+                      <RowGroup title="BUY" rows={buys} onSelect={openFor} tone="bull" now={now} />
                     )}
                     {sells.length > 0 && (
-                      <RowGroup title="SELL" rows={sells} onSelect={openFor} tone="bear" />
+                      <RowGroup title="SELL" rows={sells} onSelect={openFor} tone="bear" now={now} />
                     )}
                   </div>
                 )}
@@ -136,9 +160,9 @@ export default function Screener() {
   )
 }
 
-function RowGroup({ title, rows, onSelect, tone }: {
+function RowGroup({ title, rows, onSelect, tone, now }: {
   title: string; rows: ScreenerRow[]
-  onSelect: (row: ScreenerRow) => void; tone: 'bull' | 'bear'
+  onSelect: (row: ScreenerRow) => void; tone: 'bull' | 'bear'; now: number
 }) {
   const toneText = tone === 'bull' ? 'text-bull' : 'text-bear'
   return (
@@ -147,7 +171,10 @@ function RowGroup({ title, rows, onSelect, tone }: {
         {title} · {rows.length}
       </h3>
       <div className="space-y-0.5">
-        {rows.map((row) => (
+        {rows.map((row) => {
+          const age = now - row.generated_at
+          const stale = age > STALE_SECONDS
+          return (
           <button
             key={row.symbol}
             type="button"
@@ -157,10 +184,17 @@ function RowGroup({ title, rows, onSelect, tone }: {
           >
             <span className="w-24 shrink-0 font-semibold text-xs truncate">{row.display}</span>
             <span className={`w-10 shrink-0 text-2xs font-bold ${toneText}`}>{row.decision}</span>
-            <span className="w-16 shrink-0 text-2xs tnum text-faint">
-              {row.confidence.toFixed(0)}%
+            <span className="w-16 shrink-0 text-2xs tnum text-faint"
+                  title="Signal score, 0-100 — a heuristic, not a probability of winning; not calibrated against results">
+              {row.confidence.toFixed(0)}
             </span>
             <span className="flex-1 text-2xs text-ink/70 truncate">{row.summary}</span>
+            <span className={`w-16 shrink-0 text-2xs tnum text-right ${stale ? 'text-warn' : 'text-faint'}`}
+                  title={stale
+                    ? "This read is old enough that price has likely moved past it — rescan before acting"
+                    : 'When this read was generated'}>
+              {timeAgo(row.generated_at)}
+            </span>
             <span className="shrink-0 text-2xs tnum text-faint">
               {row.risk_reward != null ? `${row.risk_reward.toFixed(2)}R:R` : ''}
             </span>
@@ -181,7 +215,8 @@ function RowGroup({ title, rows, onSelect, tone }: {
               </span>
             )}
           </button>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

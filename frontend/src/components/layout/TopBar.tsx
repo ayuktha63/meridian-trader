@@ -1,7 +1,10 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmtPct, fmtPriceCcy } from '../../lib/format'
+import { STALE_QUOTE_SECONDS } from '../../lib/types'
 import { useActiveInstrument, useStore } from '../../store/useStore'
+import LiveHistoryPanel from '../panels/LiveHistoryPanel'
+import LivePositionsPanel from '../panels/LivePositionsPanel'
 import { Spinner, Toggle } from '../ui'
 import AutoStatus from './AutoStatus'
 import AutoTradeBar from './AutoTradeBar'
@@ -36,8 +39,8 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
   const [query, setQuery] = useState('')
   const pickerRef = useRef<HTMLDivElement>(null)
 
-  // Matches the ticker, the display name and the venue, so "gold", "MCX" and
-  // "XAU" all find the same instrument.
+  // Matches the ticker, the display name and the venue, so "gold" and "MCX"
+  // both find the same instrument.
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return symbols
@@ -60,14 +63,31 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
 
   const live = quotes[symbol] ?? quote
   const positive = (live?.change_pct ?? 0) >= 0
+  // LIVE has to mean a quote is arriving, not that a provider is configured.
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const feedStale = !live || now - live.updated_at > STALE_QUOTE_SECONDS
 
   return (
-    // `relative z-50` is load-bearing. `.glass` applies backdrop-blur, and
-    // backdrop-filter creates a stacking context — which traps the symbol
-    // menu's own z-index inside this header. Without a positive z-index here
-    // the header sits below <main> in paint order and the chart canvases
-    // (lightweight-charts uses z-index 1 and 2) cover the open dropdown.
-    <header className="glass rounded-xl relative z-50 flex items-center gap-3 px-3 py-2 shrink-0">
+    // `relative z-50` is load-bearing — without a positive z-index here the
+    // header sits below <main> in paint order and the chart canvases
+    // (lightweight-charts uses z-index 1 and 2) cover any open dropdown.
+    //
+    // The glass background is deliberately a separate, negatively-stacked
+    // sibling rather than `.glass` on <header> itself: backdrop-filter on an
+    // ancestor becomes the containing block for every `position: fixed`
+    // descendant, so any full-screen popup opened from inside this header
+    // (Screener, the trading-mode dialogs, Live Positions/History) would be
+    // centered against this ~50px strip instead of the real viewport —
+    // visible only as whatever sliver happened to fall inside it. Keeping
+    // the blur on a plain, unpositioned-filter sibling fixes that at the
+    // source instead of fighting it from each popup.
+    <header className="rounded-xl relative z-50 flex items-center gap-3 px-3 py-2 shrink-0">
+      <div className="absolute inset-0 -z-10 rounded-xl bg-panel/70 backdrop-blur-xl
+                      border border-hairline" style={{ boxShadow: 'var(--shadow-panel)' }} />
       {/* Brand */}
       <div className="flex items-center gap-2 pr-3 border-r border-hairline">
         <div className="h-6 w-6 rounded-md bg-gradient-to-br from-accent to-violet
@@ -76,7 +96,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
         </div>
         <div className="leading-none">
           <div className="text-xs font-semibold tracking-tight">Meridian</div>
-          <div className="text-[9px] text-faint">analysis only</div>
+          <div className="text-[9px] text-faint">Angel One · NSE · MCX</div>
         </div>
       </div>
 
@@ -85,7 +105,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
         <button
           type="button"
           onClick={() => { setQuery(''); setPickerOpen((prev) => !prev) }}
-          title="Change instrument — forex, crypto, NSE stocks, futures, commodities"
+          title="Change instrument — NSE stocks, index and currency futures, commodities"
           aria-label="Select instrument"
           aria-expanded={pickerOpen}
           className="flex items-center gap-2 rounded-lg border border-hairline bg-tint/[0.03]
@@ -118,7 +138,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
                 <input
                   autoFocus
                   className="input"
-                  placeholder="Search — RELIANCE, NIFTY, BTC, gold…"
+                  placeholder="Search — RELIANCE, NIFTY, gold…"
                   aria-label="Search instruments"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
@@ -153,8 +173,8 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
                       </span>
                       <span className="flex items-center gap-1 mt-0.5">
                         <span className={`text-[9px] px-1 rounded ${item.live
-                          ? 'bg-bull/15 text-bull' : 'bg-tint/[0.06] text-faint'}`}>
-                          {item.live ? 'LIVE' : 'SIM'}
+                          ? 'bg-bull/15 text-bull' : 'bg-warn/15 text-warn'}`}>
+                          {item.live ? 'LIVE' : 'NO DATA'}
                         </span>
                         <span className="text-[9px] px-1 rounded bg-tint/[0.06] text-faint">
                           {item.venue === 'otc' ? 'OTC' : item.venue}
@@ -205,14 +225,17 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
           </span>
         )}
         <span
-          title={instrument?.live
-            ? `Real market data from ${instrument.provider}`
-            : 'Simulated data — realistic, but not a real market'}
+          title={!instrument?.live
+            ? 'No data — prices come only from Angel One, and it is not connected'
+            : feedStale
+              ? 'The last quote is old: the market is shut or the feed has stopped. '
+                + 'This is the last price received, not a current one.'
+              : `Real market data from ${instrument.provider}`}
           className={`text-[9px] px-1.5 py-0.5 rounded font-semibold tracking-wide
-                      ${instrument?.live
+                      ${instrument?.live && !feedStale
                         ? 'bg-bull/15 text-bull' : 'bg-warn/15 text-warn'}`}
         >
-          {instrument?.live ? 'LIVE' : 'SIM'}
+          {!instrument?.live ? 'NO DATA' : feedStale ? 'STALE' : 'LIVE'}
         </span>
       </div>
 
@@ -267,6 +290,14 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
 
         <Screener />
 
+        {/* Each is self-contained — its own trigger button and its own
+            full-size popup (see LivePositionsPanel/LiveHistoryPanel) — not
+            a tab in the right-rail strip, which already scrolls at 8 tabs
+            in a 360px rail with its scrollbar hidden. Real money deserves a
+            screen big enough to read at a glance, not a sliver. */}
+        <LivePositionsPanel />
+        <LiveHistoryPanel />
+
         {/* Grouped, not two disconnected floating badges — AutoTradeBar
             answers "is the demo auto-trader armed", TradingModeControl
             answers "which mode is the whole app in". Different questions,
@@ -306,7 +337,7 @@ export default function TopBar({ onOpenSettings }: { onOpenSettings: () => void 
           type="button"
           onClick={onOpenSettings}
           aria-label="Settings"
-          title="Settings — Claude API key, live data provider, Zerodha, risk"
+          title="Settings — Claude API key, Angel One market data, risk"
           className="h-7 w-7 rounded-lg grid place-items-center text-faint
                      hover:text-ink hover:bg-tint/[0.06] transition-colors"
         >

@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     ai_auto_analysis_interval: int = 45
 
     # ── market data ───────────────────────────────────────────
-    market_provider: str = "synthetic"
-    twelvedata_api_key: Optional[str] = None
-    hybrid_crypto_live: bool = True
-    feed_tick_hz: float = 2.0
     history_bars: int = 1500
 
     # ── storage ───────────────────────────────────────────────
@@ -74,6 +70,8 @@ class Settings(BaseSettings):
         ]
     )
     log_level: str = "INFO"
+    #: "text" for a person at a terminal, "json" for one object per line.
+    log_format: str = "text"
 
     # ── risk ──────────────────────────────────────────────────
     account_balance: float = 10_000.0
@@ -112,6 +110,13 @@ class Settings(BaseSettings):
     live_max_trades_per_day: int = 5
     #: Realised loss for the IST trading day at which the kill switch trips.
     live_daily_loss_limit: float = 2_000.0
+    #: Peak-to-trough: the daily limit above resets every midnight, so a
+    #: losing week made of individually-fine days never trips it. This
+    #: looks at the account's all-time high-water mark instead. Percent of
+    #: that peak; 0 disables (unlike the three limits above, 0 here is the
+    #: *stricter* direction, not a silent bypass, so it keeps the documented
+    #: 0-means-off convention). See docs/RISK_CONTROL_AUDIT.md finding 1.
+    live_max_drawdown_pct: float = 10.0
     live_max_symbol_exposure: float = 50_000.0
     live_max_sector_exposure: float = 100_000.0
     #: Furthest the entry may sit from the broker's last traded price, in
@@ -126,6 +131,11 @@ class Settings(BaseSettings):
     #: Refuse a live order unless a recent walk-forward test of this symbol
     #: and timeframe showed positive expectancy after costs.
     live_require_measured_edge: bool = True
+    #: Set to true only after one minimum-size order has been placed and
+    #: watched end to end in Angel One's own app (TRADING.md §3a). Until
+    #: then no strategy is eligible for live review, whatever its results:
+    #: the order path itself is unverified.
+    live_broker_validated: bool = False
 
     # ── alert channel (optional) ──────────────────────────────
     #: Critical and warning alerts are also sent here when both are set.
@@ -155,6 +165,37 @@ class Settings(BaseSettings):
     @classmethod
     def _upper_trading_mode(cls, v):
         return v.upper() if isinstance(v, str) else v
+
+    @field_validator("live_daily_loss_limit", "live_max_order_value",
+                     "live_max_risk_pct_of_funds")
+    @classmethod
+    def _hard_limits_cannot_be_switched_off(cls, v, info):
+        """Every other LIVE_* limit treats 0 as "off" — a documented,
+        deliberate escape hatch (see .env.example). These three cannot mean
+        that: the daily loss limit is what trips the kill switch, the order
+        value cap is the last line against a fat-fingered size, and the
+        risk-from-funds cap is what stops a sizing bug from risking the
+        whole account instead of 1% of it. A `0` here is not "no limit", it
+        would be "every order of any size clears this check" — silently,
+        from a value nobody meant as a green light. Fail at boot instead of
+        trading on it. See docs/RISK_CONTROL_AUDIT.md, finding 2.
+        """
+        if v <= 0:
+            raise ValueError(
+                "{} must be greater than 0 — it cannot be switched off this way. "
+                "Setting it to 0 would remove the check silently rather than disable "
+                "it on purpose; if you truly want no limit here, that is a code "
+                "change, not a configuration value.".format(info.field_name.upper()))
+        return v
+
+    @field_validator("live_max_drawdown_pct")
+    @classmethod
+    def _drawdown_pct_is_a_sane_percentage(cls, v):
+        if v < 0 or v > 100:
+            raise ValueError(
+                "LIVE_MAX_DRAWDOWN_PCT must be between 0 and 100 (it's a percent "
+                "of the account's peak equity) — got {}.".format(v))
+        return v
 
     @property
     def angel_configured(self) -> bool:

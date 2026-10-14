@@ -42,6 +42,7 @@ async def _state(session: AsyncSession) -> PaperState:
 
     price = feed.price(open_trade.symbol) if open_trade else None
     account = repo.summarise(account, closed, open_trade, price)
+    account.blocked_reason = repo.stranded(open_trade)
     return PaperState(account=account, open_trade=open_trade,
                       recent=closed[:15])
 
@@ -86,12 +87,34 @@ async def close(trade_id: str,
     trade = await repo.open_trade_for(session)
     if trade is None or trade.id != trade_id:
         raise HTTPException(404, "No such open paper trade")
-    quote = feed.quote(trade.symbol)
-    price = feed.price(trade.symbol) or trade.entry
+    try:
+        instrument = get_instrument(trade.symbol)
+    except KeyError:
+        # A market that has been removed. There is no price to be had for it,
+        # so it leaves where it came in — and the account is free again.
+        instrument = None
+        quote = None
+        price = trade.entry
+    else:
+        # The same rule the analysis engine and auto-entry already follow
+        # (`feed.fresh_quote`, STALE_QUOTE_SECONDS): a fill at a price from
+        # before the feed stopped is not a fill anything could have got. A
+        # stale or missing quote used to fall back to `trade.entry`, which
+        # silently books the trade as a flat exit — invisible in the P&L,
+        # not a close anyone asked for. See docs/RISK_CONTROL_AUDIT.md,
+        # the paper-side analogue of finding 7.
+        quote = feed.fresh_quote(trade.symbol)
+        if quote is None:
+            raise HTTPException(
+                409, "No current price for {} — the feed's last quote is "
+                    "stale or missing, so this can't be filled at a real "
+                    "price right now. Try again once prices are moving "
+                    "again.".format(trade.symbol))
+        price = quote.last
     await repo.close_trade(
         session, trade_id,
         quote.bid if quote else price, quote.ask if quote else price, price,
-        ExitReason.MANUAL, get_instrument(trade.symbol))
+        ExitReason.MANUAL, instrument)
     return await _state(session)
 
 

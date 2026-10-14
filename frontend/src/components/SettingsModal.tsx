@@ -5,12 +5,11 @@ import type { SettingsPayload } from '../lib/types'
 import { useStore } from '../store/useStore'
 import { Badge, Spinner } from './ui'
 
-type Tab = 'analyst' | 'data' | 'broker' | 'risk'
+type Tab = 'analyst' | 'data' | 'risk'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'analyst', label: 'Analyst' },
   { id: 'data', label: 'Market data' },
-  { id: 'broker', label: 'Zerodha' },
   { id: 'risk', label: 'Risk' },
 ]
 
@@ -112,9 +111,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             ) : tab === 'analyst' ? (
               <AnalystTab payload={payload} value={value} set={set} onReload={load} />
             ) : tab === 'data' ? (
-              <DataTab payload={payload} value={value} set={set} />
-            ) : tab === 'broker' ? (
-              <BrokerTab payload={payload} value={value} set={set} onReload={load} />
+              <DataTab payload={payload} />
             ) : (
               <RiskTab value={value} set={set} />
             )}
@@ -237,67 +234,33 @@ function AnalystTab({ payload, value, set, onReload }: {
   )
 }
 
-function DataTab({ payload, value, set }: {
-  payload: SettingsPayload
-  value: <T,>(key: string, fallback: T) => T
-  set: (key: string, value: unknown) => void
-}) {
+function DataTab({ payload }: { payload: SettingsPayload }) {
   return (
     <div className="space-y-5">
       <Section
         title="Where prices come from"
-        hint="A symbol is served by the best available source. Zerodha wins for Indian instruments, Binance for crypto, and the simulator only fills the gaps."
+        hint="Angel One is the only source: quotes, history and the list of stocks itself. Connect it from the DEMO / LIVE control in the top bar. Until then nothing has data — no other feed stands in for it."
       >
         <div className="space-y-2">
           {payload.providers.map((provider) => (
-            <label
+            <div
               key={provider.id}
-              className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer
-                          transition-colors
-                          ${value('market_provider', 'synthetic') === provider.id
-                            ? 'border-accent/50 bg-accent/10'
-                            : 'border-hairline bg-tint/[0.02] hover:bg-tint/[0.05]'}`}
+              className="flex items-start gap-3 rounded-lg border px-3 py-2.5 border-hairline
+                         bg-tint/[0.02]"
             >
-              <input
-                type="radio"
-                name="provider"
-                className="mt-1 accent-accent"
-                checked={value('market_provider', 'synthetic') === provider.id}
-                onChange={() => set('market_provider', provider.id)}
-              />
               <span className="flex-1 min-w-0">
                 <span className="flex items-center gap-2">
                   <span className="text-2xs font-medium text-ink">{provider.label}</span>
-                  {provider.live && <Badge tone="bull">live</Badge>}
-                  {provider.active && <Badge tone="accent">connected</Badge>}
-                  {!provider.ready && <Badge tone="warn">needs setup</Badge>}
+                  {provider.active && <Badge tone="bull">connected</Badge>}
+                  {!provider.ready && <Badge tone="warn">not connected</Badge>}
                 </span>
                 <span className="block text-2xs text-faint leading-relaxed mt-0.5">
                   {provider.covers}
                 </span>
               </span>
-            </label>
+            </div>
           ))}
         </div>
-
-        <label className="flex items-center gap-2 pt-1">
-          <input type="checkbox" className="accent-accent"
-                 checked={value('hybrid_crypto_live', true)}
-                 onChange={(event) => set('hybrid_crypto_live', event.target.checked)} />
-          <span className="text-2xs text-muted">
-            Always stream BTC/ETH live from Binance, whatever else is selected
-          </span>
-        </label>
-      </Section>
-
-      <Section title="Twelve Data (optional)"
-               hint="Only needed for live spot FX and gold quotes. Free tier at twelvedata.com.">
-        <Field label="API key">
-          <input type="password" className="input font-mono"
-                 defaultValue={payload.settings.twelvedata_api_key ?? ''}
-                 placeholder="your twelvedata key"
-                 onChange={(event) => set('twelvedata_api_key', event.target.value)} />
-        </Field>
       </Section>
 
       <Section title="What each symbol is using right now">
@@ -308,11 +271,9 @@ function DataTab({ payload, value, set }: {
                             last:border-0 text-2xs">
               <span className="w-24 shrink-0 text-muted truncate">{instrument.display}</span>
               <Badge tone={instrument.live ? 'bull' : 'neutral'}>
-                {instrument.live ? instrument.provider : 'simulated'}
+                {instrument.live ? instrument.provider : 'no data'}
               </Badge>
-              {instrument.tradable_in_india
-                ? <Badge tone="accent">{instrument.venue}</Badge>
-                : <Badge tone="warn">not for IN residents</Badge>}
+              <Badge tone="accent">{instrument.venue}</Badge>
               <span className="flex-1" />
               <span className="text-faint tnum">
                 lot {instrument.lot_size} · tick {instrument.tick_size}
@@ -320,135 +281,6 @@ function DataTab({ payload, value, set }: {
             </div>
           ))}
         </div>
-      </Section>
-    </div>
-  )
-}
-
-function BrokerTab({ payload, value, set, onReload }: {
-  payload: SettingsPayload
-  value: <T,>(key: string, fallback: T) => T
-  set: (key: string, value: unknown) => void
-  onReload: () => void
-}) {
-  const [loginUrl, setLoginUrl] = useState<string | null>(null)
-  const [requestToken, setRequestToken] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
-
-  const connected = payload.settings.zerodha_access_token_set
-  const issued = payload.settings.zerodha_token_issued_at
-
-  const getLoginUrl = async () => {
-    setNote(null)
-    try {
-      const response = await api.zerodhaLoginUrl()
-      setLoginUrl(response.url)
-      window.open(response.url, '_blank', 'noopener')
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : 'Could not build the login URL')
-    }
-  }
-
-  const exchange = async () => {
-    setBusy(true)
-    setNote(null)
-    try {
-      const response = await api.zerodhaExchange(requestToken)
-      setNote(`Connected as ${response.user_name ?? 'your account'}. ${response.note}`)
-      setRequestToken('')
-      onReload()
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : 'Exchange failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const disconnect = async () => {
-    await api.zerodhaDisconnect()
-    setNote('Disconnected.')
-    onReload()
-  }
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-lg border border-warn/30 bg-warn/[0.07] px-3 py-2.5">
-        <p className="text-2xs text-warn leading-relaxed">
-          Zerodha does not offer spot EURUSD, GBPUSD or XAUUSD, and Indian residents may
-          not trade spot forex offshore under FEMA. What you <em>can</em> trade here:
-          USDINR / EURINR / GBPINR / JPYINR currency futures on NSE-CDS, NIFTY and
-          BANKNIFTY on NFO, and GOLD / SILVER / CRUDEOIL on MCX.
-        </p>
-      </div>
-
-      <Section
-        title="Kite Connect credentials"
-        hint="Create an app at developers.kite.trade. Market data requires the paid Kite Connect subscription; the free personal tier can place orders but returns no quotes or candles."
-      >
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="API key">
-            <input className="input font-mono"
-                   defaultValue={value('zerodha_api_key', '')}
-                   placeholder="your kite api_key"
-                   onChange={(event) => set('zerodha_api_key', event.target.value)} />
-          </Field>
-          <Field label="API secret">
-            <input type="password" className="input font-mono"
-                   defaultValue={payload.settings.zerodha_api_secret ?? ''}
-                   placeholder="your kite api_secret"
-                   onChange={(event) => set('zerodha_api_secret', event.target.value)} />
-          </Field>
-        </div>
-        <p className="text-2xs text-faint leading-relaxed">
-          Set the app's redirect URL to <code className="text-ink">http://localhost:5173</code>.
-          Kite sends you back there with <code className="text-ink">?request_token=…</code> in
-          the address bar — that is the value you paste below.
-        </p>
-      </Section>
-
-      <Section
-        title="Daily login"
-        hint="Kite access tokens expire every morning around 06:00 IST. This is a broker rule, not a limitation of this app — repeat these two steps each trading day."
-      >
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge tone={connected ? 'bull' : 'warn'}>
-            {connected ? 'session active' : 'not connected'}
-          </Badge>
-          {issued && (
-            <span className="text-2xs text-faint">
-              token issued {new Date(issued * 1000).toLocaleString()}
-            </span>
-          )}
-        </div>
-
-        <div className="flex gap-2">
-          <button type="button" className="btn" onClick={getLoginUrl}>
-            1 · Open Kite login
-          </button>
-          {connected && (
-            <button type="button" className="btn" onClick={disconnect}>Disconnect</button>
-          )}
-        </div>
-        {loginUrl && (
-          <p className="text-2xs text-faint break-all">
-            If the tab did not open: <span className="text-accent">{loginUrl}</span>
-          </p>
-        )}
-
-        <Field label="2 · Paste the request_token from the redirect URL">
-          <div className="flex gap-2">
-            <input className="input font-mono flex-1"
-                   value={requestToken}
-                   placeholder="e.g. Xy7aB2c…"
-                   onChange={(event) => setRequestToken(event.target.value)} />
-            <button type="button" className="btn btn-primary shrink-0"
-                    onClick={exchange} disabled={busy || requestToken.trim().length < 6}>
-              {busy ? <Spinner /> : null} Connect
-            </button>
-          </div>
-        </Field>
-        {note && <p className="text-2xs text-muted leading-relaxed">{note}</p>}
       </Section>
     </div>
   )
@@ -528,8 +360,7 @@ function RiskTab({ value, set }: {
           <p className="text-2xs text-ink/90 leading-relaxed">
             <span className="text-bear font-semibold">This never touches your broker.</span>{' '}
             Meridian has no order connection and will not pretend otherwise. It moves
-            its own tracked stop and then tells you, loudly, to mirror it in Kite or
-            CoinDCX.
+            its own tracked stop and then tells you, loudly, to mirror it in Angel One.
           </p>
           <p className="text-2xs text-faint leading-relaxed">
             Until you confirm you have moved it, the position is flagged and the panel

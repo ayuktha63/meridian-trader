@@ -24,7 +24,7 @@ def client():
         yield test_client
 
 EURUSD = get_instrument("EURUSD")
-BTCUSD = get_instrument("BTCUSD")
+OTCUSD = get_instrument("OTCUSD")
 
 
 def make_account(**kwargs) -> PaperAccount:
@@ -99,19 +99,19 @@ def test_a_round_trip_at_a_static_price_loses_money():
 
 def test_size_puts_exactly_the_risk_budget_at_stake():
     quantity, risk = paper.position_size(
-        balance=10_000.0, risk_pct=1.0, entry=1.1000, stop=1.0900,
-        instrument=EURUSD)
+        balance=10_000.0, risk_pct=1.0, entry=83.20, stop=82.20,
+        instrument=get_instrument("USDINR"))
     assert risk == pytest.approx(100.0, abs=0.01)      # 1% of 10,000
-    assert quantity == pytest.approx(10_000.0, abs=1)  # 100 / 0.01
+    assert quantity == pytest.approx(100.0, abs=0.01)  # 100 / 1.00
 
 
-def test_spot_crypto_size_is_capped_at_the_balance():
-    """A tight stop implies an enormous position. CoinDCX crypto is spot — you
-    buy the coin — so the balance is a hard ceiling on notional."""
+def test_size_is_capped_at_the_balance_where_there_is_no_margin():
+    """A tight stop implies an enormous position. With no margin on file for
+    the market, the balance is a hard ceiling on notional."""
     quantity, _ = paper.position_size(
         balance=10_000.0, risk_pct=1.0, entry=60_000.0, stop=59_999.0,
-        instrument=BTCUSD)
-    assert paper.max_leverage(BTCUSD) == 1.0
+        instrument=OTCUSD)
+    assert paper.max_leverage(OTCUSD) == 1.0
     assert quantity == pytest.approx(10_000.0 / 60_000.0, rel=1e-9)
 
 
@@ -155,7 +155,7 @@ def test_low_confidence_is_rejected():
 
 def test_a_symbol_off_the_allow_list_is_rejected():
     intent = autotrader.evaluate_entry(
-        make_result(), make_account(symbols=["BTCUSD"]), EURUSD, 0.6)
+        make_result(), make_account(symbols=["NIFTY"]), EURUSD, 0.6)
     assert intent.action == "wait" and "symbol list" in intent.reason
 
 
@@ -329,6 +329,71 @@ def test_full_lifecycle_settles_against_the_account(client):
 
     trades = client.get("/api/paper/trades").json()
     assert trades == []
+
+
+def test_a_trade_on_a_market_that_was_removed_does_not_stop_the_demo_for_good(client):
+    """One trade is held at a time. A trade left open on a market the
+    application no longer has can never be priced, so nothing would ever
+    follow it — unless the account says so and lets it be closed."""
+    import asyncio
+
+    from app.db.models import PaperTradeRow
+    from app.db.session import session_scope
+
+    client.post("/api/paper/reset", json={"starting_balance": 10_000.0})
+
+    async def strand():
+        async with session_scope() as session:
+            session.add(PaperTradeRow(
+                id="stranded", account_id=paper.ACCOUNT_ID, symbol="SOLUSD", timeframe="15m",
+                side="SHORT", status="open", entry=109.03, entry_at=1_791_818_773.0,
+                stop_loss=112.0, initial_stop=112.0, take_profit=103.0,
+                quantity=91.7, notional=10_000.0, entry_cost=5.0))
+    asyncio.run(strand())
+
+    state = client.get("/api/paper").json()
+    assert state["open_trade"]["symbol"] == "SOLUSD"
+    assert "SOLUSD, which is no longer a market here" in state["account"]["blocked_reason"]
+
+    state = client.post("/api/paper/close/stranded").json()
+    assert state["open_trade"] is None and state["account"]["blocked_reason"] == ""
+    closed, = client.get("/api/paper/trades", params={"status": "closed"}).json()
+    assert (closed["exit"], closed["exit_reason"], closed["gross_pnl"]) == (109.03, "manual", 0.0)
+    assert closed["net_pnl"] < 0, "it still paid to get in and out"
+    client.post("/api/paper/reset", json={"starting_balance": 10_000.0})
+
+
+def test_closing_by_hand_is_refused_without_a_fresh_quote(client):
+    """A live instrument with no current quote must not be closed at
+    `trade.entry` — that silently books a flat exit nobody asked for and
+    hides that there was never a real price behind it. See
+    docs/RISK_CONTROL_AUDIT.md, finding 7 (the live analogue), and
+    PAPER_LIVE_ISOLATION.md on what a paper fill may act on."""
+    import asyncio
+
+    from app.db.models import PaperTradeRow
+    from app.db.session import session_scope
+    from app.data.feed import feed
+
+    client.post("/api/paper/reset", json={"starting_balance": 10_000.0})
+    feed.quotes.pop("RELIANCE", None)        # exists as an instrument, no quote
+
+    async def open_trade():
+        async with session_scope() as session:
+            session.add(PaperTradeRow(
+                id="no-quote", account_id=paper.ACCOUNT_ID, symbol="RELIANCE",
+                timeframe="15m", side="LONG", status="open", entry=2500.0,
+                entry_at=1_791_818_773.0, stop_loss=2450.0, initial_stop=2450.0,
+                take_profit=2600.0, quantity=4.0, notional=10_000.0, entry_cost=5.0))
+    asyncio.run(open_trade())
+
+    response = client.post("/api/paper/close/no-quote")
+    assert response.status_code == 409
+    assert "no current price" in response.json()["detail"].lower()
+
+    # Refused, not silently closed — the trade is still open.
+    state = client.get("/api/paper").json()
+    assert state["open_trade"]["id"] == "no-quote"
 
 
 def test_config_rejects_reckless_risk(client):

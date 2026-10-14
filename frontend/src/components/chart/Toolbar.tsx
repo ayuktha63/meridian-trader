@@ -19,9 +19,28 @@ export default function Toolbar() {
   const showDrawings = useStore((s) => s.showDrawings)
   const toggleDrawingsVisible = useStore((s) => s.toggleDrawingsVisible)
   const [confirmClear, setConfirmClear] = useState(false)
+  const tradeOnly = useStore((s) => s.tradeOnly)
+  const toggleTradeOnly = useStore((s) => s.toggleTradeOnly)
 
   return (
     <div className="glass rounded-xl flex flex-col items-center gap-1 py-2 px-1.5 w-12 shrink-0">
+      <button
+        type="button"
+        onClick={toggleTradeOnly}
+        aria-pressed={tradeOnly}
+        title={tradeOnly
+          ? 'Trade view ON — only entry, take profit and stop. Click to show everything again'
+          : 'Trade view — hide everything except where to buy, take profit and stop loss'}
+        className={`h-8 w-8 rounded-lg grid place-items-center transition-colors
+                    ${tradeOnly ? 'bg-accent/25 text-ink' : 'text-faint hover:text-ink hover:bg-tint/[0.06]'}`}
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor"
+             strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="4" width="16" height="7" rx="1" className="text-bull" />
+          <rect x="4" y="13" width="16" height="7" rx="1" className="text-bear" />
+        </svg>
+      </button>
+      <div className="my-1 h-px w-6 bg-tint/[0.07]" />
       {GROUP_ORDER.map((group, groupIndex) => {
         const tools = TOOLS.filter((tool) => tool.group === group.id)
         if (tools.length === 0) return null

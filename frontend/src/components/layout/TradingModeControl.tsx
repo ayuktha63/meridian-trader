@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
-import type { AngelStatus, LiveAlert, TradingModeStatus } from '../../lib/types'
+import type { LiveAlert } from '../../lib/types'
+import { useStore } from '../../store/useStore'
 
 /**
  * The one control that answers "where am I?" — DEMO or LIVE — and nothing
@@ -9,50 +10,55 @@ import type { AngelStatus, LiveAlert, TradingModeStatus } from '../../lib/types'
  * deliberately no broker picker here: the only question a trader should
  * ever face is demo vs. real money, never which broker to route through.
  *
- * Polls rather than pushes: mode/connection state changes rarely enough
- * that a WS channel for it would be overkill, and a stale read here just
- * means the button briefly shows the wrong label — it can never let a
- * stale LIVE read from an old response act as authorization, because every
- * write goes back through the backend's own checks regardless of what this
- * component last saw.
+ * Mode and Angel status live in the shared store (`useStore`), not local
+ * state here — this is the component that *causes* a switch, and every
+ * other reader (the wallet readout in `AutoTradeBar`) needs to see that the
+ * instant this component does, not on its own next poll. The store's own
+ * background poll is just a safety net for drift (a restart, a stale
+ * session); it can never let a stale LIVE read act as authorization, because
+ * every write goes back through the backend's own checks regardless of what
+ * this component last saw.
  */
 const POLL_MS = 15_000
 
 export default function TradingModeControl() {
-  const [mode, setMode] = useState<TradingModeStatus | null>(null)
-  const [angel, setAngel] = useState<AngelStatus | null>(null)
+  const mode = useStore((s) => s.tradingMode)
+  const angel = useStore((s) => s.angelStatus)
+  const setMode = useStore((s) => s.setTradingMode)
+  const setAngel = useStore((s) => s.setAngelStatus)
   const [open, setOpen] = useState(false)
   const [confirmingSwitch, setConfirmingSwitch] = useState<'LIVE' | 'PAPER' | null>(null)
+  const [confirmingAutoLive, setConfirmingAutoLive] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [critical, setCritical] = useState<LiveAlert | null>(null)
   const [openPositions, setOpenPositions] = useState(0)
 
-  const refresh = async () => {
+  const refreshSupervision = async () => {
     try {
-      const [m, a, alerts, live] = await Promise.all([
-        api.tradingMode(), api.angelStatus(),
-        // Supervision endpoints are newer than the mode switch; a backend
-        // that predates them must not blank this control.
+      // Supervision endpoints are newer than the mode switch; a backend
+      // that predates them must not blank this control.
+      const [alerts, live] = await Promise.all([
         api.alerts().catch(() => []), api.liveExecutions().catch(() => [])])
-      setMode(m)
-      setAngel(a)
       setCritical([...alerts].reverse().find((x) => x.level === 'critical') ?? null)
       setOpenPositions(live.filter((x) =>
         x.filled_quantity > 0 && !['CLOSED', 'REJECTED', 'CANCELLED'].includes(x.status)).length)
     } catch {
-      /* transient — next poll retries; the button just stays in its last known state */
+      /* transient — next poll retries */
     }
   }
 
   useEffect(() => {
-    void refresh()
-    const id = window.setInterval(refresh, POLL_MS)
+    void refreshSupervision()
+    const id = window.setInterval(refreshSupervision, POLL_MS)
     return () => window.clearInterval(id)
   }, [])
 
   if (!mode) return null
   const isLive = mode.mode === 'LIVE'
+  const wallet = isLive && angel?.available_funds != null
+    ? `₹${angel.available_funds.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+    : null
 
   const connect = async () => {
     setBusy(true)
@@ -73,9 +79,37 @@ export default function TradingModeControl() {
     try {
       const next = await api.setTradingMode(confirmingSwitch, true)
       setMode(next)
+      // A fresh mode flip changes what the wallet readout should show
+      // immediately — don't wait up to 15s for the background poll.
+      setAngel(await api.angelStatus())
       setConfirmingSwitch(null)
     } catch (exc) {
       setError(exc instanceof ApiError ? exc.message : 'Could not switch trading mode.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disableAutoLive = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      setMode(await api.setAutoLive(false))
+    } catch (exc) {
+      setError(exc instanceof ApiError ? exc.message : 'Could not disable auto-live.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmAutoLive = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      setMode(await api.setAutoLive(true, true))
+      setConfirmingAutoLive(false)
+    } catch (exc) {
+      setError(exc instanceof ApiError ? exc.message : 'Could not enable auto-live.')
     } finally {
       setBusy(false)
     }
@@ -113,20 +147,47 @@ export default function TradingModeControl() {
           {typeof critical.context.symbol === 'string' ? ` — ${critical.context.symbol}` : ''}
         </div>
       )}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 transition-colors ${
-          isLive ? 'border-bear/60 bg-bear/10' : 'border-bull/40 bg-bull/[0.06]'}`}
-        title={isLive ? 'LIVE — real orders can be submitted to Angel One'
-                     : 'DEMO — simulated only, no real money'}
-      >
-        <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-bear animate-pulse' : 'bg-bull'}`} />
-        <span className={`text-2xs font-bold tracking-wide ${isLive ? 'text-bear' : 'text-bull'}`}>
-          {isLive ? 'LIVE' : 'DEMO'}
-        </span>
-        {isLive && <span className="text-[9px] text-bear/80">REAL MONEY</span>}
-      </button>
+      {/* Both states are always on screen, side by side, so the mode never
+          has to be remembered — only one of these two segments is ever lit,
+          and which one is never a matter of reading a single word's color. */}
+      <div className="flex items-center rounded-lg border border-hairline overflow-hidden"
+           role="radiogroup" aria-label="Trading mode">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!isLive}
+          onClick={() => (isLive ? setConfirmingSwitch('PAPER') : setOpen(!open))}
+          disabled={busy}
+          title="DEMO — simulated fills only, no real money"
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold tracking-wide
+                      transition-colors ${
+                        !isLive ? 'bg-bull/15 text-bull' : 'text-faint hover:text-muted'}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${!isLive ? 'bg-bull' : 'bg-faint/40'}`} />
+          PAPER
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={isLive}
+          onClick={() => (isLive ? setOpen(!open) : setConfirmingSwitch('LIVE'))}
+          disabled={busy || (!isLive && !angel?.connected)}
+          title={isLive ? 'LIVE — real orders can be submitted to Angel One'
+                        : !angel?.connected ? 'Connect Angel One first' : 'Switch to LIVE'}
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-2xs font-bold tracking-wide
+                      transition-colors border-l border-hairline ${
+                        isLive ? 'bg-bear text-white' : 'text-faint hover:text-bear disabled:opacity-40'}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-white animate-pulse' : 'bg-faint/40'}`} />
+          LIVE
+          {isLive && (
+            <span className="text-[9px] font-semibold text-white/85"
+                  title="Available funds — Angel One (rmsLimit)">
+              {wallet ?? 'REAL MONEY'}
+            </span>
+          )}
+        </button>
+      </div>
 
       <AnimatePresence>
         {open && (
@@ -150,6 +211,16 @@ export default function TradingModeControl() {
                 {angel?.connected ? '● Connected' : '● Not connected'}
               </span>
             </div>
+
+            {isLive && (
+              <div className="flex items-center justify-between text-2xs">
+                <span className="text-faint">Wallet</span>
+                <span className={wallet ? 'font-semibold text-ink' : 'text-faint'}
+                      title="Available funds reported by Angel One, not the Settings balance">
+                  {wallet ?? 'Not available yet'}
+                </span>
+              </div>
+            )}
 
             {!angel?.connected && (
               <button type="button" className="btn w-full !py-1" onClick={connect} disabled={busy}>
@@ -179,6 +250,41 @@ export default function TradingModeControl() {
               </button>
             )}
 
+            {isLive && (
+              <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${
+                mode.auto_live_enabled ? 'bg-bear/10 border border-bear/40' : 'bg-tint/[0.03]'}`}>
+                <span>
+                  <span className={`block text-2xs font-semibold ${
+                    mode.auto_live_enabled ? 'text-bear' : 'text-ink'}`}>
+                    AUTO LIVE
+                  </span>
+                  <span className="block text-[9px] text-faint leading-relaxed">
+                    {mode.auto_live_enabled
+                      ? 'Armed — a signal with a measured edge places a real order with no click.'
+                      : 'Off — every live order still needs your click.'}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={mode.auto_live_enabled}
+                  aria-label="Automatic live trading"
+                  onClick={() => (mode.auto_live_enabled ? disableAutoLive() : setConfirmingAutoLive(true))}
+                  disabled={busy}
+                  className="shrink-0"
+                >
+                  <span className={`relative h-3.5 w-6 rounded-full transition-colors block ${
+                    mode.auto_live_enabled ? 'bg-bear' : 'bg-tint/20'}`}>
+                    <motion.span
+                      className="absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow"
+                      animate={{ left: mode.auto_live_enabled ? 14 : 2 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+                    />
+                  </span>
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               className={`btn w-full ${isLive ? '' : '!border-bear/60 !text-bear'}`}
@@ -203,11 +309,11 @@ export default function TradingModeControl() {
       <AnimatePresence>
         {confirmingSwitch && (
           <motion.div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-6"
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           >
             <motion.div
-              className={`w-full max-w-sm rounded-2xl border-2 bg-panel shadow-2xl overflow-hidden ${
+              className={`w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-2xl border-2 bg-panel shadow-2xl ${
                 confirmingSwitch === 'LIVE' ? 'border-bear/60' : 'border-edge'}`}
               initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96 }}
             >
@@ -245,6 +351,55 @@ export default function TradingModeControl() {
                   onClick={confirmSwitch} disabled={busy}
                 >
                   {busy ? 'Switching…' : confirmingSwitch === 'LIVE' ? 'Enable LIVE' : 'Switch to DEMO'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {confirmingAutoLive && (
+          <motion.div
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-2xl border-2 border-bear/60 bg-panel shadow-2xl"
+              initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96 }}
+            >
+              <div className="bg-bear/15 border-b border-bear/40 px-5 py-3">
+                <h2 className="text-sm font-bold text-bear">⚠ Enable AUTO LIVE?</h2>
+              </div>
+              <div className="px-5 py-4 space-y-2 text-xs text-ink/85">
+                <p>
+                  A signal on whatever symbol is open will place a real Angel One
+                  order with no click from you — the instant it clears the
+                  measured-edge requirement and every other pre-trade check.
+                </p>
+                <p>
+                  Nobody is watching each one. The daily loss limit, the funds
+                  check and the kill switch still apply to every attempt, but
+                  they stop a bad day — they do not undo an order already filled.
+                </p>
+                <div className="pt-2 space-y-1">
+                  <Row label="Trading mode" value="LIVE" />
+                  <Row label="Requires measured edge" value="Yes" />
+                  <Row label="Stops on" value="Mode switch, kill switch, restart" />
+                </div>
+              </div>
+              {error && <p className="px-5 text-2xs text-bear">{error}</p>}
+              <div className="flex gap-2 px-5 py-3 border-t border-hairline bg-tint/[0.02]">
+                <button type="button" className="btn flex-1"
+                        onClick={() => setConfirmingAutoLive(false)} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary flex-1 !bg-bear !border-bear"
+                  onClick={confirmAutoLive} disabled={busy}
+                >
+                  {busy ? 'Enabling…' : 'Enable AUTO LIVE'}
                 </button>
               </div>
             </motion.div>

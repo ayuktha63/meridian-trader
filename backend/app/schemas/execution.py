@@ -8,7 +8,7 @@ but this phase only ever produces a subset of it — see the docstring on
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -78,8 +78,100 @@ class ExecutionRecord(BaseModel):
     net_pnl: Optional[float] = None
     closed_at: Optional[float] = None
 
+    #: Live mark-to-market for a still-open position — current price in,
+    #: estimated round-trip charges out. None for anything not currently
+    #: open, and None if a live price isn't available right now; never a
+    #: stand-in for `net_pnl`, which is the realised figure once closed.
+    last_price: Optional[float] = None
+    unrealised_pnl: Optional[float] = None
+
     created_at: float
     updated_at: float
+
+
+class BrokerPosition(BaseModel):
+    """A position Angel One reports as open, however it was opened. Meridian
+    only manages what it placed; this is what the account actually holds,
+    including a trade taken in the broker's own app."""
+
+    symbol: str
+    #: The symbol this application charts it under; None if it does not list it.
+    chart_symbol: Optional[str] = None
+    trading_symbol: str
+    exchange: str
+    product: str
+    net_quantity: float
+    buy_average: float
+    sell_average: float
+    last_price: Optional[float] = None
+    pnl: Optional[float] = None
+    realised: Optional[float] = None
+    unrealised: Optional[float] = None
+    buy_quantity: float = 0.0
+    sell_quantity: float = 0.0
+    #: True when the open position is one Meridian placed and is supervising.
+    managed: bool = False
+
+
+class BrokerOrder(BaseModel):
+    """An order as the broker's order book has it."""
+
+    order_id: str
+    symbol: str
+    chart_symbol: Optional[str] = None
+    exchange: str
+    side: str
+    order_type: str
+    product: str
+    quantity: float
+    filled: float = 0.0
+    price: Optional[float] = None
+    trigger_price: Optional[float] = None
+    average_price: Optional[float] = None
+    status: str
+    #: Still resting or waiting at the broker.
+    working: bool
+    message: str = ""
+    updated_at: str = ""
+
+
+class BrokerBook(BaseModel):
+    positions: List[BrokerPosition]
+    orders: List[BrokerOrder]
+    #: Resting conditional (GTT / OCO) rules as the broker returns them, or
+    #: None if they could not be read.
+    conditional: Optional[List[dict]] = None
+    #: Profit booked today across every position, open or already closed.
+    realised_today: float = 0.0
+    #: Brokerage and statutory charges on the orders filled today, from the
+    #: cost model (an estimate — the contract note is the record). Counts only
+    #: what has been paid: a position still open has not paid its exit yet.
+    charges_today: float = 0.0
+    #: Angel One's own "utilised debits" for the day: what it has taken from the
+    #: account so far — losses booked plus the charges it has posted. A second
+    #: opinion on the figure above, not the same sum: the broker posts charges
+    #: on its own schedule. None if the funds could not be read.
+    broker_debits: Optional[float] = None
+    as_of: float
+
+
+class LiveTradingOverview(BaseModel):
+    """Everything the live-trading screen needs in one call: the real
+    wallet, today's ledger (the same one the risk gate enforces against),
+    and the executions split into what's open versus what's history."""
+
+    balance: float
+    balance_source: str
+    currency: str
+
+    open_risk: float
+    realised_today: float
+    trades_today: int
+
+    open_positions: List[ExecutionRecord]
+    history: List[ExecutionRecord]
+    #: What the broker itself says is open. None when it could not be asked.
+    broker_positions: Optional[List[BrokerPosition]] = None
 
 
 class ExecutionPreview(BaseModel):

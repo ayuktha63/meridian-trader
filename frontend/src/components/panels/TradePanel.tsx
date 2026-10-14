@@ -86,9 +86,19 @@ export default function TradePanel() {
   }
 
   return (
-    <div className={`glass rounded-xl overflow-hidden ${tone.glow}`}>
+    // No `.glass`/`overflow-hidden` on this outer div — both would trap
+    // ExecuteLiveButton's full-screen confirmation popup: backdrop-filter
+    // becomes the containing block for its `position: fixed`, and
+    // overflow-hidden clips it regardless of position, so either one alone
+    // cuts the popup down to this card's own small box instead of the real
+    // viewport. The glass look is a decorative, negatively-stacked sibling
+    // instead; each section that needs rounded corners for its own
+    // background rounds itself rather than relying on an ancestor to clip it.
+    <div className={`relative rounded-xl ${tone.glow}`}>
+      <div className="absolute inset-0 -z-10 rounded-xl bg-panel/70 backdrop-blur-xl
+                      border border-hairline" style={{ boxShadow: 'var(--shadow-panel)' }} />
       {/* Decision header */}
-      <div className={`relative px-4 py-3 border-b ${tone.border} ${tone.bg}`}>
+      <div className={`relative px-4 py-3 rounded-t-xl border-b ${tone.border} ${tone.bg}`}>
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
@@ -107,7 +117,11 @@ export default function TradePanel() {
               {pending && <Spinner />}
             </div>
             <p className="text-2xs text-faint mt-0.5">
-              {verdict.probability.toFixed(0)}% est. hit probability ·{' '}
+              <span title={'A heuristic score, not a probability. It has not been '
+                + 'calibrated against outcomes: where it was checked, setups scored '
+                + 'high won no more often than setups scored low.'}>
+                heuristic score {verdict.probability.toFixed(0)} · not a win probability
+              </span>{' · '}
               {analysis.symbol} {analysis.timeframe} · {timeAgo(analysis.generated_at)}
             </p>
             <div className="flex flex-wrap gap-1 mt-2">
@@ -203,7 +217,7 @@ export default function TradePanel() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 px-4 py-2.5 border-t border-hairline bg-tint/[0.015]">
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-b-xl border-t border-hairline bg-tint/[0.015]">
         <button type="button" className="btn flex-1" onClick={requestAnalysis} disabled={pending}
                 title="Re-run the analysis against the latest price">
           {pending ? <Spinner /> : null}

@@ -38,8 +38,7 @@ MAX_OPEN_RISK_R = 3.0
 MAX_CONSECUTIVE_LOSSES = 3
 MAX_TRADES_PER_DAY = 6
 
-#: Trading day boundary. Crypto never closes, so the cut has to be arbitrary;
-#: 00:00 UTC is the convention most exchanges report against.
+#: Trading day boundary: 00:00 UTC, which falls outside every Indian session.
 DAY_SECONDS = 86_400
 
 
@@ -69,7 +68,8 @@ def _risk_amount(position: Position, instrument: Instrument) -> float:
 def evaluate(open_positions: List[Position], closed_positions: List[Position],
              balance: float, risk_per_trade_pct: float, currency: str = "USD",
              prices: Optional[dict] = None,
-             now: Optional[float] = None) -> AccountRisk:
+             now: Optional[float] = None,
+             balance_source: str = "settings") -> AccountRisk:
     """The account's current risk posture.
 
     `prices` is accepted so callers can pass live marks, but the loss maths
@@ -79,7 +79,7 @@ def evaluate(open_positions: List[Position], closed_positions: List[Position],
     per_trade = balance * risk_per_trade_pct / 100.0
 
     report = AccountRisk(
-        balance=round(balance, 2), currency=currency,
+        balance=round(balance, 2), balance_source=balance_source, currency=currency,
         risk_per_trade_pct=risk_per_trade_pct,
         open_positions=len(open_positions),
     )

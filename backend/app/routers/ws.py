@@ -18,15 +18,23 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from .. import runtime_settings
+from .. import alerts, runtime_settings
 from ..analysis import autotrader
 from ..analysis import live as live_tier
 from ..analysis import risk as risk_engine
+from ..broker import live_limits
+from ..broker.angelone.execution import (
+    RecommendationNotExecutable, RecommendationNotFound, angel_execution,
+)
+from ..broker.risk_gate import blocked_for_good
+from ..broker.trading_mode import trading_mode
 from ..config import settings
 from ..data.feed import feed
 from ..data.store import store
 from ..db.session import session_scope
 from ..instruments import SYMBOLS, TIMEFRAME_CODES, get_instrument
+from ..schemas.analysis import Decision
+from ..schemas.execution import ExecutionStatus
 from ..services import paper as paper_repo
 from ..services import positions as position_repo
 from .analysis import run_for_stream
@@ -349,6 +357,7 @@ async def _emit_paper_state(conn: Connection) -> None:
             closed = await paper_repo.list_trades(session, "closed", 200)
             price = feed.price(open_trade.symbol) if open_trade else None
             account = paper_repo.summarise(account, closed, open_trade, price)
+            account.blocked_reason = paper_repo.stranded(open_trade)
             conn.paper_trade = open_trade
         await conn.send({
             "type": "paper_state",
@@ -401,6 +410,15 @@ async def _auto_trade_entry(conn: Connection, result) -> None:
         if intent.action != "enter":
             conn.paper_status = intent.reason
             return
+        if quote is None or quote.stale:
+            # A paper fill is a claim about what the market would have given.
+            # With no quote, or one from before the feed stopped or the
+            # market shut, there is nothing to make that claim from.
+            conn.paper_status = (
+                "No paper entry: there is no current quote for {} ({}).".format(
+                    symbol, "none received" if quote is None else
+                    "the last is {:.0f} s old".format(quote.age_seconds)))
+            return
 
         trade = await paper_repo.open_trade(
             session, symbol, result.timeframe, intent.side, bid, ask, price,
@@ -418,6 +436,83 @@ async def _auto_trade_entry(conn: Connection, result) -> None:
                          "data": conn.paper_trade.model_dump(mode="json"),
                          "reason": intent.reason})
     await _emit_paper_state(conn)
+
+
+async def _auto_trade_live_entry(conn: Connection, result) -> None:
+    """Fire a real order when auto-live is armed and a signal clears every
+    gate the manual workflow would — the same strategy, the same thresholds
+    (`autotrader.evaluate_entry`), the same `PreTradeRiskGate` on the way out
+    (measured edge, daily loss against the real ledger, funds, the MCX/CDS
+    blocks). This function only decides *whether to ask*; it is never the
+    thing that decides *whether to allow* — that stays entirely in the gate,
+    so this can never become a second, looser way to place a live order.
+    """
+    if not trading_mode.can_auto_trade_live():
+        return
+    if result.verdict.decision not in (Decision.BUY, Decision.SELL):
+        return
+
+    symbol = result.symbol
+    try:
+        instrument = get_instrument(symbol)
+    except KeyError:
+        return
+
+    # An instrument the gate refuses outright, whatever the signal, is not
+    # asked about: no refusal row per bar, one notice an hour instead. The
+    # gate still blocks a manual order for it.
+    blocked = blocked_for_good(symbol)
+    if blocked:
+        alerts.emit("info", "AUTO_LIVE_SKIPPED",
+                    "Auto-live skips {}: {}".format(symbol, blocked),
+                    throttle=3600.0, symbol=symbol)
+        return
+
+    async with session_scope() as session:
+        cfg = runtime_settings.get()
+        account = await paper_repo.get_account(session, currency=cfg.account_currency)
+        quote = feed.quote(symbol)
+        intent = autotrader.evaluate_entry(
+            result, account, instrument, quote.spread_pips if quote else None)
+        if intent.action != "enter":
+            return
+
+        # One live attempt in flight per symbol at a time — a second signal
+        # arriving before the last one has filled or been refused is a race,
+        # not a second opportunity.
+        existing = await angel_execution.list_executions(session)
+        if any(e.symbol == symbol and e.status.value in live_limits.WORKING
+               for e in existing):
+            return
+
+        try:
+            record = await angel_execution.execute(session, result.id, confirmed=True)
+        except (RecommendationNotFound, RecommendationNotExecutable) as exc:
+            log.info("auto-live skipped %s: %s", symbol, exc)
+            return
+
+    if record.status == ExecutionStatus.REJECTED:
+        log.info("auto-live refused %s %s: %s", record.side, symbol, record.error_message)
+        alerts.emit("info", "AUTO_LIVE_REFUSED",
+                   "Auto-live refused {} {}: {}".format(
+                       record.side, symbol, record.error_message),
+                   throttle=60.0, symbol=symbol)
+    else:
+        log.warning("AUTO-LIVE placed %s %s x%s", record.side, symbol, record.requested_quantity)
+        alerts.emit("warning", "AUTO_LIVE_PLACED",
+                   "Auto-live placed {} {} x{}".format(
+                       record.side, symbol, record.requested_quantity),
+                   symbol=symbol)
+
+    # Best-effort, immediate feedback to whichever socket is watching this
+    # symbol right now — the alert above is the durable record either way,
+    # so a closed or unrelated socket losing this is not a problem.
+    try:
+        if conn.watches(symbol, result.timeframe):
+            await conn.send({"type": "live_auto_attempt",
+                             "data": record.model_dump(mode="json")})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _emit_analysis(conn: Connection, trigger: str) -> None:
@@ -448,6 +543,12 @@ async def _emit_analysis(conn: Connection, trigger: str) -> None:
             await _auto_trade_entry(conn, result)
         except Exception as exc:  # noqa: BLE001
             log.warning("auto-trade entry failed: %s", exc)
+        # Independent of the paper auto-trader above: gated on auto-live
+        # being armed, and a no-op the instant it is not.
+        try:
+            await _auto_trade_live_entry(conn, result)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("auto-live entry failed: %s", exc)
 
 
 def _schedule_analysis(conn: Connection, trigger: str) -> None:

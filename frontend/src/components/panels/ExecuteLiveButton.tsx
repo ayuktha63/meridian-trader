@@ -110,11 +110,11 @@ export default function ExecuteLiveButton({ analysis }: { analysis: AnalysisResu
       <AnimatePresence>
         {confirming && (
           <motion.div
-            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-6"
+            className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4 sm:px-6"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           >
             <motion.div
-              className="w-full max-w-md rounded-2xl border-2 border-bear/60 bg-panel shadow-2xl overflow-hidden"
+              className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border-2 border-bear/60 bg-panel shadow-2xl"
               initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96 }}
             >
               <div className="bg-bear/15 border-b border-bear/40 px-5 py-3">

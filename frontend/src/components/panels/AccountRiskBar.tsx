@@ -106,8 +106,11 @@ export default function AccountRiskBar({ risk }: { risk: AccountRisk }) {
               })}
 
               <div className="flex gap-3 pt-0.5 text-[10px] text-faint tnum">
-                <span title="Account balance from Settings → Risk">
+                <span title={risk.balance_source === 'angel_one'
+                  ? 'Live available funds from Angel One (rmsLimit)'
+                  : 'Account balance from Settings → Risk — not your live Angel One wallet'}>
                   Balance {money(risk.balance)}
+                  {risk.balance_source === 'angel_one' ? ' 🔴' : ''}
                 </span>
                 <span title="Risk budget for a single trade">
                   1R = {money(risk.balance * risk.risk_per_trade_pct / 100)}

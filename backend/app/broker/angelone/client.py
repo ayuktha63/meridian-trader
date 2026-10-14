@@ -74,6 +74,14 @@ class AngelOneBrokerService:
         data = await asyncio.to_thread(client.position)
         return self._unwrap(data, "positions") or []
 
+    async def get_conditional_orders(self) -> List[Dict[str, Any]]:
+        """Resting conditional (GTT / OCO) rules. The order book lists an OCO
+        order with no price at all; its levels are only here. Read-only."""
+        client = await asyncio.to_thread(angel_auth.ensure)
+        data = await asyncio.to_thread(
+            client.gttLists, ["NEW", "ACTIVE", "SENTTOEXCHANGE"], 1, 50)
+        return self._unwrap(data, "conditional orders") or []
+
     async def get_orders(self) -> List[Dict[str, Any]]:
         client = await asyncio.to_thread(angel_auth.ensure)
         data = await asyncio.to_thread(client.orderBook)

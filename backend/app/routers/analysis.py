@@ -23,15 +23,18 @@ from ..services import positions as position_repo
 async def _account_risk(session):
     """Account-level limits, priced against live quotes where available."""
     from ..analysis import guardrails
+    from ..broker.account_balance import effective_balance_with_source
     from ..data.feed import feed as market_feed
 
     cfg = runtime_settings.get()
+    balance, balance_source = await effective_balance_with_source()
     open_positions = await position_repo.list_positions(session, None, "open")
     closed = await position_repo.list_positions(session, None, "closed")
     prices = {p.symbol: market_feed.price(p.symbol) for p in open_positions}
     return guardrails.evaluate(
-        open_positions, closed, cfg.account_balance, cfg.risk_per_trade_pct,
+        open_positions, closed, balance, cfg.risk_per_trade_pct,
         cfg.account_currency, {k: v for k, v in prices.items() if v},
+        balance_source=balance_source,
     )
 from ..services import journal as journal_service
 
@@ -170,9 +173,8 @@ async def watchlist(
 
 async def _broker_tag(symbol: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Where this can actually be traded, the exact name to search for
-    there, and the exchange segment. Crypto is always CoinDCX (that's the
-    only live crypto source this platform has); everything else is resolved
-    against Angel One's real, current contract — never a guess.
+    there, and the exchange segment — resolved against Angel One's real,
+    current contract, never a guess.
 
     The exchange matters on its own: several NSE F&O stocks are also listed
     on BSE, and picking the wrong one when you place the order in Angel One
@@ -181,9 +183,6 @@ async def _broker_tag(symbol: str) -> tuple[Optional[str], Optional[str], Option
     equities on NSE — deliberately, for liquidity — so `exchange` here is
     always the answer to "which one do I pick," not a menu.
     """
-    instrument = get_instrument(symbol)
-    if instrument.venue == "crypto":
-        return "CoinDCX", instrument.broker_symbol or instrument.symbol, None
     try:
         match = await angel_instruments.resolve(symbol)
     except InstrumentUnsupported:
@@ -197,9 +196,8 @@ async def screener(
     symbols: Optional[str] = None,
     min_confidence: float = Query(0.0, ge=0, le=100),
     tradable_only: bool = Query(
-        True, description="Restrict to instruments actually tradable on "
-                          "CoinDCX or Angel One — drops spot FX/metals, "
-                          "which are analysis-only on this platform."),
+        True, description="Restrict to instruments Angel One currently has "
+                          "a contract for, and tag each with it."),
 ) -> List[ScreenerRow]:
     """'What's actually worth trading right now' — a BUY/SELL/confidence
     verdict for every instrument in one call, instead of opening each chart
@@ -211,10 +209,9 @@ async def screener(
 
     By default (`tradable_only=True`) every row is also tagged with the
     broker it's actually tradable on and the exact name to search for there
-    — CoinDCX's own pair name, or Angel One's real, currently-resolved
-    contract. A symbol that isn't tradable on either (spot FX/metals — see
-    TRADING.md on why those are analysis-only for Indian residents) is
-    dropped entirely rather than shown with no way to act on it.
+    — Angel One's real, currently-resolved contract. A symbol it has no
+    contract for right now is dropped entirely rather than shown with no
+    way to act on it.
     """
     wanted = ([s.strip().upper() for s in symbols.split(",")]
           if symbols else DEFAULT_STREAM_SYMBOLS)
@@ -233,7 +230,7 @@ async def screener(
             entry=result.plan.entry, stop_loss=result.plan.stop_loss,
             take_profit=result.plan.take_profit, risk_reward=result.plan.risk_reward,
             summary=result.verdict.summary, broker=broker, broker_symbol=broker_symbol,
-            exchange=exchange,
+            exchange=exchange, generated_at=result.generated_at, bar_time=result.bar_time,
         )
 
     results = await asyncio.gather(

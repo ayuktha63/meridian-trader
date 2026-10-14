@@ -91,6 +91,8 @@ class Prepared:
     signals: Dict[int, BarSignal]
     tf_seconds: int
     intraday: bool
+    #: Whether the venue this is charged as lets a position be opened short.
+    shorting: bool = True
 
     @property
     def n(self) -> int:
@@ -98,7 +100,8 @@ class Prepared:
 
 
 def prepare(df: pd.DataFrame, instrument: Instrument, timeframe: str,
-            signals: Optional[Dict[int, BarSignal]] = None) -> Prepared:
+            signals: Optional[Dict[int, BarSignal]] = None,
+            cost_profile: Optional[str] = None) -> Prepared:
     tf_seconds = get_timeframe(timeframe).seconds
     times = df["time"].to_numpy(dtype=float)
     n = len(times)
@@ -131,7 +134,7 @@ def prepare(df: pd.DataFrame, instrument: Instrument, timeframe: str,
         range20=(df["high"] - df["low"]).rolling(20, min_periods=5).mean().to_numpy(),
         atr14=ind.atr(df, 14).to_numpy(), session_last=session_last,
         entry_ok=entry_ok, signals=signals or {}, tf_seconds=tf_seconds,
-        intraday=intraday)
+        intraday=intraday, shorting=costs.can_short(instrument, cost_profile))
 
 
 # ── which trade, if any ───────────────────────────────────────
@@ -142,7 +145,7 @@ def _setup_for(request: BacktestRequest, prep: Prepared, i: int,
         atr = prep.atr14[i]
         if rng.random() > 0.08 or np.isnan(atr) or atr <= 0:
             return None
-        long = rng.random() < 0.5
+        long = rng.random() < 0.5 or not prep.shorting
         entry = float(prep.close[i])
         distance = float(atr * request.atr_stop_mult)
         sign = 1.0 if long else -1.0
@@ -157,6 +160,8 @@ def _setup_for(request: BacktestRequest, prep: Prepared, i: int,
         return None
     if setup.risk_reward + 1e-9 < request.risk_reward:
         return None
+    if setup.direction == "SELL" and not prep.shorting:
+        return None                         # a spot book: nothing to sell short
     return setup
 
 
@@ -180,24 +185,29 @@ class _Open:
 
 def _limit_fill(setup: Setup, bar_open: float, bar_high: float,
                 bar_low: float) -> Optional[float]:
+    # A resting order is filled when the market trades *through* its price.
+    # A bar that only touches it says the price was reached, not that an
+    # order waiting in the queue there was.
     if setup.direction == "BUY":
         if bar_open <= setup.entry:
             return bar_open                 # gapped through: better than asked
-        return setup.entry if bar_low <= setup.entry else None
+        return setup.entry if bar_low < setup.entry else None
     if bar_open >= setup.entry:
         return bar_open
-    return setup.entry if bar_high >= setup.entry else None
+    return setup.entry if bar_high > setup.entry else None
 
 
 def _exit(position: _Open, prep: Prepared, i: int,
           filled_inside: bool) -> Optional[Tuple[float, str]]:
     bar_open, high, low = prep.open[i], prep.high[i], prep.low[i]
+    # The stop triggers on a touch; the target, a resting limit, needs the
+    # market to trade through it (as an entry does).
     if position.long:
         stop_hit, gapped = low <= position.stop, bar_open <= position.stop
-        target_hit = high >= position.target
+        target_hit = high > position.target
     else:
         stop_hit, gapped = high >= position.stop, bar_open >= position.stop
-        target_hit = low <= position.target
+        target_hit = low < position.target
     if stop_hit:                            # pessimistic ordering — stop wins ties
         # Held at the open and the open is already past the stop: it fills
         # where the market is, not where the stop was.
@@ -267,7 +277,9 @@ def _settle(position: _Open, prep: Prepared, i: int, exit_price: float, kind: st
         # square-off and a time-out all cross the spread.
         cost = costs.round_trip_cost(
             instrument, position.entry, exit_price, stopped=kind == "stop",
-            entry_passive=True, exit_passive=kind == "target")
+            entry_passive=True, exit_passive=kind == "target",
+            profile=request.cost_profile,
+            seconds_held=float(prep.time[i] - prep.time[position.index]))
     risk = position.planned_risk
     r_multiple = (move - cost) / risk if risk > 0 else 0.0
     trade = position.trade
@@ -383,6 +395,15 @@ def edge_verdict(trades: List[BacktestTrade], method: str, seed: int = 7) -> Edg
 
 # ── loading a market ──────────────────────────────────────────
 
+@dataclass
+class History:
+    """Bars handed to a test instead of read from the live feed — a research
+    snapshot, so the run can be repeated on exactly the same data."""
+    base: pd.DataFrame
+    higher: Dict[str, pd.DataFrame]
+    source: str
+
+
 async def _frame(request: BacktestRequest) -> Optional[pd.DataFrame]:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
     # Extra history in front of the tested bars, so the first of them is
@@ -390,6 +411,37 @@ async def _frame(request: BacktestRequest) -> Optional[pd.DataFrame]:
     wanted = request.bars + replay.ANALYSIS_BARS
     await feed.ensure_history(symbol, timeframe, wanted)
     return store.frame(symbol, timeframe, wanted)
+
+
+#: The label generated bars carry. Nothing in the application produces them
+#: any more; a history handed in under that name is still never evidence.
+SIMULATED = "synthetic"
+NOT_EVIDENCE = ("Measured on simulated bars — a test of the software, not of a "
+                "market. Connect Angel One for {} and run it again.")
+
+
+def _too_little(request: BacktestRequest, bars: int, needed: int) -> str:
+    if not bars and not feed.provider_for(request.symbol):
+        return ("No history for {}: Angel One is not connected, and bars come from "
+                "nowhere else.".format(request.symbol.upper()))
+    return "Not enough history to backtest ({} bars, need {})".format(bars, needed)
+
+
+def _data_source(request: BacktestRequest, history: Optional[History] = None) -> str:
+    """Where the bars under this test came from."""
+    if history is not None:
+        return history.source
+    return feed.source_of(request.symbol, request.timeframe) or "unknown"
+
+
+def _not_evidence(result: BacktestResult) -> None:
+    """A verdict reached on simulated bars is withdrawn, whatever it was."""
+    if result.data_source != SIMULATED:
+        return
+    reason = NOT_EVIDENCE.format(result.symbol)
+    result.edge = result.edge.model_copy(update={"passed": False, "reason": reason})
+    result.next_parameters = {}
+    result.notes.insert(0, "SIMULATED DATA. " + reason)
 
 
 async def _higher_frames(request: BacktestRequest) -> Dict[str, pd.DataFrame]:
@@ -405,6 +457,8 @@ async def _higher_frames(request: BacktestRequest) -> Dict[str, pd.DataFrame]:
             await feed.ensure_history(symbol, tf)
         except Exception as exc:  # noqa: BLE001
             log.debug("history for %s %s unavailable: %s", symbol, tf, exc)
+        if feed.source_of(symbol, tf) != feed.source_of(symbol, request.timeframe):
+            continue    # another source's bars: rebuilt from the chart's own instead
         frame = store.frame(symbol, tf, 6000)
         if frame is not None and len(frame) >= replay.MIN_BARS:
             frames[tf] = frame
@@ -415,20 +469,30 @@ def _first_tested(n: int, bars: int) -> int:
     return max(WARMUP, n - bars)
 
 
-async def _prepare(request: BacktestRequest, df: pd.DataFrame) -> Prepared:
+def _bar_grid(request: BacktestRequest, history: Optional[History] = None):
+    """The session grid the tested bars are stamped on: the exchange's, when
+    they are Angel One's; the clock's otherwise. The live engine reads its
+    higher timeframes on the same grid (`analysis/engine.py`)."""
+    if _data_source(request, history) != "angelone":
+        return None
+    return sessions.bar_grid(get_instrument(request.symbol.upper()).asset_class)
+
+
+async def _prepare(request: BacktestRequest, df: pd.DataFrame,
+                   history: Optional[History] = None) -> Prepared:
     symbol, timeframe = request.symbol.upper(), request.timeframe.lower()
     instrument = get_instrument(symbol)
     if request.strategy == RANDOM:
-        return prepare(df, instrument, timeframe)
-    higher = await _higher_frames(request)
+        return prepare(df, instrument, timeframe, cost_profile=request.cost_profile)
+    higher = history.higher if history is not None else await _higher_frames(request)
     start = _first_tested(len(df), request.bars)
     # A pass over a few thousand bars is tens of seconds of pandas. Off the
     # event loop, or every chart and price tick waits for it.
     signals = await asyncio.to_thread(
         replay.signals, symbol, timeframe, df, higher, instrument,
         range(start, len(df)), balance=request.starting_balance,
-        risk_pct=request.risk_pct)
-    return prepare(df, instrument, timeframe, signals)
+        risk_pct=request.risk_pct, grid=_bar_grid(request, history))
+    return prepare(df, instrument, timeframe, signals, request.cost_profile)
 
 
 def _empty(request: BacktestRequest) -> BacktestResult:
@@ -445,6 +509,18 @@ def _unknown_strategy(request: BacktestRequest, result: BacktestResult) -> bool:
         request.strategy, ", ".join(STRATEGIES)))
     result.edge = EdgeVerdict(reason="Unknown strategy.")
     return True
+
+
+def _venue_notes(request: BacktestRequest, instrument: Instrument) -> List[str]:
+    """What this run was charged as, and what that venue does not allow."""
+    assumed = costs.describe(instrument, request.cost_profile)
+    notes = ["Charged as {}: {:.3f}% a side taken, {:.3f}% resting ({}).".format(
+        assumed["profile"], 100 * assumed["taker_per_side"],
+        100 * assumed["maker_per_side"], assumed["source"])]
+    if not costs.can_short(instrument, request.cost_profile):
+        notes.append("Long only: this is a spot book, and a short cannot be opened "
+                     "on one. SELL signals were not traded.")
+    return notes
 
 
 def _replay_notes(request: BacktestRequest) -> List[str]:
@@ -464,20 +540,21 @@ def _replay_notes(request: BacktestRequest) -> List[str]:
 
 # ── a single run ──────────────────────────────────────────────
 
-async def run_backtest(request: BacktestRequest) -> BacktestResult:
+async def run_backtest(request: BacktestRequest,
+                       history: Optional[History] = None) -> BacktestResult:
     result = _empty(request)
     if _unknown_strategy(request, result):
         return result
     instrument = get_instrument(request.symbol.upper())
-    df = await _frame(request)
+    df = history.base if history is not None else await _frame(request)
+    result.data_source = _data_source(request, history)
     if df is None or len(df) < WARMUP + 50:
         result.notes.append(
-            "Not enough history to backtest ({} bars, need {})".format(
-                0 if df is None else len(df), WARMUP + 50))
+            _too_little(request, 0 if df is None else len(df), WARMUP + 50))
         return result
 
     started = time.perf_counter()
-    prep = await _prepare(request, df)
+    prep = await _prepare(request, df, history)
     n = prep.n
     first = _first_tested(n, request.bars)
     trades, equity_curve = _simulate(prep, instrument, request, first, n)
@@ -504,6 +581,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         "both stop and target the stop is assumed to fill first.".format(
             result.bars_tested, time.perf_counter() - started))
     result.notes += _replay_notes(request)
+    result.notes += _venue_notes(request, instrument)
     if prep.intraday:
         result.notes.append(
             "Traded intraday, as live orders are: open positions are squared off at "
@@ -523,6 +601,7 @@ async def run_backtest(request: BacktestRequest) -> BacktestResult:
         result.notes.append(
             "Only {} trades — too small a sample to draw conclusions from. Widen the "
             "window or lower the confidence threshold.".format(len(trades)))
+    _not_evidence(result)
     return result
 
 
@@ -574,7 +653,8 @@ def _trade_fold(prep: Prepared, instrument: Instrument, request: BacktestRequest
     return chosen, trades, summary
 
 
-async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResult:
+async def walk_forward(request: BacktestRequest, folds: int = 4,
+                       history: Optional[History] = None) -> BacktestResult:
     """Choose parameters on one stretch of history, trade them on the next,
     roll forward, repeat. Only the traded stretches are reported, so nothing
     in the result was ever fitted to the bars it was measured on."""
@@ -582,7 +662,8 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
     if _unknown_strategy(request, result):
         return result
     instrument = get_instrument(request.symbol.upper())
-    df = await _frame(request)
+    df = history.base if history is not None else await _frame(request)
+    result.data_source = _data_source(request, history)
 
     first = _first_tested(0 if df is None else len(df), request.bars)
     usable = 0 if df is None else len(df) - first
@@ -594,7 +675,7 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         return result
 
     started = time.perf_counter()
-    prep = await _prepare(request, df)
+    prep = await _prepare(request, df, history)
     n = prep.n
     step = usable // (folds + 1)
     traded: List[BacktestTrade] = []
@@ -637,4 +718,6 @@ async def walk_forward(request: BacktestRequest, folds: int = 4) -> BacktestResu
         "here is out-of-sample and net of costs.".format(
             folds, time.perf_counter() - started, len(WF_GRID)))
     result.notes += _replay_notes(request)
+    result.notes += _venue_notes(request, instrument)
+    _not_evidence(result)
     return result

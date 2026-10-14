@@ -16,8 +16,7 @@ scipy>=1.10
 # ── ai ────────────────────────────────────────────────────────
 anthropic>=0.40
 
-# ── brokers (optional — only needed for live Indian market data / execution) ──
-kiteconnect>=5.0 ; python_version >= "3.9"
+# ── broker: Angel One — the only source of prices, and of orders ──
 smartapi-python>=1.4.8
 pyotp>=2.9
 logzero>=1.7

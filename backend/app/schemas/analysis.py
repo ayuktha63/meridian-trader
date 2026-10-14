@@ -288,16 +288,23 @@ class ScreenerRow(BaseModel):
     take_profit: Optional[float] = None
     risk_reward: Optional[float] = None
     summary: str = ""
+    #: When this read was generated, and the bar it was generated from — a
+    #: screener result is a snapshot, not a stream, and nothing in the UI
+    #: could otherwise tell "just scanned" from "scanned twenty minutes ago,
+    #: before price moved past it". See docs/RISK_CONTROL_AUDIT.md's UX
+    #: findings.
+    generated_at: float = 0.0
+    bar_time: int = 0
     error: Optional[str] = None
     #: Which app this can actually be traded on, and the exact name to search
-    #: for there — "CoinDCX" + "BTCUSDT", or "Angel One" + "NIFTY25AUG26FUT".
-    #: Absent when the instrument isn't tradable on either (e.g. spot FX).
+    #: for there — "Angel One" + "NIFTY25AUG26FUT". Absent when Angel One
+    #: has no contract for it right now.
     broker: Optional[str] = None
     broker_symbol: Optional[str] = None
     #: NSE, CDS, MCX, NFO — which exchange segment the Angel One contract is
     #: on. Several F&O stocks are dual-listed on BSE too; this is always the
     #: NSE side deliberately (liquidity), so it answers "which one do I pick"
-    #: rather than presenting a choice. None for CoinDCX rows.
+    #: rather than presenting a choice.
     exchange: Optional[str] = None
 
 

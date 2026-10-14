@@ -27,12 +27,6 @@ import shutil  # noqa: E402
 atexit.register(shutil.rmtree, _TEST_DATA, ignore_errors=True)
 os.environ["MERIDIAN_DATA_DIR"] = str(_TEST_DATA)
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + str(_TEST_DATA / "meridian-test.db")
-# Never the network. Left at its default the app streams live crypto from
-# CoinDCX the moment it starts, so every TestClient opened a connection to a
-# real exchange — and the suite's speed, and now and then whether it finished
-# at all, depended on how that exchange was feeling.
-os.environ["MARKET_PROVIDER"] = "synthetic"
-os.environ["HYBRID_CRYPTO_LIVE"] = "false"
 # The live-order supervisor is driven one pass at a time by the tests that
 # exercise it; a background loop racing them would make every one flaky.
 os.environ["LIVE_RECONCILER_ENABLED"] = "false"
@@ -48,7 +42,62 @@ os.environ["LIVE_REQUIRE_MEASURED_EDGE"] = "false"
 
 import starlette.testclient as _testclient  # noqa: E402
 
-from app.instruments import get_instrument  # noqa: E402
+from app import costs, instruments, stocks  # noqa: E402
+from app.data import feed as feed_module  # noqa: E402
+from app.data import providers as providers_package  # noqa: E402
+from app.data.providers import registry  # noqa: E402
+from app.instruments import Instrument, get_instrument  # noqa: E402
+
+import simulated  # noqa: E402
+
+# ── the market the suite runs on ──────────────────────────────
+#
+# The application takes everything from Angel One: prices, and the list of
+# stocks itself. A test has no broker session, so each of those is supplied
+# here instead — and nothing below exists outside the test suite.
+
+#: What the application ships with, before anything is added for the tests.
+SHIPPED_SYMBOLS = tuple(instruments.SYMBOLS)
+
+# Stocks arrive the way they do from the scrip master: a universe is adopted
+# and the instruments are rebuilt from it.
+stocks.set_universe([
+    stocks.Listing(symbol, lot, 0.05) for symbol, lot in (
+        ("RELIANCE", 500), ("HDFCBANK", 550), ("INFY", 400), ("TATAMOTORS", 800),
+        ("SBIN", 750), ("TCS", 175), ("ITC", 1600))])
+instruments.refresh_stock_instruments()
+
+# Two markets that are not exchange products, for the tests of arithmetic
+# that must hold on any instrument: one quoted to five places, one in whole
+# units. Neither is something the application lists or Angel One trades.
+for _instrument in (
+        Instrument("EURUSD", "EUR/USD", "fx", 5, 0.0001, 100_000, 0.6,
+                   "USD", ["london", "newyork"], note="test fixture"),
+        Instrument("OTCUSD", "A market off any exchange", "otc", 2, 1.0, 1, 1.0,
+                   "USD", ["24h"], note="test fixture")):
+    instruments.INSTRUMENTS[_instrument.symbol] = _instrument
+instruments.SYMBOLS[:] = list(instruments.INSTRUMENTS)
+
+# Venues the application does not have, for the tests of what a venue profile
+# does: one margined and financed, one a spot book that cannot be shorted.
+costs.PROFILES["test_perp"] = costs.Profile(
+    "test_perp", taker=0.0005, maker=0.0002, gst=True, funding_per_8h=0.0001,
+    stop_slippage=0.0002, source="test fixture")
+costs.PROFILES["test_spot"] = costs.Profile(
+    "test_spot", taker=0.0020, maker=0.0020, gst=True, funding_per_8h=0.0,
+    stop_slippage=0.0002, source="test fixture", shorting=False)
+
+# …and prices from the generator. It is named "synthetic", so the evidence
+# checks refuse it exactly as they must.
+angel_only_providers = registry.build_providers
+
+
+def _simulated_providers():
+    return {simulated.SimulatedProvider.name: simulated.SimulatedProvider()}
+
+
+for _module in (registry, providers_package, feed_module):
+    _module.build_providers = _simulated_providers
 
 # Without an access token the API only answers this machine (security.py), and
 # Starlette's TestClient announces itself as host "testclient" calling
@@ -120,5 +169,37 @@ def eurusd():
 
 
 @pytest.fixture
+def universe():
+    """For a test that adopts a stock universe of its own: the suite's is
+    put back afterwards, and so is every instrument as it was."""
+    listings, catalogue = list(stocks.UNIVERSE), dict(instruments.INSTRUMENTS)
+    yield
+    stocks.set_universe(listings)
+    instruments.INSTRUMENTS.clear()
+    instruments.INSTRUMENTS.update(catalogue)
+    instruments.refresh_stock_instruments()
+
+
+@pytest.fixture
 def uptrend():
     return trending_df()
+
+
+@pytest.fixture(autouse=True)
+def _reset_drawdown_tracker():
+    """Global, unlike the per-file resets elsewhere in this suite: the
+    drawdown tracker's whole point is a peak that survives everything else
+    (restarts, day boundaries), which is exactly what makes it the one
+    process-wide singleton here that can silently leak a "peak" set by one
+    test's fake funds into an unrelated test's much smaller ones — read as a
+    99% drawdown that was never a real one. A file-local reset (as
+    test_execution.py and test_reconciler.py also carry, for the tests that
+    exercise it directly) is correct but easy to forget in a new file that
+    touches live funds; this is the backstop."""
+    from app.broker.drawdown import drawdown_tracker
+
+    drawdown_tracker._peak = drawdown_tracker._last = None  # noqa: SLF001
+    drawdown_tracker.clear()
+    yield
+    drawdown_tracker._peak = drawdown_tracker._last = None  # noqa: SLF001
+    drawdown_tracker.clear()

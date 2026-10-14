@@ -113,7 +113,10 @@ export function SignedMeter({
   )
 }
 
-/** Radial confidence gauge — the headline number on the trade panel. */
+/** Radial gauge for the engine's signal score — the headline number on the
+ *  trade panel. Labelled a score, not a confidence or a probability: it is a
+ *  weighted count of agreeing indicators that has never been fitted to
+ *  outcomes, and where it was tested it did not separate winners from losers. */
 export function ConfidenceRing({
   value, decision, size = 108,
 }: {
@@ -128,7 +131,9 @@ export function ConfidenceRing({
   const color = decision === 'BUY' ? '#2FD3A0' : decision === 'SELL' ? '#FF4D6A' : '#F5C453'
 
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
+    <div className="relative shrink-0" style={{ width: size, height: size }}
+         title={'Signal score, 0–100: how many of the engine\'s indicators agree, weighted. '
+           + 'A heuristic — not a probability of winning, and not calibrated against results.'}>
       <svg width={size} height={size} className="-rotate-90">
         <circle
           cx={size / 2} cy={size / 2} r={radius}
@@ -149,7 +154,7 @@ export function ConfidenceRing({
           {Math.round(value)}
         </span>
         <span className="text-2xs uppercase tracking-widest text-faint mt-1">
-          confidence
+          signal score
         </span>
       </div>
     </div>

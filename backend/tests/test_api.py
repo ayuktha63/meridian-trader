@@ -17,7 +17,7 @@ def test_health_reports_subsystems(client):
     assert body["status"] == "ok"
     assert body["database"] in ("sqlite", "postgres")
     assert body["cache"] in ("memory", "redis")
-    assert "EURUSD" in body["symbols"]
+    assert "NIFTY" in body["symbols"]
     assert "analyst" in body
     assert "risk-free" in body["disclaimer"]
 
@@ -25,10 +25,12 @@ def test_health_reports_subsystems(client):
 def test_symbol_and_timeframe_catalogue(client):
     symbols = client.get("/api/market/symbols").json()
     codes = {s["symbol"] for s in symbols}
-    assert {"EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-            "USDCAD", "XAUUSD", "BTCUSD", "ETHUSD"} <= codes
-    jpy = next(s for s in symbols if s["symbol"] == "USDJPY")
-    assert jpy["pip_size"] == 0.01 and jpy["digits"] == 3
+    assert {"USDINR", "EURINR", "GBPINR", "JPYINR", "NIFTY", "BANKNIFTY",
+            "MCXGOLD", "MCXSILVER", "MCXCRUDE", "RELIANCE"} <= codes
+    usdinr = next(s for s in symbols if s["symbol"] == "USDINR")
+    assert usdinr["pip_size"] == 0.0025 and usdinr["digits"] == 4
+    reliance = next(s for s in symbols if s["symbol"] == "RELIANCE")
+    assert reliance["contract_size"] == 500, "the lot the universe was given, not a table's"
 
     timeframes = {t["code"] for t in client.get("/api/market/timeframes").json()}
     assert {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"} <= timeframes
@@ -47,6 +49,29 @@ def test_candles_are_ordered_and_consistent(client):
         assert candle["low"] <= min(candle["open"], candle["close"])
 
 
+def test_a_chart_with_no_broker_session_is_empty_and_says_why(client, monkeypatch):
+    from app.data import feed as feed_module
+    from app.data.store import store
+
+    monkeypatch.setattr(feed_module.feed, "providers", {})
+    monkeypatch.setattr(feed_module, "build_providers", dict)
+    store.series("MCXCRUDE", "30m").replace([])
+    response = client.get("/api/market/candles",
+                          params={"symbol": "MCXCRUDE", "timeframe": "30m"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "No data for MCXCRUDE 30m: Angel One is not connected."
+
+
+def test_settings_name_angel_one_as_the_only_source(client):
+    body = client.get("/api/settings").json()
+    assert [provider["id"] for provider in body["providers"]] == ["angelone"]
+    assert body["providers"][0]["ready"] is False, "no session in a test"
+    assert not {"market_provider", "hybrid_crypto_live", "twelvedata_api_key",
+                "zerodha_api_key"} & set(body["settings"])
+    listed = {row["symbol"]: row for row in body["instruments"]}
+    assert listed["RELIANCE"]["lot_size"] == 500 and listed["NIFTY"]["venue"] == "NFO"
+
+
 def test_unknown_symbol_is_404(client):
     assert client.get("/api/market/candles",
                       params={"symbol": "NOPE", "timeframe": "15m"}).status_code == 404
@@ -55,8 +80,9 @@ def test_unknown_symbol_is_404(client):
 def test_market_clock(client):
     body = client.get("/api/market/clock").json()
     assert "utc_time" in body
-    assert body["liquidity_regime"] in ("thin", "normal", "high", "overlap", "closed")
-    assert len(body["sessions"]) == 4
+    assert body["liquidity_regime"] in ("closed", "normal", "high")
+    assert [session["name"] for session in body["sessions"]] == ["NSE", "CDS", "MCX"]
+    assert body["ist_time"].endswith("IST") and "Holidays" in body["basis"]
 
 
 def test_drawing_lifecycle_and_analytics(client):
@@ -123,18 +149,18 @@ def test_analysis_returns_full_payload(client):
 
 def test_analysis_is_cached_between_identical_requests(client):
     first = client.post("/api/analysis/run", json={
-        "symbol": "GBPUSD", "timeframe": "1h",
+        "symbol": "NIFTY", "timeframe": "1h",
         "include_ai": False, "force_refresh": True}).json()
     second = client.post("/api/analysis/run", json={
-        "symbol": "GBPUSD", "timeframe": "1h",
+        "symbol": "NIFTY", "timeframe": "1h",
         "include_ai": False, "force_refresh": False}).json()
     assert first["id"] == second["id"]
 
 
 def test_watchlist_covers_requested_symbols(client):
     body = client.get("/api/analysis/watchlist",
-                      params={"timeframe": "1h", "symbols": "EURUSD,BTCUSD"}).json()
-    assert {row["symbol"] for row in body} == {"EURUSD", "BTCUSD"}
+                      params={"timeframe": "1h", "symbols": "TATAMOTORS,USDINR"}).json()
+    assert {row["symbol"] for row in body} == {"TATAMOTORS", "USDINR"}
     for row in body:
         assert row["bias"] in ("bullish", "bearish", "neutral")
 
@@ -307,3 +333,112 @@ def test_analysis_always_carries_account_risk(client):
     assert body["account_risk"] is not None
     assert body["account_risk"]["status"] in ("clear", "caution", "halt")
     assert len(body["account_risk"]["guardrails"]) == 4
+
+
+# ── what the broker holds ─────────────────────────────────────
+
+def _broker_row(**changes):
+    row = {"tradingsymbol": "INFY-EQ", "symbolname": "INFY", "exchange": "NSE",
+           "producttype": "INTRADAY", "netqty": "1", "buyavgprice": "1050.5",
+           "sellavgprice": "0.0", "ltp": "1057.75", "pnl": "7.25"}
+    row.update(changes)
+    return row
+
+
+def _stop_order(**changes):
+    row = {"orderid": "A1", "tradingsymbol": "INFY-EQ", "exchange": "NSE", "transactiontype": "SELL",
+           "ordertype": "STOPLOSS_MARKET", "producttype": "INTRADAY", "quantity": "1",
+           "filledshares": "0", "price": 0.0, "triggerprice": 1040.0, "averageprice": 0.0,
+           "orderstatus": "trigger pending", "text": "", "updatetime": "13-Oct-2026 12:30:00"}
+    row.update(changes)
+    return row
+
+
+def _broker(monkeypatch, positions, orders=None, connected=True):
+    import asyncio
+
+    from app.broker import angel_book
+    from app.cache import cache
+
+    async def get_positions():
+        if isinstance(positions, Exception):
+            raise positions
+        return positions
+
+    async def get_orders():
+        return orders or []
+
+    asyncio.run(cache.set_json(angel_book.CACHE_KEY, None, ttl=1))
+    monkeypatch.setattr(type(angel_book.angel_auth), "connected", property(lambda self: connected))
+    monkeypatch.setattr(angel_book.angel_broker, "get_positions", get_positions)
+    monkeypatch.setattr(angel_book.angel_broker, "get_orders", get_orders)
+
+
+def test_a_position_taken_in_the_brokers_own_app_is_shown(client, monkeypatch):
+    """The account holds more than Meridian placed, and a position it cannot
+    see is one nobody is watching."""
+    _broker(monkeypatch, [_broker_row(), _broker_row(tradingsymbol="SBIN-EQ", symbolname="SBIN",
+                                                      netqty="0")], [_stop_order()])
+    book = client.get("/api/trades/live/book").json()
+    held, = book["positions"]
+    assert (held["symbol"], held["chart_symbol"], held["net_quantity"]) == ("INFY", "INFY", 1.0)
+    assert held["buy_average"] == 1050.5 and held["pnl"] == 7.25, "a closed position is not listed"
+    stop, = book["orders"]
+    assert (stop["chart_symbol"], stop["side"], stop["trigger_price"], stop["working"]) == (
+        "INFY", "SELL", 1040.0, True)
+    overview = client.get("/api/trades/live/overview").json()
+    assert [p["symbol"] for p in overview["broker_positions"]] == ["INFY"]
+
+
+def test_finished_orders_are_not_working_ones(client, monkeypatch):
+    _broker(monkeypatch, [], [_stop_order(), _stop_order(orderid="A2", orderstatus="rejected"),
+                              _stop_order(orderid="A3", orderstatus="complete")])
+    working = {o["order_id"]: o["working"] for o in client.get("/api/trades/live/book").json()["orders"]}
+    assert working == {"A1": True, "A2": False, "A3": False}
+
+
+def test_an_unreadable_book_is_not_an_empty_one(client, monkeypatch):
+    _broker(monkeypatch, RuntimeError("Access denied because of exceeding access rate"))
+    assert client.get("/api/trades/live/book").status_code == 503
+    assert client.get("/api/trades/live/overview").json()["broker_positions"] is None
+
+
+def test_without_a_broker_session_there_is_no_book(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row()], connected=False)
+    assert client.get("/api/trades/live/book").status_code == 503
+
+
+def test_todays_charges_are_estimated_from_the_orders_that_filled(client, monkeypatch):
+    """A rejected or still-working order has paid nothing; a filled one has
+    paid brokerage with its floor, and the sell side its STT."""
+    buy = _stop_order(orderid="B1", transactiontype="BUY", ordertype="MARKET", triggerprice=0.0,
+                      price=1050.5, averageprice=1050.5, filledshares="1", orderstatus="complete")
+    sell = _stop_order(orderid="B2", transactiontype="SELL", ordertype="MARKET", triggerprice=0.0,
+                       price=1057.75, averageprice=1057.75, filledshares="1",
+                       orderstatus="complete")
+    _broker(monkeypatch, [_broker_row(realised="7.25", unrealised="0.0", netqty="0")],
+            [buy, sell, _stop_order(orderid="B3", orderstatus="rejected"), _stop_order(orderid="B4")])
+    book = client.get("/api/trades/live/book").json()
+    assert book["realised_today"] == 7.25
+    assert 12.0 < book["charges_today"] < 12.4, "₹5 floor each way, GST, STT on the sell"
+
+
+def test_the_brokers_own_debits_are_shown_beside_the_estimate(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row(realised="-12.5", unrealised="0.0", netqty="0")], [])
+
+    async def funds():
+        return {"utiliseddebits": "17.9114", "availablecash": "420.4886"}
+    monkeypatch.setattr(__import__("app.broker.angel_book", fromlist=["x"]).angel_broker,
+                        "get_funds", funds)
+    book = client.get("/api/trades/live/book").json()
+    assert book["broker_debits"] == 17.91 and book["realised_today"] == -12.5
+
+
+def test_unreadable_funds_leave_the_debits_unknown_not_zero(client, monkeypatch):
+    _broker(monkeypatch, [_broker_row()], [])
+
+    async def funds():
+        raise RuntimeError("Access denied because of exceeding access rate")
+    monkeypatch.setattr(__import__("app.broker.angel_book", fromlist=["x"]).angel_broker,
+                        "get_funds", funds)
+    assert client.get("/api/trades/live/book").json()["broker_debits"] is None

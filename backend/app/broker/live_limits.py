@@ -37,11 +37,8 @@ def trading_day_start(now: Optional[float] = None) -> float:
 
 
 def sector_of(symbol: str) -> Optional[str]:
-    from ..stocks import NSE_FO_STOCKS
-    for row in NSE_FO_STOCKS:
-        if row[0] == symbol:
-            return row[2]
-    return None
+    from ..stocks import sector_of as stock_sector
+    return stock_sector(symbol)
 
 
 def estimated_charges(row: LiveExecutionRow, exit_price: Optional[float] = None,
@@ -61,6 +58,21 @@ def estimated_charges(row: LiveExecutionRow, exit_price: Optional[float] = None,
     except KeyError:
         return 0.0
     return costs.charges(instrument, entry * quantity, exit_price * quantity)
+
+
+def mark_to_market(row: LiveExecutionRow, last_price: Optional[float]) -> float:
+    """What this open fill is worth right now, charges included if it were
+    closed at `last_price` — the same shape as `open_risk`, at the current
+    price instead of the stop. None/unreadable last price marks it flat
+    (0.0) rather than guessing, which is the direction that cannot overstate
+    how safe the account is."""
+    quantity = max((row.filled_quantity or 0.0) - (row.exit_quantity or 0.0), 0.0)
+    entry = row.average_fill_price
+    if not entry or not last_price or quantity <= 0:
+        return 0.0
+    sign = 1.0 if row.side == "BUY" else -1.0
+    gross = (last_price - entry) * sign * quantity
+    return gross - estimated_charges(row, last_price, quantity)
 
 
 def open_risk(row: LiveExecutionRow) -> float:
@@ -88,6 +100,10 @@ class LiveLedger:
     realised_today: float = 0.0
     #: What the open book loses if every stop is hit, charges included.
     open_risk: float = 0.0
+    #: Mark-to-market of every open fill at the last traded price, charges
+    #: included — for the drawdown check, which needs to know what the
+    #: account is worth right now, not only what it could still lose.
+    unrealised_now: float = 0.0
     symbol_exposure: Dict[str, float] = field(default_factory=dict)
     sector_exposure: Dict[str, float] = field(default_factory=dict)
 
@@ -108,6 +124,9 @@ async def load_ledger(session: AsyncSession, now: Optional[float] = None,
         if row.status in WORKING:
             ledger.open_positions += 1
             ledger.open_risk += open_risk(row)
+            from ..data.feed import feed  # local: feed must never be a module-load-time
+                                           # dependency of a pure risk/accounting file
+            ledger.unrealised_now += mark_to_market(row, feed.price(row.symbol))
             quantity = max(row.filled_quantity or 0.0, row.requested_quantity or 0.0)
             value = quantity * (row.average_fill_price or row.requested_price or 0.0)
             ledger.symbol_exposure[row.symbol] = ledger.symbol_exposure.get(row.symbol, 0.0) + value

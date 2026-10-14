@@ -1,0 +1,142 @@
+{
+  "digest": "2dbc83f88a3b1bdfe426847e675fbdd53a8441d10c73a6a019462ff4eca934f3",
+  "protocol": {
+    "account": {
+      "compounding": false,
+      "equity": 100000.0,
+      "leverage": 1.0,
+      "max_notional": null,
+      "product": "intraday",
+      "risk_fraction": 0.005,
+      "scenario": "conservative"
+    },
+    "controls": {
+      "benchmark": "long at the 09:45 open every day with a full range, range-low stop, no target, sell at 15:15 open",
+      "random": "same stop distance (fraction of price) and target multiple, random entry bar 09:50\u201314:25 on a day with a full range, long only, same exits"
+    },
+    "cost_multiples": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "cost_scenario": "conservative",
+    "execution": {
+      "executable": "gap-aware fills, entry-bar stop, sell at 15:15 open, order-by-order costs, no forced minimum size",
+      "published": "the source's fills, no costs (diagnostic only)"
+    },
+    "gate": {
+      "cost_stress": 1.5,
+      "deflated_sharpe": 0.95,
+      "delay_bars": 1,
+      "interval_level": 0.95,
+      "market_min_trades": 20,
+      "markets_positive": 0.6,
+      "min_trades": 200,
+      "random_p_value": 0.05
+    },
+    "index": "NIFTY",
+    "limitations": [
+      "The universe is today's Nifty 50 members among the source's fifteen: survivors. Every result on their past is flattered by that.",
+      "The source states a 57% win rate from 'a published Nifty backtest (Jul\u2013Oct 2025)'. If its rules were chosen on that period, the first stretch (to 2025-07-01) precedes it and is out-of-sample for the choice; the second contains it and is not.",
+      "Spread and slippage are assumed (conservative scenario), not measured.",
+      "Sized against a fixed Rs 1,00,000 at 0.5% risk, 1x, not compounded; the source sizes differently and forces a minimum of one share.",
+      "Adjusted prices; 5-minute history from Angel One carries its own gaps, each checked by `india.accept` before use.",
+      "The NIFTY alignment filter reads NIFTY 50 spot bars, not a futures contract."
+    ],
+    "order": [
+      "research",
+      "oos"
+    ],
+    "protocol_version": "1",
+    "random_draws": 200,
+    "rules_version": "1",
+    "source": {
+      "commit": "6130c7a2526235870830b45c052c86586582c5a6",
+      "file": "angel_orb_backtest.py",
+      "licence": "No LICENSE file in the repository; its README says MIT. Rules re-implemented, no code copied.",
+      "repository": "https://github.com/arshadakl/nse-orb-backtest"
+    },
+    "stretches": {
+      "oos": [
+        1751308200.0,
+        1791829800.0
+      ],
+      "research": [
+        1728844200.0,
+        1751308200.0
+      ]
+    },
+    "stretches_text": {
+      "oos": [
+        "2025-07-01",
+        "2026-10-13"
+      ],
+      "research": [
+        "2024-10-14",
+        "2025-07-01"
+      ]
+    },
+    "timeframe": "5m",
+    "trials": 2,
+    "universe": [
+      "HDFCBANK",
+      "ICICIBANK",
+      "SBIN",
+      "AXISBANK",
+      "BAJFINANCE",
+      "INFY",
+      "TCS",
+      "RELIANCE",
+      "LT",
+      "ADANIPORTS",
+      "MARUTI",
+      "HINDALCO",
+      "TITAN",
+      "DRREDDY"
+    ],
+    "variants": [
+      {
+        "min_bo_pct": 0.0,
+        "min_or_width_pct": 0.2,
+        "name": "orb_repo_baseline",
+        "nifty_filter": false,
+        "no_new_entry_after": "14:30",
+        "or_bars": 6,
+        "or_end": "09:45",
+        "skip_days": [],
+        "source": {
+          "commit": "6130c7a2526235870830b45c052c86586582c5a6",
+          "file": "angel_orb_backtest.py",
+          "licence": "No LICENSE file in the repository; its README says MIT. Rules re-implemented, no code copied.",
+          "repository": "https://github.com/arshadakl/nse-orb-backtest"
+        },
+        "square_off": "15:15",
+        "target_r": 1.5,
+        "version": "1",
+        "vol_mult": 0.0
+      },
+      {
+        "min_bo_pct": 0.15,
+        "min_or_width_pct": 0.2,
+        "name": "orb_repo_v3_default",
+        "nifty_filter": true,
+        "no_new_entry_after": "14:30",
+        "or_bars": 6,
+        "or_end": "09:45",
+        "skip_days": [
+          "Friday"
+        ],
+        "source": {
+          "commit": "6130c7a2526235870830b45c052c86586582c5a6",
+          "file": "angel_orb_backtest.py",
+          "licence": "No LICENSE file in the repository; its README says MIT. Rules re-implemented, no code copied.",
+          "repository": "https://github.com/arshadakl/nse-orb-backtest"
+        },
+        "square_off": "15:15",
+        "target_r": 1.5,
+        "version": "1",
+        "vol_mult": 1.5
+      }
+    ]
+  }
+}

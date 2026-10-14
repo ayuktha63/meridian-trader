@@ -1,12 +1,16 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ExitAlert from './components/ExitAlert'
 import PaperFillToast from './components/PaperFillToast'
 import SettingsModal from './components/SettingsModal'
 import ChartCanvas from './components/chart/ChartCanvas'
 import DrawingLayer from './components/chart/DrawingLayer'
 import AIOverlay from './components/chart/AIOverlay'
+import BrokerLayer from './components/chart/BrokerLayer'
+import TodayPnl from './components/panels/TodayPnl'
+import TradeSetupLayer from './components/chart/TradeSetupLayer'
 import Toolbar from './components/chart/Toolbar'
+import LiveModeBanner from './components/layout/LiveModeBanner'
 import StatusBar from './components/layout/StatusBar'
 import TopBar from './components/layout/TopBar'
 import AccountRiskBar from './components/panels/AccountRiskBar'
@@ -44,18 +48,42 @@ const PANELS = [
     hint: 'Logged calls and accuracy by confidence band' },
   { id: 'backtest', label: 'Backtest',
     hint: 'Historical performance of the engine on this symbol' },
+  // 'live-positions' and 'live-history' are deliberately not in this list —
+  // see TopBar.tsx: each is a self-contained button + full-size popup now,
+  // not a tab in a strip that already scrolls at 8 in a 360px rail.
 ] as const
 
 export default function App() {
   const bootstrap = useStore((s) => s.bootstrap)
   const bootError = useStore((s) => s.bootError)
+  const tradingMode = useStore((s) => s.tradingMode)
+  const isLive = tradingMode?.mode === 'LIVE'
   const candles = useStore((s) => s.candles)
   const loading = useStore((s) => s.loadingCandles)
+  const noData = useStore((s) => s.noData)
   const analysis = useStore((s) => s.analysis)
   const showOverlays = useStore((s) => s.showOverlays)
+  const tradeOnly = useStore((s) => s.tradeOnly)
   const activePanel = useStore((s) => s.activePanel)
   const setActivePanel = useStore((s) => s.setActivePanel)
   const instrument = useActiveInstrument()
+
+  // Has price already gone through the stop or the target since this plan
+  // was generated? Checked against every bar's high/low from that point on,
+  // not just the latest tick — a stop that triggered intrabar and recovered
+  // before the next render must still read as dead, not live. See
+  // components/chart/TradeSetupLayer.tsx.
+  const setupStatus = useMemo(() => {
+    const plan = analysis?.plan
+    if (!plan || plan.decision === 'WAIT' || !plan.stop_loss || !plan.take_profit) return null
+    const since = candles.filter((c) => c.time >= analysis!.bar_time)
+    const long = plan.decision === 'BUY'
+    const stopHit = since.some((c) => (long ? c.low <= plan.stop_loss! : c.high >= plan.stop_loss!))
+    if (stopHit) return 'stopped' as const
+    const targetHit = since.some((c) =>
+      (long ? c.high >= plan.take_profit! : c.low <= plan.take_profit!))
+    return targetHit ? 'reached' as const : null
+  }, [analysis, candles])
   const digits = instrument?.digits ?? 5
 
   const management = analysis?.management ?? null
@@ -110,7 +138,13 @@ export default function App() {
   }
 
   return (
-    <div className="h-full flex flex-col gap-2 p-2">
+    // `isLive` applies a persistent red tell around the whole app — a ring
+    // nobody can scroll past — in addition to the banner. Neither replaces
+    // the other: the ring survives a dismissed/missed banner on a tall
+    // screen, and the banner carries the words the ring alone cannot.
+    <div className={`h-full flex flex-col gap-2 p-2 transition-colors ${
+      isLive ? 'ring-2 ring-bear/70 ring-inset rounded-2xl' : ''}`}>
+      <LiveModeBanner />
       <TopBar onOpenSettings={() => setSettingsOpen(true)} />
 
       <main className="flex-1 min-h-0 flex gap-2">
@@ -160,28 +194,70 @@ export default function App() {
               <div className="shimmer h-full w-full absolute inset-0 opacity-40" />
               <span className="relative text-2xs text-faint">Loading price history…</span>
             </div>
+          ) : candles.length === 0 ? (
+            <div className="absolute inset-0 grid place-items-center p-8">
+              <div className="max-w-sm text-center space-y-2">
+                <p className="text-xs font-semibold text-ink">No data for this chart</p>
+                <p className="text-2xs text-muted leading-relaxed">
+                  {noData ?? 'Angel One has not supplied any bars for it yet.'}
+                </p>
+                <p className="text-2xs text-faint leading-relaxed">
+                  Every price here comes from Angel One. Connect it from the DEMO / LIVE
+                  control in the top bar — nothing is drawn in its place.
+                </p>
+              </div>
+            </div>
           ) : (
             <ChartCanvas
               candles={candles}
               digits={digits}
-              showMovingAverages={showMovingAverages}
-              showVolume={showVolume}
+              showMovingAverages={showMovingAverages && !tradeOnly}
+              showVolume={showVolume && !tradeOnly}
               onCrosshair={setHovered}
             >
               {(transform, container) => (
                 <>
-                  {showOverlays && analysis && (
-                    <AIOverlay
-                      overlays={analysis.overlays}
-                      transform={transform}
-                      digits={digits}
-                    />
+                  {tradeOnly ? (
+                    analysis && (
+                      <TradeSetupLayer plan={analysis.plan} barTime={analysis.bar_time}
+                                       transform={transform} digits={digits}
+                                       invalidated={setupStatus} />
+                    )
+                  ) : (
+                    <>
+                      {showOverlays && analysis && (
+                        <>
+                          {/* Same rule as the Trade-only view's own layer:
+                              a setup whose stop or target has already been
+                              reached since this read is shown, not hidden —
+                              dimmed, so it can't be mistaken for current. */}
+                          <div style={{ opacity: setupStatus ? 0.3 : 1 }}>
+                            <AIOverlay
+                              overlays={analysis.overlays}
+                              transform={transform}
+                              digits={digits}
+                            />
+                          </div>
+                          {setupStatus && (
+                            <div className="absolute left-3 top-3 pointer-events-none rounded-md
+                                            px-2 py-1 text-2xs bg-panel/90 border border-warn/40
+                                            text-warn" style={{ zIndex: 5 }}>
+                              {setupStatus === 'stopped'
+                                ? '⚠ This read’s stop has already been hit — re-analyse for a fresh one.'
+                                : '✓ This read’s target has already been reached — re-analyse for a fresh one.'}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      <BrokerLayer transform={transform} symbol={instrument?.symbol ?? ''}
+                                   digits={digits} />
+                      <DrawingLayer
+                        transform={transform}
+                        container={container}
+                        digits={digits}
+                      />
+                    </>
                   )}
-                  <DrawingLayer
-                    transform={transform}
-                    container={container}
-                    digits={digits}
-                  />
                 </>
               )}
             </ChartCanvas>
@@ -193,6 +269,8 @@ export default function App() {
             nothing on shorter screens. */}
         <aside className="w-[360px] shrink-0 flex flex-col gap-2 min-h-0 overflow-y-auto
                           overscroll-contain">
+          <TodayPnl />
+
           {/* Once a position is open, managing it outranks looking for the
               next entry — so the management card takes the top slot. */}
           {/* Account limits sit above everything. When they are breached the

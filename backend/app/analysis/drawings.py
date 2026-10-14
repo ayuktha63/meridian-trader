@@ -7,7 +7,7 @@ wicked through, and how it relates to current price. That evidence, not the
 drawing itself, is what Claude reasons over.
 
 Angles are reported ATR-normalised (degrees of arctan(slope / ATR)) so the
-number means the same thing on EURUSD and BTCUSD and does not change when
+number means the same thing on NIFTY and USDINR and does not change when
 the user zooms.
 """
 from __future__ import annotations

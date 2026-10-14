@@ -45,7 +45,7 @@ class CandleBatch(BaseModel):
     symbol: str
     timeframe: str
     candles: List[Candle]
-    provider: str = "synthetic"
+    provider: str = ""
     partial_bar: Optional[Candle] = None
 
 
@@ -65,7 +65,7 @@ class SymbolInfo(BaseModel):
     broker_symbol: Optional[str] = None
     tradable_in_india: bool = False
     note: str = ""
-    provider: str = "synthetic"
+    provider: str = ""
 
 
 class TimeframeInfo(BaseModel):
@@ -86,6 +86,11 @@ class QuoteSnapshot(BaseModel):
     day_low: float = 0.0
     updated_at: float = 0.0
     live: bool = False
+    #: How old the quote was when it was read, and whether that is too old
+    #: to act on. A quote does not expire by itself: when the feed stops,
+    #: the last one sits there looking like a price.
+    age_seconds: float = 0.0
+    stale: bool = False
 
 
 class MarketSession(BaseModel):
@@ -97,6 +102,10 @@ class MarketSession(BaseModel):
 
 class MarketClock(BaseModel):
     utc_time: str
+    #: Exchange time. Every market here is an Indian one.
+    ist_time: str = ""
     sessions: List[MarketSession] = Field(default_factory=list)
     active_session: str = "closed"
-    liquidity_regime: str = "normal"   # thin | normal | high | overlap
+    liquidity_regime: str = "normal"   # closed | normal | high
+    #: What "open" rests on — the clock, which does not know a holiday.
+    basis: str = ""

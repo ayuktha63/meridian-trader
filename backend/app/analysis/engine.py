@@ -26,11 +26,12 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from .. import runtime_settings
+from ..broker import account_balance
 from ..data.feed import feed
 from ..data.store import store
 from ..instruments import MTF_LADDER, Instrument, get_instrument, get_timeframe
@@ -242,6 +243,46 @@ async def _frames_for_mtf(symbol: str) -> Dict[str, pd.DataFrame]:
     return frames
 
 
+def frames_at_close(symbol: str, timeframe: str, df: pd.DataFrame,
+                    stored: Dict[str, pd.DataFrame],
+                    ) -> Tuple[Dict[str, pd.DataFrame], Optional[pd.DataFrame]]:
+    """Every timeframe as it stood when the last bar of `df` closed, and the
+    daily bars beside them.
+
+    `df` is the chart's completed bars. The store's other timeframes run on
+    past that moment: each holds a bar still forming, fed by the quotes that
+    arrived since. A decision that read them would be reading the unfinished
+    bar by another door — and would be a decision the backtest never made,
+    because the backtest builds these frames at each close from bars that
+    had finished. So does this, with the same code (`backtest/replay.py`):
+
+    * the chart's own timeframe — its completed bars;
+    * a higher one — its completed bars, then the one forming, rebuilt from
+      the chart's completed bars alone;
+    * a finer one — only the bars that had closed by then.
+    """
+    from ..backtest.replay import FrameBuilder    # it imports this module
+
+    series = store.series(symbol, timeframe)
+    base_seconds = series.tf_seconds
+    last = len(df) - 1
+    decided_at = series.bar_end(float(df["time"].iloc[-1]))
+    source = series.source
+    higher = {tf: frame for tf, frame in stored.items()
+              if get_timeframe(tf).seconds > base_seconds
+              and store.series(symbol, tf).source == source}
+    builder = FrameBuilder(df, timeframe, higher, series.grid)
+    frames = builder.frames(last)
+    for tf, frame in stored.items():
+        seconds = get_timeframe(tf).seconds
+        if seconds >= base_seconds:
+            continue
+        closed = frame[frame["time"] + seconds <= decided_at]
+        if len(closed) >= MIN_BARS:
+            frames[tf] = closed.reset_index(drop=True)
+    return frames, builder.daily(last)
+
+
 async def run(symbol: str, timeframe: str,
               drawings: Optional[List[Drawing]] = None,
               include_ai: bool = True,
@@ -255,7 +296,10 @@ async def run(symbol: str, timeframe: str,
     started = time.perf_counter()
 
     await feed.ensure_history(symbol, timeframe)
-    df = store.frame(symbol, timeframe, ANALYSIS_BARS)
+    # Completed bars only. The bar still forming is not something to decide
+    # on, and it is not what the backtest replays: the two used to differ
+    # here, every time this ran between two closes.
+    df = store.series(symbol, timeframe).completed_frame(time.time(), ANALYSIS_BARS)
 
     result = AnalysisResult(
         id=uuid.uuid4().hex,
@@ -269,27 +313,46 @@ async def run(symbol: str, timeframe: str,
     )
 
     if df is None or len(df) < MIN_BARS:
+        bars = 0 if df is None else len(df)
+        if not bars and not feed.provider_for(symbol):
+            result.warnings.append(
+                "No data for {} {}: Angel One is not connected, and prices come from "
+                "nowhere else.".format(symbol, timeframe))
+            result.narrative = "Nothing to analyse until Angel One is connected."
+            return result
         result.warnings.append(
             "Only {} bars available for {} {} — need at least {} to analyse".format(
-                0 if df is None else len(df), symbol, timeframe, MIN_BARS))
+                bars, symbol, timeframe, MIN_BARS))
         result.narrative = "Insufficient history to analyse this market yet."
         return result
 
+    # Two prices, kept apart. The decision is made at the last completed
+    # close — the price the backtest decides at. `live_price` is the quote:
+    # what is shown, and what an open position is managed against.
     price = float(df["close"].iloc[-1])
+    live_price = price
     quote = feed.quote(symbol)
     if quote is not None:
-        price = quote.last
-    result.price = round(price, instrument.digits)
+        live_price = quote.last
+    result.price = round(live_price, instrument.digits)
     result.bar_time = int(df["time"].iloc[-1])
+    if quote is None or quote.stale:
+        result.warnings.append(
+            "No current quote for {} ({}): the market is shut or the feed has stopped. "
+            "This reads the last completed bars only.".format(
+                symbol, "none received" if quote is None else
+                "the last is {:.0f} s old".format(quote.age_seconds)))
 
     # ── everything the price history says, before any analyst ─
-    daily = store.frame(symbol, "1d", 60)
-    frames = await _frames_for_mtf(symbol)
+    frames, daily = frames_at_close(symbol, timeframe, df, await _frames_for_mtf(symbol))
     frames.setdefault(timeframe, df)
     spread = quote.spread_pips if quote else None
-    ev = evaluate(df, frames, instrument, timeframe, price,
-                  daily=daily if len(daily) >= 2 else None,
-                  drawings=drawings, spread_pips=spread)
+    # LIVE sizes against the real Angel One wallet; DEMO against the Settings
+    # figure. `evaluate`/`conclude` stay pure — this is the one I/O lookup,
+    # resolved once here and threaded through as a plain number.
+    balance = await account_balance.effective_balance()
+    ev = evaluate(df, frames, instrument, timeframe, price, daily=daily,
+                  drawings=drawings, spread_pips=spread, balance=balance)
     snap, atr, market_structure = ev.snap, ev.atr, ev.structure
     result.indicators = snap
     result.structure = market_structure
@@ -343,13 +406,13 @@ async def run(symbol: str, timeframe: str,
     if position is not None and position.symbol == symbol:
         try:
             result.protection = risk_engine.build_plan(
-                position, price, instrument, atr,
+                position, live_price, instrument, atr,
                 quote.spread_pips if quote else None)
         except Exception as exc:  # noqa: BLE001
             log.warning("protection plan failed: %s", exc)
         try:
             result.management = manage.evaluate(
-                position, df, price, market_structure, snap,
+                position, df, live_price, market_structure, snap,
                 result.confidence, verdict.decision, instrument,
             )
         except Exception as exc:  # noqa: BLE001 - never lose the analysis over this
@@ -382,11 +445,13 @@ async def run(symbol: str, timeframe: str,
 
     if deriv_side and deriv_entry and deriv_stop:
         # The plan only carries a risk budget on a directional call, but the
-        # sizing question is the same either way — so derive it from settings
+        # sizing question is the same either way — so derive it from the
+        # balance `run` resolved (settings in DEMO, the real wallet in LIVE)
         # when the plan has none, rather than showing "—" for lots.
         cfg = runtime_settings.get()
-        risk_budget = final_plan.risk_amount or (
-            cfg.account_balance * cfg.risk_per_trade_pct / 100.0)
+        balance = ev.balance if ev.balance is not None else cfg.account_balance
+        risk_pct = ev.risk_pct if ev.risk_pct is not None else cfg.risk_per_trade_pct
+        risk_budget = final_plan.risk_amount or (balance * risk_pct / 100.0)
         result.derivatives = derivatives.suggest(
             instrument, deriv_side, deriv_entry, deriv_stop, deriv_target,
             atr, get_timeframe(timeframe).seconds, risk_budget,
@@ -398,7 +463,7 @@ async def run(symbol: str, timeframe: str,
 
     result.overlays = build_overlays(
         verdict, final_plan, market_structure, result.patterns,
-        instrument, timeframe, result.bar_time, price,
+        instrument, timeframe, result.bar_time, live_price,
     )
     result.overlays.extend(build_scenario_overlays(result.strategies))
 

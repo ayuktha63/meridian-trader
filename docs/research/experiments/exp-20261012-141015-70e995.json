@@ -1,0 +1,232 @@
+{
+  "assumptions": {
+    "costs": {
+      "funding_per_8h": 0.0,
+      "half_spread": 0.025,
+      "maker_per_side": 0.00236,
+      "profile": "crypto_spot",
+      "shorting": false,
+      "source": "CoinDCX spot base tier (secondary sources, Oct 2026); excludes 1% TDS",
+      "stop_slippage": 0.0002,
+      "taker_per_side": 0.00236
+    },
+    "execution": [
+      "Entry is a limit at the signal price, filled only if the next bar trades through it; a stop triggers on a touch and fills at the open on a gap; stop before target when one bar reaches both.",
+      "Not reproduced: Claude's verdict, drawings, and timeframes below the chart's."
+    ]
+  },
+  "code": {
+    "costs": "costs@a0265176d91e",
+    "engine": "engine@c6f62452c4f8",
+    "execution": "exec@d94b9b60229a",
+    "git": {
+      "commit": "22d04f9aab2900147a599f8315525874a521f945",
+      "dirty": true
+    },
+    "research": "research@e1c89e70a1d9"
+  },
+  "cost_profile": "crypto_spot",
+  "created_at": 1791814215.207381,
+  "datasets": [
+    {
+      "bars": 70522,
+      "dataset_id": "d95c01eefe3ab56f",
+      "derived_from": null,
+      "first": 1537506000.0,
+      "last": 1791752400.0,
+      "provider": "coindcx",
+      "quality_passed": true,
+      "sha256": "d95c01eefe3ab56fc0175793289646d3e28deea62fcc0fd640233f7a6d9914b7",
+      "symbol": "ETHUSD",
+      "timeframe": "1h"
+    }
+  ],
+  "id": "exp-20261012-141015-70e995",
+  "kind": "engine_walk_forward",
+  "metrics": {
+    "bars_tested": 4000,
+    "block_interval": {
+      "block": 3,
+      "high": -0.0501,
+      "low": -0.8852,
+      "p_value": 0.9678
+    },
+    "ci_high": -0.021,
+    "ci_low": -0.922,
+    "expectancy_r": -0.479,
+    "folds": [
+      {
+        "fold": 1,
+        "min_confidence": 0.0,
+        "risk_reward": 0.0,
+        "test_expectancy": 0.0,
+        "test_trades": 0,
+        "train_expectancy": 0.0
+      },
+      {
+        "fold": 2,
+        "min_confidence": 0.0,
+        "risk_reward": 0.0,
+        "test_expectancy": 0.0,
+        "test_trades": 0,
+        "train_expectancy": 0.0
+      },
+      {
+        "fold": 3,
+        "min_confidence": 70.0,
+        "risk_reward": 2.0,
+        "test_expectancy": -0.074,
+        "test_trades": 15,
+        "train_expectancy": 0.084
+      },
+      {
+        "fold": 4,
+        "min_confidence": 60.0,
+        "risk_reward": 2.0,
+        "test_expectancy": -0.782,
+        "test_trades": 20,
+        "train_expectancy": 0.07
+      }
+    ],
+    "grid": [
+      {
+        "expectancy_r": -0.6023,
+        "min_confidence": 50.0,
+        "risk_reward": 1.5,
+        "trades": 115
+      },
+      {
+        "expectancy_r": -0.4904,
+        "min_confidence": 50.0,
+        "risk_reward": 2.0,
+        "trades": 74
+      },
+      {
+        "expectancy_r": 0.2944,
+        "min_confidence": 50.0,
+        "risk_reward": 3.0,
+        "trades": 8
+      },
+      {
+        "expectancy_r": -0.5685,
+        "min_confidence": 60.0,
+        "risk_reward": 1.5,
+        "trades": 86
+      },
+      {
+        "expectancy_r": -0.4736,
+        "min_confidence": 60.0,
+        "risk_reward": 2.0,
+        "trades": 61
+      },
+      {
+        "expectancy_r": 0.233,
+        "min_confidence": 60.0,
+        "risk_reward": 3.0,
+        "trades": 5
+      },
+      {
+        "expectancy_r": -0.6355,
+        "min_confidence": 70.0,
+        "risk_reward": 1.5,
+        "trades": 74
+      },
+      {
+        "expectancy_r": -0.3354,
+        "min_confidence": 70.0,
+        "risk_reward": 2.0,
+        "trades": 43
+      },
+      {
+        "expectancy_r": 1.3857,
+        "min_confidence": 70.0,
+        "risk_reward": 3.0,
+        "trades": 3
+      }
+    ],
+    "grid_positive": 0.333,
+    "max_drawdown_r": 18.41,
+    "next_parameters": {},
+    "p_value": 0.9565,
+    "passed": false,
+    "profit_factor": 0.541,
+    "random_entries": {
+      "best_r": 0.2875,
+      "draws": 200,
+      "mean_r": -0.4872,
+      "p_value": 0.47761
+    },
+    "total_r": -16.75,
+    "trades": 35,
+    "win_rate": 34.29
+  },
+  "quality_passed": true,
+  "seeds": {
+    "bootstrap": 7,
+    "random_entries": 7
+  },
+  "sha256": "c0da7a0e52e40d3ad837be45e4e085285a7defc0b74295cd4a9e71b8b54d6cec",
+  "stage": "walk_forward",
+  "strategy": {
+    "name": "engine",
+    "parameters": {
+      "grid": [
+        [
+          50.0,
+          1.5
+        ],
+        [
+          50.0,
+          2.0
+        ],
+        [
+          50.0,
+          3.0
+        ],
+        [
+          60.0,
+          1.5
+        ],
+        [
+          60.0,
+          2.0
+        ],
+        [
+          60.0,
+          3.0
+        ],
+        [
+          70.0,
+          1.5
+        ],
+        [
+          70.0,
+          2.0
+        ],
+        [
+          70.0,
+          3.0
+        ]
+      ],
+      "risk_pct": 1.0,
+      "use_ladder": true
+    },
+    "version": "engine@c6f62452c4f8"
+  },
+  "symbol": "ETHUSD",
+  "timeframe": "1h",
+  "trials": 9,
+  "venue": "coindcx",
+  "verdict": {
+    "reasons": [
+      "No measured edge: out-of-sample expectancy after costs is -0.479R, and its 90% interval (-0.922R to -0.021R) includes zero."
+    ],
+    "state": "NO MEASURED EDGE"
+  },
+  "window": {
+    "bars_requested": 5000,
+    "folds": 4,
+    "from": 1777356000,
+    "to": 1791752400
+  }
+}

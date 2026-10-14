@@ -15,8 +15,7 @@ export interface Candle {
 export interface SymbolInfo {
   symbol: string
   display: string
-  asset_class: 'fx' | 'metal' | 'crypto' | 'currency_fut' | 'index'
-    | 'commodity' | 'stock'
+  asset_class: 'currency_fut' | 'index' | 'commodity' | 'stock'
   digits: number
   pip_size: number
   contract_size: number
@@ -49,13 +48,24 @@ export interface Quote {
   day_low: number
   updated_at: number
   live: boolean
+  /** How old the quote was when the server read it, and whether that is too old to act on. */
+  age_seconds?: number
+  stale?: boolean
 }
+
+/** A quote older than this is not a current price — the same limit the server applies. */
+export const STALE_QUOTE_SECONDS = 20
 
 export interface MarketClock {
   utc_time: string
+  /** Exchange time (IST). */
+  ist_time?: string
   active_session: string
+  /** closed | normal | high */
   liquidity_regime: string
-  sessions: { name: string; open: boolean; opens_in_minutes?: number; closes_in_minutes?: number }[]
+  sessions: { name: string; open: boolean; opens_in_minutes?: number | null; closes_in_minutes?: number | null }[]
+  /** What "open" rests on: the clock, which does not know a holiday. */
+  basis?: string
 }
 
 // ── drawings ────────────────────────────────────────────────
@@ -575,6 +585,8 @@ export interface AccountRisk {
   reason: string
   can_open_new: boolean
   balance: number
+  /** "angel_one" once LIVE and connected and the wallet read succeeded; "settings" otherwise. */
+  balance_source: 'angel_one' | 'settings'
   currency: string
   risk_per_trade_pct: number
   realised_today_r: number
@@ -791,6 +803,27 @@ export interface BacktestResult {
   folds?: Record<string, number>[]
   /** Walk-forward: the thresholds a live order has to clear. */
   next_parameters?: { min_confidence?: number; min_risk_reward?: number }
+  /** Where the bars came from: the provider's name. "synthetic" marks generated
+   *  bars in a record from before the simulator was removed — never evidence. */
+  data_source?: string
+}
+
+/** Where the live engine stands on one market, and why (research/eligibility.py). */
+export interface Eligibility {
+  symbol: string
+  timeframe: string
+  strategy: string
+  strategy_version: string
+  /** Whether the evidence check in front of a live order would pass right now. */
+  live_allowed: boolean
+  approved: boolean
+  reason: string | null
+  state: 'INELIGIBLE' | 'INSUFFICIENT EVIDENCE' | 'RESEARCH APPROVED'
+    | 'PAPER VALIDATION' | 'ELIGIBLE FOR HUMAN REVIEW'
+  reasons: string[]
+  rules_version: string
+  experiment_id: string | null
+  paper_trades: number
 }
 
 /** Is there a measured edge after costs, on data the parameters never saw? */
@@ -857,16 +890,6 @@ export interface RuntimeSettings {
   claude_model: string
   claude_effort: string
   ai_auto_analysis_interval: number
-  market_provider: string
-  hybrid_crypto_live: boolean
-  twelvedata_api_key: string | null
-  twelvedata_api_key_set: boolean
-  zerodha_api_key: string | null
-  zerodha_api_secret: string | null
-  zerodha_api_secret_set: boolean
-  zerodha_access_token: string | null
-  zerodha_access_token_set: boolean
-  zerodha_token_issued_at: number | null
   account_balance: number
   risk_per_trade_pct: number
   account_currency: string
@@ -912,6 +935,11 @@ export interface AngelStatus {
   connected: boolean
   session_age_seconds: number | null
   last_error: string | null
+  /** Logins that have failed in a row, and seconds until the next automatic one (null: none pending). */
+  failed_logins?: number
+  login_retry_in_seconds?: number | null
+  /** Angel One's real available cash — set only once LIVE, connected, and the read actually succeeded. */
+  available_funds: number | null
 }
 
 export interface TradingModeStatus {
@@ -920,6 +948,8 @@ export interface TradingModeStatus {
   kill_switch_reason?: string | null
   kill_switch_activated_at?: number | null
   live_confirmed_at: number | null
+  /** Unattended live execution armed — always false after a restart, a switch away from LIVE, or a kill-switch trip. */
+  auto_live_enabled: boolean
 }
 
 export interface LiveAlert {
@@ -977,8 +1007,76 @@ export interface ExecutionRecord {
   charges?: number | null
   net_pnl?: number | null
   closed_at?: number | null
+  /** Live mark-to-market for a still-open fill — populated only by `/api/trades/live/overview`. */
+  last_price?: number | null
+  unrealised_pnl?: number | null
   created_at: number
   updated_at: number
+}
+
+export interface BrokerOrder {
+  order_id: string
+  symbol: string
+  chart_symbol: string | null
+  exchange: string
+  side: string
+  order_type: string
+  product: string
+  quantity: number
+  filled: number
+  price: number | null
+  trigger_price: number | null
+  average_price: number | null
+  status: string
+  /** Still resting or waiting at the broker. */
+  working: boolean
+  message: string
+  updated_at: string
+}
+
+/** Angel One's own positions and orders, however they were placed. */
+export interface BrokerBook {
+  positions: BrokerPosition[]
+  orders: BrokerOrder[]
+  /** Resting conditional (GTT / OCO) rules as Angel One returns them. */
+  conditional: Record<string, unknown>[] | null
+  realised_today: number
+  /** Estimated charges on today's filled orders. */
+  charges_today: number
+  /** Angel One's own debits for the day (booked losses + charges it has posted), if readable. */
+  broker_debits?: number | null
+  as_of: number
+}
+
+export interface BrokerPosition {
+  symbol: string
+  chart_symbol: string | null
+  trading_symbol: string
+  exchange: string
+  product: string
+  net_quantity: number
+  buy_average: number
+  sell_average: number
+  last_price: number | null
+  pnl: number | null
+  realised: number | null
+  unrealised: number | null
+  buy_quantity: number
+  sell_quantity: number
+  managed: boolean
+}
+
+export interface LiveTradingOverview {
+  balance: number
+  balance_source: 'angel_one' | 'settings'
+  currency: string
+  open_risk: number
+  realised_today: number
+  trades_today: number
+  open_positions: ExecutionRecord[]
+  history: ExecutionRecord[]
+  /** What Angel One itself reports open; null when it could not be asked. */
+  broker_positions: BrokerPosition[] | null
 }
 
 // ── screener (best trades right now) ─────────────────────────
@@ -995,6 +1093,10 @@ export interface ScreenerRow {
   take_profit: number | null
   risk_reward: number | null
   summary: string
+  /** When this read was generated, as a Unix timestamp (seconds). */
+  generated_at: number
+  /** Open time of the bar it was generated from. */
+  bar_time: number
   error?: string | null
   broker?: string | null
   broker_symbol?: string | null

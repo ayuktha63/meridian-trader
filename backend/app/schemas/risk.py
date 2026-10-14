@@ -104,6 +104,9 @@ class AccountRisk(BaseModel):
     can_open_new: bool = True
 
     balance: float = 0.0
+    #: "angel_one" once LIVE and connected and the wallet call succeeded;
+    #: "settings" the rest of the time (DEMO, or LIVE with no live read yet).
+    balance_source: str = "settings"
     currency: str = "USD"
     risk_per_trade_pct: float = 1.0
 

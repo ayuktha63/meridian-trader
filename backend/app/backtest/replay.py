@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 
 from ..analysis import engine
+from ..data.sessions import BarGrid
 from ..data.store import COLUMNS, bar_open_time
 from ..instruments import MTF_LADDER, Instrument, get_timeframe
 from ..schemas.analysis import Decision
@@ -117,8 +118,14 @@ class FrameBuilder:
     """The frames the engine would have had at the close of any bar."""
 
     def __init__(self, base: pd.DataFrame, timeframe: str,
-                 higher: Optional[Dict[str, pd.DataFrame]] = None) -> None:
+                 higher: Optional[Dict[str, pd.DataFrame]] = None,
+                 grid: Optional[BarGrid] = None) -> None:
+        """`grid` is the session the venue stamps its bars on, where it has
+        one: an hour is then the venue's hour (09:15 to 10:15 on the NSE),
+        and the bar "still forming" at a close is cut where the stored
+        history of that timeframe cuts it."""
         self.timeframe = timeframe
+        self.grid = grid
         self.seconds = get_timeframe(timeframe).seconds
         self.base = base.reset_index(drop=True)
         self.values = self.base[list(COLUMNS)].to_numpy(dtype=float)
@@ -138,7 +145,13 @@ class FrameBuilder:
     def _resample(self, seconds: int) -> np.ndarray:
         """Higher-timeframe bars built from the chart's own bars — used when
         no stored history exists for that timeframe."""
-        opens = np.array([bar_open_time(t, seconds) for t in self.times], dtype=float)
+        if len(self.times) == 0:
+            # Nothing to resample from. A symbol/timeframe with no bars at
+            # all is "no higher-timeframe data", not a crash — the same rule
+            # every other empty-history path in this app follows.
+            return np.empty((0, len(COLUMNS)), dtype=float)
+        opens = np.array([bar_open_time(t, seconds, self.grid) for t in self.times],
+                         dtype=float)
         rows: List[List[float]] = []
         for start in np.flatnonzero(np.r_[True, opens[1:] != opens[:-1]]):
             end = start
@@ -157,7 +170,7 @@ class FrameBuilder:
         that had finished, then the one still forming, built from the chart's
         own bars up to that moment."""
         decided_at = self.times[i] + self.seconds
-        forming_open = float(bar_open_time(self.times[i], seconds))
+        forming_open = float(bar_open_time(self.times[i], seconds, self.grid))
         # Completed means its period had ended by the decision time *and* it
         # is not the bar being formed. The first test alone is not enough for
         # daily bars stamped at local midnight; the second alone would trust
@@ -208,14 +221,14 @@ def _trim_cache() -> None:
 def signals(symbol: str, timeframe: str, base: pd.DataFrame,
             higher: Optional[Dict[str, pd.DataFrame]], instrument: Instrument,
             indices: Iterable[int], *, balance: float = 10_000.0,
-            risk_pct: float = 1.0) -> Dict[int, BarSignal]:
+            risk_pct: float = 1.0, grid: Optional[BarGrid] = None) -> Dict[int, BarSignal]:
     """The engine's conclusion at the close of each bar in `indices`.
 
     Results are remembered per (symbol, timeframe, bar): a bar that has
     closed gives the same answer every time, as long as the price history
     behind it is the same — which the fingerprint checks.
     """
-    builder = FrameBuilder(base, timeframe, higher)
+    builder = FrameBuilder(base, timeframe, higher, grid)
     store = _cache.setdefault((symbol, timeframe), {})
     last = len(builder.times) - 1
     out: Dict[int, BarSignal] = {}
