@@ -1,0 +1,285 @@
+{
+  "index_available": false,
+  "left_out": [
+    {
+      "reason": "100.00% of the bars show no volume (limit 1.0%) \u2014 nothing traded at those prices.",
+      "symbol": "NIFTY"
+    }
+  ],
+  "protocol_digest": "2dbc83f88a3b1bdfe426847e675fbdd53a8441d10c73a6a019462ff4eca934f3",
+  "ran_at": "2026-10-14T10:20:05Z",
+  "universe_used": [
+    "HDFCBANK",
+    "ICICIBANK",
+    "SBIN",
+    "AXISBANK",
+    "BAJFINANCE",
+    "INFY",
+    "TCS",
+    "RELIANCE",
+    "LT",
+    "ADANIPORTS",
+    "MARUTI",
+    "HINDALCO",
+    "TITAN",
+    "DRREDDY"
+  ],
+  "variants": {
+    "orb_repo_baseline": {
+      "later_stretches": "never opened: an earlier stretch failed",
+      "reasons": [
+        "Net expectancy is not positive (-0.4011R).",
+        "Profit factor is not above 1 (0.2802).",
+        "The 95% interval on expectancy does not clear zero (lower end -0.4629).",
+        "Deflated Sharpe 0.0 is below 0.95.",
+        "Not distinguishable from random entries (p = 0.9403)."
+      ],
+      "rules": {
+        "min_bo_pct": 0.0,
+        "min_or_width_pct": 0.2,
+        "name": "orb_repo_baseline",
+        "nifty_filter": false,
+        "no_new_entry_after": "14:30",
+        "or_bars": 6,
+        "or_end": "09:45",
+        "skip_days": [],
+        "source": {
+          "commit": "6130c7a2526235870830b45c052c86586582c5a6",
+          "file": "angel_orb_backtest.py",
+          "licence": "No LICENSE file in the repository; its README says MIT. Rules re-implemented, no code copied.",
+          "repository": "https://github.com/arshadakl/nse-orb-backtest"
+        },
+        "square_off": "15:15",
+        "target_r": 1.5,
+        "version": "1",
+        "vol_mult": 0.0
+      },
+      "stages": {
+        "research": {
+          "executable": {
+            "avg_loss_r": -0.7445,
+            "avg_win_r": 0.5954,
+            "benchmark_expectancy_r": -2.5324,
+            "benchmark_trades": 2437,
+            "by_market": {
+              "ADANIPORTS": {
+                "expectancy_r": -0.3255,
+                "trades": 94
+              },
+              "AXISBANK": {
+                "expectancy_r": -0.3886,
+                "trades": 86
+              },
+              "BAJFINANCE": {
+                "expectancy_r": -0.3402,
+                "trades": 85
+              },
+              "DRREDDY": {
+                "expectancy_r": -0.2874,
+                "trades": 77
+              },
+              "HDFCBANK": {
+                "expectancy_r": -0.4454,
+                "trades": 88
+              },
+              "HINDALCO": {
+                "expectancy_r": -0.4374,
+                "trades": 89
+              },
+              "ICICIBANK": {
+                "expectancy_r": -0.4754,
+                "trades": 85
+              },
+              "INFY": {
+                "expectancy_r": -0.4134,
+                "trades": 74
+              },
+              "LT": {
+                "expectancy_r": -0.4632,
+                "trades": 83
+              },
+              "MARUTI": {
+                "expectancy_r": -0.3597,
+                "trades": 82
+              },
+              "RELIANCE": {
+                "expectancy_r": -0.4326,
+                "trades": 99
+              },
+              "SBIN": {
+                "expectancy_r": -0.4911,
+                "trades": 91
+              },
+              "TCS": {
+                "expectancy_r": -0.3997,
+                "trades": 75
+              },
+              "TITAN": {
+                "expectancy_r": -0.3375,
+                "trades": 82
+              }
+            },
+            "by_month": {
+              "2024-10": {
+                "expectancy_r": -0.4551,
+                "trades": 85
+              },
+              "2024-11": {
+                "expectancy_r": -0.3437,
+                "trades": 118
+              },
+              "2024-12": {
+                "expectancy_r": -0.5317,
+                "trades": 155
+              },
+              "2025-01": {
+                "expectancy_r": -0.3915,
+                "trades": 157
+              },
+              "2025-02": {
+                "expectancy_r": -0.5346,
+                "trades": 123
+              },
+              "2025-03": {
+                "expectancy_r": -0.3679,
+                "trades": 147
+              },
+              "2025-04": {
+                "expectancy_r": -0.2825,
+                "trades": 127
+              },
+              "2025-05": {
+                "expectancy_r": -0.4745,
+                "trades": 136
+              },
+              "2025-06": {
+                "expectancy_r": -0.2391,
+                "trades": 142
+              }
+            },
+            "by_weekday": {
+              "Friday": {
+                "expectancy_r": -0.2848,
+                "trades": 227
+              },
+              "Monday": {
+                "expectancy_r": -0.389,
+                "trades": 253
+              },
+              "Saturday": {
+                "expectancy_r": -1.0886,
+                "trades": 9
+              },
+              "Thursday": {
+                "expectancy_r": -0.3339,
+                "trades": 236
+              },
+              "Tuesday": {
+                "expectancy_r": -0.5262,
+                "trades": 226
+              },
+              "Wednesday": {
+                "expectancy_r": -0.4464,
+                "trades": 239
+              }
+            },
+            "candidates": 1191,
+            "cost_stress": {
+              "1": -0.4011,
+              "1.5": -0.5896,
+              "2": -0.7781
+            },
+            "costs": 140382.36,
+            "costs_pct_of_gross": null,
+            "deflated_sharpe": 0.0,
+            "delay_1_bar_expectancy_r": -0.3847,
+            "exits": {
+              "data_end": 0,
+              "gap": 0,
+              "stop": 219,
+              "target": 99,
+              "time": 872
+            },
+            "expectancy_r": -0.4011,
+            "expectancy_rupees": -125.11,
+            "gross_expectancy_r": -0.0241,
+            "gross_pnl": -8493.11,
+            "interval": {
+              "high": -0.34,
+              "level": 0.95,
+              "low": -0.4629,
+              "p_value_not_above_zero": 1.0,
+              "weeks": 38
+            },
+            "markets_positive_share": 0.0,
+            "markets_with_enough_trades": 14,
+            "max_drawdown_rupees": 149865.75,
+            "net_pnl": -148875.46,
+            "profit_factor": 0.2802,
+            "random": {
+              "draws": 200,
+              "null_mean_r": -0.3727,
+              "null_p95_r": -0.3465,
+              "observed_r": -0.4011,
+              "p_value": 0.9403
+            },
+            "reasons": [
+              "Net expectancy is not positive (-0.4011R).",
+              "Profit factor is not above 1 (0.2802).",
+              "The 95% interval on expectancy does not clear zero (lower end -0.4629).",
+              "Deflated Sharpe 0.0 is below 0.95.",
+              "Not distinguishable from random entries (p = 0.9403)."
+            ],
+            "skipped_unaffordable": 1,
+            "status": "FAILED_OUT_OF_SAMPLE",
+            "trades": 1190,
+            "weekly_sharpe": -1.9879,
+            "win_rate": 0.2563
+          },
+          "published_fills": {
+            "exits": {
+              "data_end": 0,
+              "stop": 224,
+              "target": 99,
+              "time": 868
+            },
+            "mean_r": -0.029125119298087174,
+            "profit_factor": 0.9029352648148395,
+            "trades": 1191,
+            "win_rate": 0.4550797649034425
+          }
+        }
+      },
+      "status": "FAILED_OUT_OF_SAMPLE"
+    },
+    "orb_repo_v3_default": {
+      "reasons": [
+        "The rules need NIFTY 5-minute bars and none passed acceptance."
+      ],
+      "rules": {
+        "min_bo_pct": 0.15,
+        "min_or_width_pct": 0.2,
+        "name": "orb_repo_v3_default",
+        "nifty_filter": true,
+        "no_new_entry_after": "14:30",
+        "or_bars": 6,
+        "or_end": "09:45",
+        "skip_days": [
+          "Friday"
+        ],
+        "source": {
+          "commit": "6130c7a2526235870830b45c052c86586582c5a6",
+          "file": "angel_orb_backtest.py",
+          "licence": "No LICENSE file in the repository; its README says MIT. Rules re-implemented, no code copied.",
+          "repository": "https://github.com/arshadakl/nse-orb-backtest"
+        },
+        "square_off": "15:15",
+        "target_r": 1.5,
+        "version": "1",
+        "vol_mult": 1.5
+      },
+      "stages": {},
+      "status": "NOT MEASURED"
+    }
+  }
+}
